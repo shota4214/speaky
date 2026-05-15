@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import { chatRouter } from './routes/chat'
+import { transcribeRouter } from './routes/transcribe'
 import { ollamaConfig } from './services/ollama'
 
 const app = express()
@@ -14,6 +15,7 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.use('/api', chatRouter)
+app.use('/api', transcribeRouter)
 
 app.listen(PORT, () => {
   console.log(`[backend] listening on http://localhost:${PORT}`)

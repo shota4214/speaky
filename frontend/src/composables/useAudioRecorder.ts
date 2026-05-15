@@ -10,14 +10,26 @@ export type RecorderState =
 export interface RecorderOptions {
   silenceDurationMs?: number
   silenceThreshold?: number
+  speechThreshold?: number
   minRecordingMs?: number
+  maxRecordingMs?: number
+}
+
+export interface RecordingResult {
+  blob: Blob
+  durationMs: number
+  hadSpeech: boolean
+  peakLevel: number
+  mimeType: string
 }
 
 export function useAudioRecorder(options: RecorderOptions = {}) {
   const {
     silenceDurationMs = 2000,
     silenceThreshold = 0.02,
+    speechThreshold = 0.05,
     minRecordingMs = 500,
+    maxRecordingMs = 30_000,
   } = options
 
   const state = ref<RecorderState>('idle')
@@ -32,9 +44,11 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
   let silenceStartedAt: number | null = null
   let recordingStartedAt: number | null = null
   let animationFrameId: number | null = null
-  let resolveStop: ((blob: Blob) => void) | null = null
+  let resolveStop: ((result: RecordingResult) => void) | null = null
   let rejectStop: ((err: Error) => void) | null = null
   let activeMimeType = ''
+  let peakLevel = 0
+  let hadSpeech = false
 
   function pickMimeType(): string {
     const candidates = [
@@ -50,12 +64,14 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
     return ''
   }
 
-  async function start(): Promise<Blob> {
+  async function start(): Promise<RecordingResult> {
     if (state.value === 'recording' || state.value === 'requestingPermission') {
       throw new Error(`Already in state: ${state.value}`)
     }
     error.value = null
     chunks = []
+    peakLevel = 0
+    hadSpeech = false
     state.value = 'requestingPermission'
 
     try {
@@ -75,7 +91,10 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
     source.connect(analyser)
 
     activeMimeType = pickMimeType()
-    recorder = new MediaRecorder(stream, activeMimeType ? { mimeType: activeMimeType } : undefined)
+    recorder = new MediaRecorder(
+      stream,
+      activeMimeType ? { mimeType: activeMimeType } : undefined,
+    )
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data)
     }
@@ -83,16 +102,28 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
       const blob = new Blob(chunks, {
         type: activeMimeType || 'audio/webm',
       })
+      const durationMs = recordingStartedAt
+        ? Date.now() - recordingStartedAt
+        : 0
+      const result: RecordingResult = {
+        blob,
+        durationMs,
+        hadSpeech,
+        peakLevel,
+        mimeType: activeMimeType || 'audio/webm',
+      }
       cleanup()
       state.value = 'stopped'
-      resolveStop?.(blob)
+      resolveStop?.(result)
       resolveStop = null
       rejectStop = null
     }
     recorder.onerror = (e) => {
       cleanup()
       state.value = 'error'
-      const err = (e as unknown as { error?: Error }).error ?? new Error('MediaRecorder error')
+      const err =
+        (e as unknown as { error?: Error }).error ??
+        new Error('MediaRecorder error')
       error.value = err.message
       rejectStop?.(err)
       resolveStop = null
@@ -105,7 +136,7 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
     recorder.start()
     monitor()
 
-    return new Promise<Blob>((resolve, reject) => {
+    return new Promise<RecordingResult>((resolve, reject) => {
       resolveStop = resolve
       rejectStop = reject
     })
@@ -126,8 +157,20 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
       }
       const rms = Math.sqrt(sum / data.length)
       audioLevel.value = rms
+      if (rms > peakLevel) peakLevel = rms
+      if (rms >= speechThreshold) hadSpeech = true
 
       const now = Date.now()
+
+      // 強制停止: maxRecordingMs を超えたら止める
+      if (
+        recordingStartedAt !== null &&
+        now - recordingStartedAt > maxRecordingMs
+      ) {
+        stop()
+        return
+      }
+
       if (rms < silenceThreshold) {
         if (silenceStartedAt === null) {
           silenceStartedAt = now

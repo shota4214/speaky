@@ -1,187 +1,107 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { useAudioRecorder } from '../composables/useAudioRecorder'
-import { useTextToSpeech } from '../composables/useTextToSpeech'
+import { computed, nextTick, onBeforeMount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import BaseButton from '../components/BaseButton.vue'
+import LevelBadge from '../components/LevelBadge.vue'
+import TopicChip from '../components/TopicChip.vue'
+import { useConversationLoop } from '../composables/useConversationLoop'
+import { conversationsRepo } from '../db/repos/conversations'
+import { vocabularyRepo } from '../db/repos/vocabulary'
+import type { Message, VocabItem } from '../db/types'
+import { useConversationStore } from '../stores/conversation'
+import { useVocabularyStore } from '../stores/vocabulary'
 
-type LoopState =
-  | 'idle'
-  | 'recording'
-  | 'transcribing'
-  | 'thinking'
-  | 'speaking'
-  | 'stopped'
-  | 'error'
+const router = useRouter()
+const conversation = useConversationStore()
+const vocabStore = useVocabularyStore()
+const loop = useConversationLoop()
 
-interface UserMessage {
-  id: string
-  role: 'user'
-  text: string
-  language: string
-  timestamp: Date
-}
-
-interface AiMessage {
-  id: string
-  role: 'ai'
-  replyEn: string
-  replyJa: string
-  timestamp: Date
-}
-
-type ChatMessage = UserMessage | AiMessage
-
-const audioRecorder = useAudioRecorder()
-const tts = useTextToSpeech({ rate: 1.0 })
-
-const loopState = ref<LoopState>('idle')
-const stopRequested = ref(false)
-const messages = ref<ChatMessage[]>([])
-const errorMessage = ref<string>('')
-const turnTimings = ref<{ transcribe: number; chat: number; speak: number }[]>([])
+const lastSummary = ref<string | null>(null)
+const vocabFocusWords = ref<string[]>([])
+const savedVocab = ref<Set<string>>(new Set())
 const logEndRef = ref<HTMLDivElement | null>(null)
 
+onBeforeMount(() => {
+  if (!conversation.id) {
+    router.replace('/')
+  }
+})
+
+onMounted(async () => {
+  if (!conversation.id) return
+
+  // 別の最近の会話の要約を「前回の話」として渡す
+  const recent = await conversationsRepo.list({ limit: 5 })
+  const previous = recent.find((c) => c.id !== conversation.id && c.summary)
+  lastSummary.value = previous?.summary ?? null
+
+  // vocab focus
+  if (conversation.vocabFocusIds.length > 0) {
+    const items = await Promise.all(
+      conversation.vocabFocusIds.map((id) => vocabularyRepo.get(id)),
+    )
+    vocabFocusWords.value = items
+      .filter((v): v is NonNullable<typeof v> => v != null)
+      .map((v) => v.word)
+  }
+
+  await loop.start({
+    conversationId: conversation.id,
+    vocabFocusWords: vocabFocusWords.value,
+    lastConversationSummary: lastSummary.value,
+  })
+})
+
 watch(
-  messages,
+  () => conversation.messages.length,
   async () => {
     await nextTick()
     logEndRef.value?.scrollIntoView({ behavior: 'smooth' })
   },
-  { deep: true },
 )
-
-async function transcribe(
-  blob: Blob,
-): Promise<{ text: string; language: string; durationMs: number }> {
-  const form = new FormData()
-  const mime = audioRecorder.activeMimeType()
-  const ext = mime.includes('mp4')
-    ? 'mp4'
-    : mime.includes('ogg')
-      ? 'ogg'
-      : 'webm'
-  form.append('audio', blob, `recording.${ext}`)
-  const res = await fetch('/api/transcribe', { method: 'POST', body: form })
-  if (!res.ok) {
-    throw new Error(`transcribe HTTP ${res.status}: ${await res.text()}`)
-  }
-  return await res.json()
-}
-
-async function chat(
-  userText: string,
-): Promise<{ reply_en: string; reply_ja: string }> {
-  const res = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userText }),
-  })
-  if (!res.ok) throw new Error(`chat HTTP ${res.status}: ${await res.text()}`)
-  return await res.json()
-}
-
-async function runLoop() {
-  try {
-    while (!stopRequested.value) {
-      loopState.value = 'recording'
-      const blob = await audioRecorder.start()
-      if (stopRequested.value) break
-
-      loopState.value = 'transcribing'
-      const t0 = Date.now()
-      const transcription = await transcribe(blob)
-      const tDur = Date.now() - t0
-      if (stopRequested.value) break
-
-      if (!transcription.text.trim()) {
-        continue
-      }
-
-      messages.value.push({
-        id: crypto.randomUUID(),
-        role: 'user',
-        text: transcription.text,
-        language: transcription.language,
-        timestamp: new Date(),
-      })
-
-      loopState.value = 'thinking'
-      const c0 = Date.now()
-      const reply = await chat(transcription.text)
-      const cDur = Date.now() - c0
-      if (stopRequested.value) break
-
-      messages.value.push({
-        id: crypto.randomUUID(),
-        role: 'ai',
-        replyEn: reply.reply_en,
-        replyJa: reply.reply_ja,
-        timestamp: new Date(),
-      })
-
-      loopState.value = 'speaking'
-      const s0 = Date.now()
-      await tts.speak(reply.reply_en)
-      const sDur = Date.now() - s0
-
-      turnTimings.value.push({ transcribe: tDur, chat: cDur, speak: sDur })
-
-      if (stopRequested.value) break
-    }
-  } catch (e) {
-    errorMessage.value = (e as Error).message
-    loopState.value = 'error'
-    return
-  }
-  loopState.value = 'stopped'
-}
 
 const isActive = computed(() =>
-  ['recording', 'transcribing', 'thinking', 'speaking'].includes(loopState.value),
+  [
+    'recording',
+    'processing',
+    'thinking',
+    'aiSpeaking',
+    'awaitingPromptedSpeech',
+  ].includes(conversation.mode),
 )
 
-function handleStart() {
-  if (isActive.value) return
-  stopRequested.value = false
-  messages.value = []
-  errorMessage.value = ''
-  turnTimings.value = []
-  runLoop()
-}
-
-function handleStop() {
-  stopRequested.value = true
-  audioRecorder.stop()
-  tts.cancel()
-}
-
-function replayText(text: string) {
-  tts.speak(text)
-}
-
 const statusLabel = computed(() => {
-  switch (loopState.value) {
+  switch (conversation.mode) {
     case 'idle':
       return 'Ready'
     case 'recording':
       return '🎙 Listening...'
-    case 'transcribing':
+    case 'processing':
       return '📝 Transcribing...'
     case 'thinking':
       return '🤔 Thinking...'
-    case 'speaking':
+    case 'aiSpeaking':
       return '🗣 Speaking...'
-    case 'stopped':
-      return 'Stopped'
-    case 'error':
-      return 'Error'
+    case 'awaitingPromptedSpeech':
+      return '👂 言ってみて...'
     default:
       return ''
   }
 })
 
+const statusDotClass = computed(() => ({
+  'bg-text-muted/50': conversation.mode === 'idle',
+  'bg-rose-500 animate-pulse': conversation.mode === 'recording',
+  'bg-amber-500 animate-pulse':
+    conversation.mode === 'processing' || conversation.mode === 'thinking',
+  'bg-sky-500 animate-pulse': conversation.mode === 'aiSpeaking',
+  'bg-violet-500 animate-pulse':
+    conversation.mode === 'awaitingPromptedSpeech',
+}))
+
 const barCount = 32
 const bars = computed(() => {
-  const level = audioRecorder.audioLevel.value
+  const level = loop.recorder.audioLevel.value
   const arr: number[] = []
   for (let i = 0; i < barCount; i++) {
     const t = i / (barCount - 1)
@@ -192,155 +112,239 @@ const bars = computed(() => {
   return arr
 })
 
+async function handleEnd() {
+  loop.stop()
+  const id = await loop.endAndPersist()
+  conversation.end()
+  vocabStore.clear()
+  if (id) {
+    await router.push({ path: '/chat/summary', query: { id } })
+  } else {
+    await router.push('/')
+  }
+}
+
+async function saveVocabItem(message: Message, item: VocabItem) {
+  await vocabularyRepo.create({
+    word: item.word,
+    meaning: item.meaning,
+    example: item.example,
+    partOfSpeech: null,
+  })
+  savedVocab.value = new Set([
+    ...savedVocab.value,
+    `${message.id}:${item.word}`,
+  ])
+}
+
+async function saveAllFromMessage(message: Message) {
+  if (!message.vocabulary) return
+  for (const item of message.vocabulary) {
+    if (savedVocab.value.has(`${message.id}:${item.word}`)) continue
+    await saveVocabItem(message, item)
+  }
+}
+
+function replayText(text: string) {
+  loop.tts.speak(text)
+}
+
 function formatTime(d: Date): string {
   return d.toLocaleTimeString('ja-JP', {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
   })
 }
 
-const lastTurnTotal = computed(() => {
-  const last = turnTimings.value[turnTimings.value.length - 1]
-  if (!last) return 0
-  return last.transcribe + last.chat + last.speak
-})
+function isVocabSaved(message: Message, word: string): boolean {
+  return savedVocab.value.has(`${message.id}:${word}`)
+}
 </script>
 
 <template>
-  <main
-    class="min-h-screen bg-gradient-to-br from-emerald-50 to-sky-50 dark:from-slate-900 dark:to-slate-800"
-  >
-    <div class="mx-auto max-w-4xl px-6 py-8">
-      <div class="flex items-center justify-between">
-        <h1 class="text-3xl font-bold text-slate-900 dark:text-slate-100">Chat</h1>
-        <router-link
-          to="/"
-          class="text-sm text-slate-600 dark:text-slate-400 hover:underline"
-          >← home</router-link
-        >
-      </div>
-      <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">
-        Task 1.5 — Whisper → Ollama → Web Speech API のフルループ
-      </p>
-
-      <!-- Conversation log -->
-      <div
-        class="mt-6 min-h-[400px] max-h-[600px] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 p-6 shadow-xl ring-1 ring-slate-200 dark:ring-slate-700"
-      >
-        <div
-          v-if="messages.length === 0"
-          class="flex h-80 flex-col items-center justify-center text-center text-slate-400 dark:text-slate-500"
-        >
-          <div class="text-6xl">🎤</div>
-          <p class="mt-4 text-sm">「会話を始める」をクリックして話しかけてください</p>
+  <div class="flex h-screen flex-col bg-bg text-text">
+    <header class="border-b border-border px-6 py-3">
+      <div class="mx-auto flex max-w-4xl items-center justify-between">
+        <div>
+          <h1 class="text-lg font-semibold">会話中</h1>
+          <div class="mt-1 flex items-center gap-2 text-xs">
+            <LevelBadge :level="conversation.level" size="sm" />
+            <TopicChip :label="conversation.topic" size="sm" />
+            <span v-if="conversation.isPaused" class="text-amber-500">
+              ⏸ 一時停止中
+            </span>
+          </div>
         </div>
-        <div v-else class="space-y-4">
-          <div v-for="m in messages" :key="m.id">
-            <div v-if="m.role === 'user'" class="flex justify-end">
-              <div
-                class="max-w-[75%] rounded-2xl rounded-br-md bg-emerald-500 px-4 py-3 text-white shadow-sm"
-              >
-                <div class="text-sm">{{ m.text }}</div>
-                <div class="mt-1 text-[10px] text-emerald-100 opacity-80">
-                  {{ formatTime(m.timestamp) }} · lang: {{ m.language }}
-                </div>
+        <BaseButton variant="danger" size="sm" @click="handleEnd">
+          ⏹ 会話を終わる
+        </BaseButton>
+      </div>
+    </header>
+
+    <div class="flex-1 overflow-y-auto px-6 py-6">
+      <div class="mx-auto max-w-3xl space-y-4">
+        <div
+          v-if="conversation.messages.length === 0"
+          class="flex h-64 flex-col items-center justify-center text-center text-text-muted"
+        >
+          <div class="text-5xl">🎤</div>
+          <p class="mt-3 text-sm">話しかけてください...</p>
+        </div>
+
+        <div v-for="m in conversation.messages" :key="m.id">
+          <div v-if="m.role === 'user'" class="flex justify-end">
+            <div
+              class="max-w-[75%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-white shadow-sm"
+            >
+              <div class="text-sm">{{ m.userText }}</div>
+              <div class="mt-1 text-[10px] opacity-80">
+                {{ formatTime(m.timestamp) }} · lang:
+                {{ m.inputLanguage ?? '—' }}
               </div>
             </div>
-            <div v-else class="flex justify-start">
+          </div>
+
+          <div v-else class="flex flex-col items-start space-y-2">
+            <div class="flex w-full justify-start">
               <div
-                class="max-w-[75%] rounded-2xl rounded-bl-md bg-slate-100 dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-slate-100 shadow-sm"
+                class="max-w-[75%] rounded-2xl rounded-bl-md bg-surface px-4 py-3 shadow-sm ring-1 ring-border"
               >
                 <div class="text-sm">{{ m.replyEn }}</div>
-                <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  {{ m.replyJa }}
+                <div class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
+                <div class="mt-2 flex items-center gap-2">
+                  <button
+                    class="text-[10px] text-text-muted hover:text-text"
+                    @click="replayText(m.replyEn ?? '')"
+                  >
+                    🔊 もう一度聞く
+                  </button>
+                  <span
+                    v-if="m.mode === 'japanese_help' || m.mode === 'mixed'"
+                    class="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+                  >
+                    言ってみて
+                  </span>
                 </div>
-                <button
-                  class="mt-2 flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                  @click="replayText(m.replyEn)"
-                >
-                  🔊 もう一度聞く
-                </button>
               </div>
             </div>
-          </div>
-          <div ref="logEndRef"></div>
-        </div>
-      </div>
 
-      <!-- Mic state + controls -->
-      <div
-        class="mt-6 rounded-2xl bg-white dark:bg-slate-900 p-6 shadow-xl ring-1 ring-slate-200 dark:ring-slate-700"
-      >
+            <div
+              v-if="m.feedback"
+              class="ml-2 max-w-[75%] rounded-xl bg-amber-50 px-3 py-2 text-xs ring-1 ring-amber-200 dark:bg-amber-900/20 dark:ring-amber-700/40"
+            >
+              <div class="font-semibold text-amber-700 dark:text-amber-300">
+                ✏️ 添削
+              </div>
+              <div class="mt-1">
+                <span class="text-rose-500 line-through">{{
+                  m.feedback.userSaid
+                }}</span>
+                <span class="mx-1 text-text-muted">→</span>
+                <strong class="text-emerald-600 dark:text-emerald-400">{{
+                  m.feedback.corrected
+                }}</strong>
+              </div>
+              <div class="mt-1 text-text-muted">
+                {{ m.feedback.explanation }}
+              </div>
+            </div>
+
+            <div
+              v-if="m.vocabulary && m.vocabulary.length > 0"
+              class="ml-2 max-w-[75%] rounded-xl bg-primary-light/40 px-3 py-2 text-xs"
+            >
+              <div class="flex items-center justify-between">
+                <div class="font-semibold text-primary-dark">
+                  📚 単語・フレーズ
+                </div>
+                <button
+                  class="text-[10px] text-primary hover:underline"
+                  @click="saveAllFromMessage(m)"
+                >
+                  ♡ 全部覚えたい
+                </button>
+              </div>
+              <ul class="mt-2 space-y-1.5">
+                <li
+                  v-for="v in m.vocabulary"
+                  :key="v.word"
+                  class="flex items-start justify-between gap-2"
+                >
+                  <div>
+                    <strong>{{ v.word }}</strong>
+                    <span class="ml-2 text-text-muted">— {{ v.meaning }}</span>
+                    <div
+                      v-if="v.example"
+                      class="text-[10px] italic text-text-muted"
+                    >
+                      "{{ v.example }}"
+                    </div>
+                  </div>
+                  <button
+                    class="shrink-0 text-[10px]"
+                    :class="
+                      isVocabSaved(m, v.word)
+                        ? 'text-text-muted'
+                        : 'text-primary hover:underline'
+                    "
+                    :disabled="isVocabSaved(m, v.word)"
+                    @click="saveVocabItem(m, v)"
+                  >
+                    {{ isVocabSaved(m, v.word) ? '✓ 保存済み' : '♡ これ覚えたい' }}
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div ref="logEndRef"></div>
+      </div>
+    </div>
+
+    <footer class="border-t border-border bg-surface px-6 py-4">
+      <div class="mx-auto max-w-3xl">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
+            <span class="h-2.5 w-2.5 rounded-full" :class="statusDotClass" />
+            <span class="text-sm font-medium">{{ statusLabel }}</span>
             <span
-              class="h-2.5 w-2.5 rounded-full"
-              :class="{
-                'bg-slate-300 dark:bg-slate-600':
-                  loopState === 'idle' || loopState === 'stopped',
-                'bg-red-500 animate-pulse': loopState === 'recording',
-                'bg-amber-500 animate-pulse':
-                  loopState === 'transcribing' || loopState === 'thinking',
-                'bg-blue-500 animate-pulse': loopState === 'speaking',
-                'bg-rose-500': loopState === 'error',
-              }"
-            />
-            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">{{
-              statusLabel
-            }}</span>
+              v-if="loop.consecutiveSilent.value > 0"
+              class="text-xs text-text-muted"
+            >
+              · {{ loop.consecutiveSilent.value }} silent
+            </span>
+            <span
+              v-if="loop.promptedAttempts.value > 0"
+              class="text-xs text-violet-500"
+            >
+              · 言ってみて {{ loop.promptedAttempts.value }}/3
+            </span>
           </div>
-          <span
-            v-if="turnTimings.length > 0"
-            class="text-xs text-slate-500 dark:text-slate-400"
-          >
-            {{ turnTimings.length }} turn{{ turnTimings.length === 1 ? '' : 's' }} ·
-            last: {{ lastTurnTotal }}ms
+          <span v-if="!isActive" class="text-xs text-text-muted">
+            会話セッション終了済み
           </span>
         </div>
-
-        <div class="mt-4 flex h-20 items-center justify-center gap-1">
+        <div class="mt-3 flex h-12 items-center justify-center gap-1">
           <span
             v-for="(h, i) in bars"
             :key="i"
-            class="w-1.5 rounded-full transition-all duration-75"
+            class="w-1 rounded-full transition-all duration-75"
             :class="
-              loopState === 'recording'
-                ? 'bg-emerald-500'
-                : 'bg-slate-300 dark:bg-slate-700'
+              conversation.mode === 'recording' ||
+              conversation.mode === 'awaitingPromptedSpeech'
+                ? 'bg-primary'
+                : 'bg-border'
             "
             :style="{ height: `${h * 100}%` }"
           />
         </div>
-
-        <div class="mt-4 flex gap-3">
-          <button
-            v-if="!isActive"
-            class="flex-1 rounded-xl bg-emerald-500 px-6 py-3 font-medium text-white shadow-sm transition hover:bg-emerald-600"
-            @click="handleStart"
-          >
-            🎤 会話を始める
-          </button>
-          <button
-            v-else
-            class="flex-1 rounded-xl bg-rose-500 px-6 py-3 font-medium text-white shadow-sm transition hover:bg-rose-600"
-            @click="handleStop"
-          >
-            ⏹ 会話を終わる
-          </button>
-        </div>
-
         <div
-          v-if="errorMessage"
-          class="mt-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-700 dark:text-rose-300"
+          v-if="loop.errorMessage.value"
+          class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/30 dark:text-rose-300"
         >
-          {{ errorMessage }}
+          {{ loop.errorMessage.value }}
         </div>
       </div>
-
-      <div class="mt-4 text-xs text-slate-500 dark:text-slate-400">
-        💡 一度だけ「会話を始める」 → 話す → 2秒沈黙でAI応答 → 自動で次のターン。終わるときは「会話を終わる」。
-      </div>
-    </div>
-  </main>
+    </footer>
+  </div>
 </template>

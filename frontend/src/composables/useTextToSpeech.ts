@@ -42,7 +42,10 @@ export function useTextToSpeech(options: TTSOptions = {}) {
     })
   }
 
-  async function speak(text: string): Promise<void> {
+  async function speak(
+    text: string,
+    overrides: Partial<TTSOptions> = {},
+  ): Promise<void> {
     if (!supported.value) {
       throw new Error('Web Speech API SpeechSynthesis is not supported')
     }
@@ -51,9 +54,9 @@ export function useTextToSpeech(options: TTSOptions = {}) {
 
     return new Promise<void>((resolve, reject) => {
       const utterance = new SpeechSynthesisUtterance(text)
-      utterance.rate = rate
-      utterance.pitch = pitch
-      utterance.lang = lang
+      utterance.rate = overrides.rate ?? rate
+      utterance.pitch = overrides.pitch ?? pitch
+      utterance.lang = overrides.lang ?? lang
 
       for (const pref of voicePreference) {
         const v = voices.find(

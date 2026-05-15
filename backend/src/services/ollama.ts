@@ -34,21 +34,32 @@ export class OllamaError extends Error {
   }
 }
 
+export interface ChatWithOllamaOptions {
+  jsonFormat?: boolean
+  temperature?: number
+}
+
 export async function chatWithOllama(
   messages: OllamaChatMessage[],
+  options: ChatWithOllamaOptions = {},
 ): Promise<OllamaChatResponse> {
+  const jsonFormat = options.jsonFormat ?? true
+  const temperature = options.temperature ?? 0.7
+
   let response: Response
   try {
+    const body: OllamaChatRequest = {
+      model: OLLAMA_MODEL,
+      messages,
+      stream: false,
+      options: { temperature },
+    }
+    if (jsonFormat) body.format = 'json'
+
     response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: OLLAMA_MODEL,
-        messages,
-        format: 'json',
-        stream: false,
-        options: { temperature: 0.7 },
-      } satisfies OllamaChatRequest),
+      body: JSON.stringify(body),
     })
   } catch (e) {
     throw new OllamaError(

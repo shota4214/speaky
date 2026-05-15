@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import { chatRouter } from './routes/chat'
+import { summarizeRouter } from './routes/summarize'
 import { transcribeRouter } from './routes/transcribe'
 import { ollamaConfig } from './services/ollama'
 
@@ -15,6 +16,7 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.use('/api', chatRouter)
+app.use('/api', summarizeRouter)
 app.use('/api', transcribeRouter)
 
 app.listen(PORT, () => {

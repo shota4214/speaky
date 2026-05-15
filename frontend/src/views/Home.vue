@@ -1,20 +1,22 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
 import LevelBadge from '../components/LevelBadge.vue'
 import TopicChip from '../components/TopicChip.vue'
+import { conversationsRepo } from '../db/repos/conversations'
 import type { Level } from '../db/types'
+import { useConversationStore } from '../stores/conversation'
+import { useSettingsStore } from '../stores/settings'
+import { useVocabularyStore } from '../stores/vocabulary'
 
 const router = useRouter()
+const settings = useSettingsStore()
+const conversation = useConversationStore()
+const vocabStore = useVocabularyStore()
 
-function startConversation() {
-  // TODO Task 2.6: conversationsRepo.create + level/topic を ConversationStore に保存してから遷移
-  router.push('/chat')
-}
-
-const aiName = 'Emma' // TODO Task 2.6: useSettingsStore.settings.aiCharacter.name
+const aiName = computed(() => settings.settings.aiCharacter.name)
 
 const level = ref<Level>('intermediate')
 
@@ -30,6 +32,35 @@ const defaultTopics = [
 const selectedTopic = ref<string>('daily')
 
 const levels: Level[] = ['beginner', 'intermediate', 'advanced']
+
+const starting = ref(false)
+
+async function startConversation() {
+  if (starting.value) return
+  starting.value = true
+  try {
+    const newConv = await conversationsRepo.create({
+      startedAt: new Date(),
+      endedAt: null,
+      topic: selectedTopic.value,
+      level: level.value,
+      aiCharacter: {
+        name: settings.settings.aiCharacter.name,
+        gender: settings.settings.aiCharacter.gender,
+      },
+      summary: null,
+    })
+    conversation.start({
+      id: newConv.id,
+      level: level.value,
+      topic: selectedTopic.value,
+      vocabFocusIds: [...vocabStore.selectedIds],
+    })
+    await router.push('/chat')
+  } finally {
+    starting.value = false
+  }
+}
 </script>
 
 <template>
@@ -76,14 +107,18 @@ const levels: Level[] = ['beginner', 'intermediate', 'advanced']
       </div>
     </BaseCard>
 
-    <div class="mt-8 flex justify-center">
-      <BaseButton size="lg" @click="startConversation">
-        ▶ 会話を始める
-      </BaseButton>
+    <div
+      v-if="vocabStore.count > 0"
+      class="mt-6 rounded-xl bg-accent/10 px-4 py-3 text-sm text-accent"
+    >
+      📚 復習リストから <strong>{{ vocabStore.count }}個の単語</strong>
+      を会話で練習します
     </div>
 
-    <p class="mt-6 text-center text-xs text-text-muted">
-      Phase 2 — Task 2.4 スケルトン / 機能ワイヤリングは Task 2.5・2.6 で実装
-    </p>
+    <div class="mt-8 flex justify-center">
+      <BaseButton size="lg" :disabled="starting" @click="startConversation">
+        {{ starting ? '準備中...' : '▶ 会話を始める' }}
+      </BaseButton>
+    </div>
   </div>
 </template>

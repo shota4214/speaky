@@ -19,12 +19,12 @@ async function handleStart() {
   transcribedText.value = ''
 
   try {
-    const blob = await start()
+    const recording = await start()
 
     testState.value = 'transcribing'
     const form = new FormData()
     const ext = activeMimeType().includes('mp4') ? 'mp4' : 'webm'
-    form.append('audio', blob, `recording.${ext}`)
+    form.append('audio', recording.blob, `recording.${ext}`)
 
     const res = await fetch('/api/transcribe', { method: 'POST', body: form })
     if (!res.ok) {

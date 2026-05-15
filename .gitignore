@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+
+# Whisper / Ollama models (large binaries)
+*.bin
+*.gguf
+models/
+
+# Audio temp files
+*.wav
+*.webm
+*.opus
+*.mp3
+
+# whisper.cpp build artifacts
+whisper.cpp/

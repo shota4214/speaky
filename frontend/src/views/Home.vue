@@ -63,6 +63,12 @@ onMounted(async () => {
         >
           🎤 録音テスト(Task 1.4)→
         </router-link>
+        <router-link
+          to="/chat"
+          class="ml-2 inline-block rounded-xl bg-emerald-500 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-600 transition"
+        >
+          🗣 会話する(Task 1.5)→
+        </router-link>
       </div>
     </div>
   </main>

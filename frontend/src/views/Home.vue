@@ -1,81 +1,89 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import BaseButton from '../components/BaseButton.vue'
+import BaseCard from '../components/BaseCard.vue'
+import LevelBadge from '../components/LevelBadge.vue'
+import TopicChip from '../components/TopicChip.vue'
+import type { Level } from '../db/types'
 
-type HealthState = 'checking' | 'ok' | 'error'
+const router = useRouter()
 
-const state = ref<HealthState>('checking')
-const message = ref<string>('checking backend...')
+function startConversation() {
+  // TODO Task 2.6: conversationsRepo.create + level/topic を ConversationStore に保存してから遷移
+  router.push('/chat')
+}
 
-onMounted(async () => {
-  try {
-    const res = await fetch('/api/health')
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = (await res.json()) as { status: string; timestamp: string }
-    state.value = data.status === 'ok' ? 'ok' : 'error'
-    message.value = `${data.status} (${data.timestamp})`
-  } catch (e) {
-    state.value = 'error'
-    message.value = (e as Error).message
-  }
-})
+const aiName = 'Emma' // TODO Task 2.6: useSettingsStore.settings.aiCharacter.name
+
+const level = ref<Level>('intermediate')
+
+const defaultTopics = [
+  { id: 'daily', name: '日常会話' },
+  { id: 'business', name: 'ビジネス' },
+  { id: 'travel', name: '旅行' },
+  { id: 'shopping', name: 'ショッピング' },
+  { id: 'restaurant', name: 'レストラン' },
+  { id: 'hobby', name: '趣味' },
+  { id: 'news', name: 'ニュース話題' },
+]
+const selectedTopic = ref<string>('daily')
+
+const levels: Level[] = ['beginner', 'intermediate', 'advanced']
 </script>
 
 <template>
-  <main
-    class="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-sky-50 dark:from-slate-900 dark:to-slate-800"
-  >
-    <div
-      class="rounded-2xl bg-white dark:bg-slate-900 p-10 shadow-xl ring-1 ring-slate-200 dark:ring-slate-700"
-    >
-      <h1 class="text-4xl font-bold text-slate-900 dark:text-slate-100">speaky</h1>
-      <p class="mt-2 text-slate-600 dark:text-slate-400">ローカル英会話学習アプリ</p>
+  <div class="mx-auto max-w-3xl px-6 py-8">
+    <h1 class="text-3xl font-bold">
+      English Conversation with {{ aiName }}
+    </h1>
+    <p class="mt-2 text-sm text-text-muted">
+      レベルとトピックを選んで会話を始めましょう
+    </p>
 
-      <div class="mt-8 flex items-center gap-3">
-        <span class="text-sm text-slate-500 dark:text-slate-400">backend:</span>
-        <span
-          class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium"
-          :class="{
-            'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300':
-              state === 'checking',
-            'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300':
-              state === 'ok',
-            'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300': state === 'error',
-          }"
+    <BaseCard class="mt-8">
+      <div class="text-sm font-semibold">今日のレベル</div>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button
+          v-for="l in levels"
+          :key="l"
+          type="button"
+          class="rounded-full focus:outline-none focus:ring-2 focus:ring-primary"
+          @click="level = l"
         >
-          <span
-            class="h-1.5 w-1.5 rounded-full"
-            :class="{
-              'bg-slate-400 animate-pulse': state === 'checking',
-              'bg-emerald-500': state === 'ok',
-              'bg-rose-500': state === 'error',
-            }"
-          />
-          {{ message }}
-        </span>
+          <LevelBadge :level="l" :active="level === l" size="lg" />
+        </button>
       </div>
+    </BaseCard>
 
-      <p class="mt-6 text-xs text-slate-400 dark:text-slate-500">Phase 1 — scaffold</p>
-
-      <div class="mt-6">
-        <router-link
-          to="/prototype"
-          class="inline-block rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-4 py-2 text-sm font-medium hover:bg-slate-800 dark:hover:bg-slate-200 transition"
-        >
-          🎤 録音テスト(Task 1.4)→
-        </router-link>
-        <router-link
-          to="/chat"
-          class="ml-2 inline-block rounded-xl bg-emerald-500 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-600 transition"
-        >
-          🗣 会話する(Task 1.5)→
-        </router-link>
-        <router-link
-          to="/components-preview"
-          class="ml-2 inline-block rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-700 transition"
-        >
-          🎨 デザインシステム
-        </router-link>
+    <BaseCard class="mt-6">
+      <div class="flex items-center justify-between">
+        <div class="text-sm font-semibold">何を話す?</div>
+        <button type="button" class="text-xs text-primary hover:underline">
+          + カスタムトピック追加
+        </button>
       </div>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button
+          v-for="t in defaultTopics"
+          :key="t.id"
+          type="button"
+          class="rounded-full focus:outline-none focus:ring-2 focus:ring-accent"
+          @click="selectedTopic = t.id"
+        >
+          <TopicChip :label="t.name" :active="selectedTopic === t.id" />
+        </button>
+      </div>
+    </BaseCard>
+
+    <div class="mt-8 flex justify-center">
+      <BaseButton size="lg" @click="startConversation">
+        ▶ 会話を始める
+      </BaseButton>
     </div>
-  </main>
+
+    <p class="mt-6 text-center text-xs text-text-muted">
+      Phase 2 — Task 2.4 スケルトン / 機能ワイヤリングは Task 2.5・2.6 で実装
+    </p>
+  </div>
 </template>

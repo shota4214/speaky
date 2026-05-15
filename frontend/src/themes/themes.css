@@ -1,0 +1,92 @@
+/* ============================================
+   THEME TOKENS (RGB triplets for Tailwind alpha)
+   ============================================ */
+
+/* Default + Mint Garden */
+:root,
+[data-theme='mint'] {
+  --color-primary: 16 185 129;        /* #10b981 emerald-500 */
+  --color-primary-light: 209 250 229; /* #d1fae5 emerald-100 */
+  --color-primary-dark: 4 120 87;     /* #047857 emerald-700 */
+  --color-accent: 14 165 233;         /* #0ea5e9 sky-500    */
+  --color-bg: 240 253 244;            /* #f0fdf4            */
+  --color-surface: 255 255 255;       /* #ffffff            */
+  --color-text: 15 23 42;             /* #0f172a slate-900  */
+  --color-text-muted: 100 116 139;    /* #64748b slate-500  */
+  --color-border: 226 232 240;        /* #e2e8f0 slate-200  */
+}
+
+[data-theme='lavender'] {
+  --color-primary: 167 139 250;       /* violet-400 */
+  --color-primary-light: 237 233 254; /* violet-100 */
+  --color-primary-dark: 124 58 237;   /* violet-600 */
+  --color-accent: 244 114 182;        /* pink-400   */
+  --color-bg: 250 245 255;
+  --color-surface: 255 255 255;
+  --color-text: 15 23 42;
+  --color-text-muted: 100 116 139;
+  --color-border: 226 232 240;
+}
+
+[data-theme='peach'] {
+  --color-primary: 251 146 60;        /* orange-400 */
+  --color-primary-light: 255 237 213; /* orange-100 */
+  --color-primary-dark: 234 88 12;    /* orange-600 */
+  --color-accent: 244 114 182;        /* pink-400   */
+  --color-bg: 255 251 245;
+  --color-surface: 255 255 255;
+  --color-text: 15 23 42;
+  --color-text-muted: 100 116 139;
+  --color-border: 226 232 240;
+}
+
+/* ============================================
+   DARK MODE OVERRIDES (per-theme)
+   prefers-color-scheme: dark に追従
+   ============================================ */
+@media (prefers-color-scheme: dark) {
+  :root,
+  [data-theme='mint'] {
+    --color-primary: 52 211 153;        /* emerald-400 */
+    --color-primary-light: 6 78 59;     /* emerald-900 */
+    --color-primary-dark: 167 243 208;  /* emerald-200 */
+    --color-accent: 56 189 248;         /* sky-400     */
+    --color-bg: 7 23 16;
+    --color-surface: 17 39 30;
+    --color-text: 243 244 246;
+    --color-text-muted: 148 163 184;
+    --color-border: 30 41 59;
+  }
+
+  [data-theme='lavender'] {
+    --color-primary: 196 181 253;
+    --color-primary-light: 76 29 149;
+    --color-primary-dark: 221 214 254;
+    --color-accent: 251 207 232;
+    --color-bg: 22 12 38;
+    --color-surface: 36 24 56;
+    --color-text: 243 244 246;
+    --color-text-muted: 148 163 184;
+    --color-border: 51 41 73;
+  }
+
+  [data-theme='peach'] {
+    --color-primary: 251 191 36;
+    --color-primary-light: 124 45 18;
+    --color-primary-dark: 254 215 170;
+    --color-accent: 251 207 232;
+    --color-bg: 30 18 12;
+    --color-surface: 50 32 24;
+    --color-text: 243 244 246;
+    --color-text-muted: 148 163 184;
+    --color-border: 60 42 30;
+  }
+}
+
+/* ============================================
+   Apply background and text by default
+   ============================================ */
+body {
+  background-color: rgb(var(--color-bg));
+  color: rgb(var(--color-text));
+}

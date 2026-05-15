@@ -3,11 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    {
-      path: '/',
-      name: 'home',
-      component: () => import('../views/Home.vue'),
-    },
+    { path: '/', name: 'home', component: () => import('../views/Home.vue') },
     {
       path: '/prototype',
       name: 'prototype',
@@ -19,9 +15,9 @@ const router = createRouter({
       component: () => import('../views/Chat.vue'),
     },
     {
-      path: '/design-preview',
-      name: 'design-preview',
-      component: () => import('../views/DesignPreview.vue'),
+      path: '/components-preview',
+      name: 'components-preview',
+      component: () => import('../views/ComponentsPreview.vue'),
     },
   ],
 })

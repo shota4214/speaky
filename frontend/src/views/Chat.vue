@@ -20,6 +20,7 @@ const lastSummary = ref<string | null>(null)
 const vocabFocusWords = ref<string[]>([])
 const savedVocab = ref<Set<string>>(new Set())
 const logEndRef = ref<HTMLDivElement | null>(null)
+const showInactivityDialog = ref(false)
 
 onBeforeMount(() => {
   if (!conversation.id) {
@@ -59,6 +60,26 @@ watch(
     logEndRef.value?.scrollIntoView({ behavior: 'smooth' })
   },
 )
+
+// 3回連続沈黙で「会話続けますか?」ダイアログを表示
+watch(
+  () => loop.consecutiveSilent.value,
+  (count, prev) => {
+    if (count >= 3 && (prev ?? 0) < 3) {
+      showInactivityDialog.value = true
+    }
+  },
+)
+
+function continueConversation() {
+  showInactivityDialog.value = false
+  loop.consecutiveSilent.value = 0
+}
+
+async function endFromDialog() {
+  showInactivityDialog.value = false
+  await handleEnd()
+}
 
 const isActive = computed(() =>
   [
@@ -346,5 +367,32 @@ function isVocabSaved(message: Message, word: string): boolean {
         </div>
       </div>
     </footer>
+
+    <!-- Inactivity dialog -->
+    <div
+      v-if="showInactivityDialog"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+    >
+      <div
+        class="mx-4 max-w-md rounded-2xl bg-surface p-6 shadow-xl ring-1 ring-border"
+      >
+        <h3 class="text-lg font-semibold">会話を続けますか?</h3>
+        <p class="mt-2 text-sm text-text-muted">
+          無音が続いています。会話を続けるか、終了するかを選んでください。
+        </p>
+        <div class="mt-6 flex gap-2">
+          <BaseButton
+            variant="secondary"
+            class="flex-1"
+            @click="endFromDialog"
+          >
+            会話を終わる
+          </BaseButton>
+          <BaseButton class="flex-1" @click="continueConversation">
+            続ける
+          </BaseButton>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

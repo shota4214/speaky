@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
+import { checkOllamaHealth } from '../services/api'
+import { useSettingsStore } from '../stores/settings'
+
+const router = useRouter()
+const settings = useSettingsStore()
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6
 
@@ -15,11 +21,53 @@ const stepLabels: Record<Step, string> = {
   6: '完了',
 }
 
+const ollamaStatus = ref<'unknown' | 'checking' | 'ok' | 'error'>('unknown')
+const ollamaError = ref<string>('')
+const hasDefaultModel = ref(false)
+const availableModels = ref<string[]>([])
+
+async function checkOllama() {
+  ollamaStatus.value = 'checking'
+  ollamaError.value = ''
+  const res = await checkOllamaHealth()
+  if (res.ok) {
+    ollamaStatus.value = 'ok'
+    hasDefaultModel.value = res.hasDefaultModel ?? false
+    availableModels.value = res.models ?? []
+  } else {
+    ollamaStatus.value = 'error'
+    ollamaError.value = res.error ?? 'Ollama not reachable'
+  }
+}
+
+watch(step, (s) => {
+  if (s === 2) checkOllama()
+})
+
+onMounted(() => {
+  if (step.value === 2) checkOllama()
+})
+
+const llmModel = ref(settings.settings.llmModel)
+const whisperModel = ref(settings.settings.whisperModel)
+const aiName = ref(settings.settings.aiCharacter.name)
+const aiGender = ref<'female' | 'male'>(settings.settings.aiCharacter.gender)
+
 function next() {
   if (step.value < 6) step.value = (step.value + 1) as Step
 }
 function prev() {
   if (step.value > 1) step.value = (step.value - 1) as Step
+}
+
+function complete() {
+  settings.update({
+    llmModel: llmModel.value,
+    whisperModel: whisperModel.value,
+    aiCharacter: { name: aiName.value.trim() || 'Emma', gender: aiGender.value },
+  })
+  localStorage.setItem('speaky:onboarded', 'true')
+  router.push('/')
 }
 </script>
 
@@ -29,7 +77,7 @@ function prev() {
       <header class="mb-8">
         <div class="text-2xl font-bold text-primary">speaky</div>
         <div class="mt-1 text-xs text-text-muted">
-          初回セットアップ — ステップ {{ step }} / 6
+          初回セットアップ — ステップ {{ step }} / 6 · {{ stepLabels[step] }}
         </div>
         <div class="mt-3 grid grid-cols-6 gap-1">
           <div
@@ -42,103 +90,160 @@ function prev() {
       </header>
 
       <BaseCard class="flex-1">
-        <div class="text-sm font-semibold">{{ stepLabels[step] }}</div>
-
-        <div v-if="step === 1" class="mt-6 space-y-4">
+        <div v-if="step === 1" class="space-y-4">
+          <h2 class="text-xl font-semibold">英会話練習アプリ speaky へようこそ</h2>
           <p>
-            このアプリは英会話を学ぶための <strong>ローカル完結型</strong>
-            アプリです。Whisper / Ollama / Web Speech API
-            を組み合わせて、外部API課金ゼロでAIと英会話練習ができます。
+            このアプリは <strong>完全ローカル動作</strong> の英会話練習アプリです。
+            Whisper(音声認識)・Ollama(LLM)・Web Speech API(音声合成)
+            を組み合わせ、外部API課金ゼロで AI と英会話練習ができます。
           </p>
+          <ul class="list-disc space-y-1 pl-5 text-sm text-text-muted">
+            <li>マイクから英語/日本語で話しかけると AI が応答します</li>
+            <li>添削・単語学習・復習リスト機能つき</li>
+            <li>会話履歴は30日間ローカルに保存</li>
+            <li>外部にデータが送信されることはありません</li>
+          </ul>
           <p class="text-sm text-text-muted">
-            初回セットアップでは Ollama 確認・モデルダウンロード・AIキャラ設定を行います。
+            初回セットアップを始めましょう。
           </p>
         </div>
 
-        <div v-else-if="step === 2" class="mt-6 space-y-3">
-          <p>Ollama が起動しているか確認します。</p>
-          <div class="rounded-lg bg-primary-light/40 p-3 text-sm">
-            <code class="text-primary-dark">brew install ollama</code> でインストール、<br />
-            <code class="text-primary-dark">brew services start ollama</code> で起動。
+        <div v-else-if="step === 2" class="space-y-4">
+          <h2 class="text-xl font-semibold">Ollama の確認</h2>
+          <p class="text-sm">
+            Ollama がローカルで起動しているか確認します。
+          </p>
+
+          <div
+            v-if="ollamaStatus === 'checking'"
+            class="rounded-lg bg-amber-50 px-3 py-2 text-sm dark:bg-amber-900/20"
+          >
+            🔄 確認中...
           </div>
-          <BaseButton variant="secondary">再チェック</BaseButton>
+          <div
+            v-else-if="ollamaStatus === 'ok'"
+            class="rounded-lg bg-emerald-50 px-3 py-2 text-sm dark:bg-emerald-900/20"
+          >
+            ✅ Ollama に接続できました
+            <div class="mt-2 text-xs text-text-muted">
+              利用可能なモデル: {{ availableModels.join(', ') || '(なし)' }}
+            </div>
+            <div
+              v-if="!hasDefaultModel"
+              class="mt-2 rounded bg-amber-100 px-2 py-1 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+            >
+              ⚠ デフォルトモデル(gemma2:9b)が未取得です。次のステップでダウンロードします。
+            </div>
+          </div>
+          <div
+            v-else-if="ollamaStatus === 'error'"
+            class="rounded-lg bg-rose-50 px-3 py-2 text-sm dark:bg-rose-900/20"
+          >
+            ❌ Ollama に接続できませんでした
+            <div class="mt-1 text-xs text-text-muted">{{ ollamaError }}</div>
+            <div class="mt-3 space-y-1 text-xs">
+              <div>インストール: <code>brew install ollama</code></div>
+              <div>起動: <code>brew services start ollama</code></div>
+              <div>または: <code>ollama serve</code>(フォアグラウンド)</div>
+            </div>
+          </div>
+
+          <BaseButton variant="secondary" size="sm" @click="checkOllama">
+            🔄 再チェック
+          </BaseButton>
         </div>
 
-        <div v-else-if="step === 3" class="mt-6 space-y-4">
-          <p>LLM と Whisper のモデルを選択してください。</p>
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">LLM(推奨: Gemma 2 9B)</label>
-            <select class="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm">
-              <option>軽量 (Llama 3.2 3B / ~2GB)</option>
-              <option selected>推奨 (Gemma 2 9B / ~5.5GB)</option>
-              <option>高精度 (Qwen 2.5 14B / ~9GB)</option>
+        <div v-else-if="step === 3" class="space-y-4">
+          <h2 class="text-xl font-semibold">モデル選択</h2>
+          <p class="text-sm text-text-muted">
+            利用する LLM と Whisper のモデルを選びます。後から設定で変更可能です。
+          </p>
+          <div>
+            <label class="block text-sm font-medium">LLM</label>
+            <select
+              v-model="llmModel"
+              class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            >
+              <option value="llama3.2:3b">軽量 (Llama 3.2 3B / ~2GB)</option>
+              <option value="gemma2:9b">推奨 (Gemma 2 9B / ~5.5GB)</option>
+              <option value="qwen2.5:14b">高精度 (Qwen 2.5 14B / ~9GB)</option>
             </select>
           </div>
-          <div class="space-y-2">
-            <label class="block text-sm font-medium">Whisper(推奨: medium)</label>
-            <select class="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm">
-              <option>small (~500MB)</option>
-              <option selected>medium (~1.5GB)</option>
-              <option>large-v3 (~3GB)</option>
+          <div>
+            <label class="block text-sm font-medium">Whisper</label>
+            <select
+              v-model="whisperModel"
+              class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            >
+              <option value="small">small (~500MB)</option>
+              <option value="medium">medium (~1.5GB)</option>
+              <option value="large-v3">large-v3 (~3GB)</option>
             </select>
           </div>
         </div>
 
-        <div v-else-if="step === 4" class="mt-6 space-y-4">
-          <p>モデルをダウンロードしています(Wi-Fi推奨、5〜30分)</p>
-          <div>
-            <div class="mb-1 flex justify-between text-xs text-text-muted">
-              <span>Gemma 2 9B</span>
-              <span>0 / 5.5 GB</span>
-            </div>
-            <div class="h-2 overflow-hidden rounded-full bg-border">
-              <div class="h-full w-0 bg-primary" />
-            </div>
+        <div v-else-if="step === 4" class="space-y-4">
+          <h2 class="text-xl font-semibold">モデルダウンロード</h2>
+          <p class="text-sm text-text-muted">
+            次のコマンドをターミナルで実行してください(初回のみ):
+          </p>
+          <div class="rounded-lg bg-bg p-3 font-mono text-xs">
+            <div># LLM(数GB、Wi-Fi推奨)</div>
+            <div>ollama pull {{ llmModel }}</div>
+            <div class="mt-2"># Whisper モデル + whisper.cpp ビルド</div>
+            <div>cd backend</div>
+            <div>npx --yes nodejs-whisper download</div>
+            <div>(プロンプトで {{ whisperModel }} と入力)</div>
           </div>
-          <div>
-            <div class="mb-1 flex justify-between text-xs text-text-muted">
-              <span>Whisper medium</span>
-              <span>0 / 1.5 GB</span>
-            </div>
-            <div class="h-2 overflow-hidden rounded-full bg-border">
-              <div class="h-full w-0 bg-primary" />
-            </div>
-          </div>
+          <p class="text-xs text-text-muted">
+            ダウンロード完了後、このページに戻って「次へ」を押してください。
+          </p>
         </div>
 
-        <div v-else-if="step === 5" class="mt-6 space-y-4">
-          <p>AIキャラクターを設定してください。</p>
+        <div v-else-if="step === 5" class="space-y-4">
+          <h2 class="text-xl font-semibold">AIキャラクター設定</h2>
+          <p class="text-sm text-text-muted">
+            会話相手のAIに名前を付けます。
+          </p>
           <div>
             <label class="block text-sm font-medium">名前</label>
             <input
+              v-model="aiName"
               type="text"
-              value="Emma"
               class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             />
-            <div class="mt-2 flex flex-wrap gap-2 text-xs text-text-muted">
-              <span>候補:</span>
-              <span>Emma · Mike · Alex · Sarah · James</span>
+            <div class="mt-2 text-xs text-text-muted">
+              候補: Emma · Mike · Alex · Sarah · James
             </div>
           </div>
           <div>
             <div class="text-sm font-medium">性別 / 声</div>
-            <div class="mt-2 flex gap-3">
-              <label class="flex items-center gap-2 text-sm">
-                <input type="radio" name="gender" value="female" checked />
+            <div class="mt-2 flex gap-2">
+              <BaseButton
+                :variant="aiGender === 'female' ? 'primary' : 'secondary'"
+                size="sm"
+                @click="aiGender = 'female'"
+              >
                 女性 (Samantha)
-              </label>
-              <label class="flex items-center gap-2 text-sm">
-                <input type="radio" name="gender" value="male" />
+              </BaseButton>
+              <BaseButton
+                :variant="aiGender === 'male' ? 'primary' : 'secondary'"
+                size="sm"
+                @click="aiGender = 'male'"
+              >
                 男性 (Daniel)
-              </label>
+              </BaseButton>
             </div>
           </div>
         </div>
 
-        <div v-else-if="step === 6" class="mt-6 space-y-3">
-          <p class="text-lg font-medium">準備完了!</p>
-          <p class="text-sm text-text-muted">
-            「会話を始める」をクリックして最初の会話に進みましょう。
+        <div v-else-if="step === 6" class="space-y-3">
+          <h2 class="text-xl font-semibold">準備完了!</h2>
+          <p class="text-sm">
+            これで設定は完了です。「会話を始める」をクリックして最初の会話に進みましょう。
+          </p>
+          <p class="text-xs text-text-muted">
+            これらの設定は後から「設定」画面で変更できます。
           </p>
         </div>
       </BaseCard>
@@ -147,15 +252,15 @@ function prev() {
         <BaseButton variant="ghost" :disabled="step === 1" @click="prev">
           ← 戻る
         </BaseButton>
-        <BaseButton v-if="step < 6" @click="next">次へ →</BaseButton>
-        <router-link v-else to="/">
-          <BaseButton>会話を始める</BaseButton>
-        </router-link>
+        <BaseButton
+          v-if="step < 6"
+          :disabled="step === 2 && ollamaStatus !== 'ok'"
+          @click="next"
+        >
+          次へ →
+        </BaseButton>
+        <BaseButton v-else @click="complete">会話を始める</BaseButton>
       </footer>
-
-      <p class="mt-4 text-center text-xs text-text-muted">
-        Phase 3 — Task 3.5 で完全実装 / Task 2.4 ではスケルトン
-      </p>
     </div>
   </div>
 </template>

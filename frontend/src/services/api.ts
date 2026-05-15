@@ -99,3 +99,39 @@ export async function summarize(
   })
   return asJson<{ summary: string }>(res)
 }
+
+export interface ExtractFactsResult {
+  newFacts: string[]
+  updatedName: string | null
+}
+
+export async function extractFacts(
+  transcript: ChatHistoryItem[],
+  existingFacts: string[],
+  existingName: string | null,
+): Promise<ExtractFactsResult> {
+  const res = await fetch('/api/extract-facts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transcript, existingFacts, existingName }),
+  })
+  return asJson<ExtractFactsResult>(res)
+}
+
+export interface OllamaHealth {
+  ok: boolean
+  baseUrl?: string
+  models?: string[]
+  defaultModel?: string
+  hasDefaultModel?: boolean
+  error?: string
+}
+
+export async function checkOllamaHealth(): Promise<OllamaHealth> {
+  try {
+    const res = await fetch('/api/health/ollama')
+    return (await res.json()) as OllamaHealth
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+}

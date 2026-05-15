@@ -2,7 +2,13 @@ import { ref } from 'vue'
 import { conversationsRepo } from '../db/repos/conversations'
 import { messagesRepo } from '../db/repos/messages'
 import type { Message } from '../db/types'
-import { chat, summarize, transcribeAudio, type ChatHistoryItem } from '../services/api'
+import {
+  chat,
+  extractFacts,
+  summarize,
+  transcribeAudio,
+  type ChatHistoryItem,
+} from '../services/api'
 import { useConversationStore } from '../stores/conversation'
 import { useProfileStore } from '../stores/profile'
 import { useSettingsStore } from '../stores/settings'
@@ -241,6 +247,31 @@ export function useConversationLoop() {
         summaryText = res.summary
       } catch (e) {
         console.warn('[loop] summarize failed:', e)
+      }
+
+      // ユーザーの新事実をプロフィールに学習追加
+      try {
+        const existingFacts = profile.facts.map((f) => f.fact)
+        const result = await extractFacts(
+          transcriptItems,
+          existingFacts,
+          profile.name,
+        )
+        const knownSet = new Set(existingFacts)
+        for (const fact of result.newFacts) {
+          if (!knownSet.has(fact)) {
+            await profile.addFact({
+              fact,
+              learnedFromConversationId: conversation.id,
+            })
+            knownSet.add(fact)
+          }
+        }
+        if (result.updatedName && !profile.name) {
+          await profile.setName(result.updatedName)
+        }
+      } catch (e) {
+        console.warn('[loop] extract-facts failed:', e)
       }
     }
 

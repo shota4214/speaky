@@ -33,6 +33,13 @@
 - デフォルト: **medium**(約 1.5 GB)
 - 設定で `small`(500MB) / `large-v3`(3GB)を選択可能にする(Phase 3 の設定画面で)
 
+## 実装時に判明した前提
+
+- **`ffmpeg` をシステムにインストールしておく必要がある**(`brew install ffmpeg`)
+  - nodejs-whisper は内部で `child_process` 経由で `ffmpeg` を呼び、入力音声を 16kHz mono WAV に変換する
+  - 当初の調査で「ffmpeg 同梱」と書かれていたが、実際にはバイナリは同梱されておらず、システムの ffmpeg を呼び出す
+  - これがないと `[Nodejs-whisper] Failed to convert audio file: /bin/sh: ffmpeg: command not found` が出る
+
 ## 参考
 
 - nodejs-whisper: https://github.com/ChetanXpro/nodejs-whisper

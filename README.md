@@ -7,8 +7,12 @@ MacBook(Apple Silicon)上で Whisper(音声認識) / Ollama(LLM) / Web Speech AP
 
 - macOS (Apple Silicon, M4/M5想定)
 - Node.js >= 20
+- Homebrew で以下:
+  - `brew install cmake`(whisper.cpp ビルドに必要)
+  - `brew install ffmpeg`(音声入力フォーマット変換に必要)
 - Ollama (https://ollama.com)
 - `ollama pull gemma2:9b` 済み
+- `npx --yes nodejs-whisper download`(初回のみ、`medium` モデル取得 + whisper.cpp ビルド)
 
 ## Setup
 

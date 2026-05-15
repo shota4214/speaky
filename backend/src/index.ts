@@ -1,5 +1,7 @@
 import express from 'express'
 import cors from 'cors'
+import { chatRouter } from './routes/chat'
+import { ollamaConfig } from './services/ollama'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
@@ -11,6 +13,9 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
+app.use('/api', chatRouter)
+
 app.listen(PORT, () => {
   console.log(`[backend] listening on http://localhost:${PORT}`)
+  console.log(`[backend] ollama -> ${ollamaConfig.baseUrl} (model: ${ollamaConfig.model})`)
 })

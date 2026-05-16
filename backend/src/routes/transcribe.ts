@@ -18,6 +18,10 @@ const upload = multer({
 })
 
 type Language = 'en' | 'ja' | 'mixed' | 'unknown'
+// nodejs-whisper の MODELS_LIST(constants.js)に含まれ、かつ Hugging Face
+// 側で `ggml-${name}.bin` が実在するモデルのみを許可する。
+// - `large-v3` は nodejs-whisper の MODELS_LIST に無く拒否される
+// - `large` は nodejs-whisper には載っているが ggml-large.bin が HF で 404
 type WhisperModelName =
   | 'tiny'
   | 'tiny.en'
@@ -27,7 +31,7 @@ type WhisperModelName =
   | 'small.en'
   | 'medium'
   | 'medium.en'
-  | 'large-v3'
+  | 'large-v1'
   | 'large-v3-turbo'
 
 const ALLOWED_WHISPER_MODELS = new Set<WhisperModelName>([
@@ -39,7 +43,7 @@ const ALLOWED_WHISPER_MODELS = new Set<WhisperModelName>([
   'small.en',
   'medium',
   'medium.en',
-  'large-v3',
+  'large-v1',
   'large-v3-turbo',
 ])
 

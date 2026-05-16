@@ -2,7 +2,35 @@ import type { Gender, Level } from '../db/types'
 
 const STORAGE_KEY = 'speaky:settings'
 
-export type WhisperModel = 'small' | 'medium' | 'large-v3'
+// nodejs-whisper の MODELS_LIST に含まれ、かつ Hugging Face で実在する
+// `ggml-${name}.bin` を持つ名前のみ許可する。
+// - `large-v3` は nodejs-whisper の MODELS_LIST に無いため拒否される
+// - `large`(無印)は HF 上に ggml-large.bin が無く 404 になるため除外
+export type WhisperModel =
+  | 'tiny'
+  | 'tiny.en'
+  | 'base'
+  | 'base.en'
+  | 'small'
+  | 'small.en'
+  | 'medium'
+  | 'medium.en'
+  | 'large-v1'
+  | 'large-v3-turbo'
+
+const VALID_WHISPER_MODELS = new Set<WhisperModel>([
+  'tiny',
+  'tiny.en',
+  'base',
+  'base.en',
+  'small',
+  'small.en',
+  'medium',
+  'medium.en',
+  'large-v1',
+  'large-v3-turbo',
+])
+
 export type DarkModePref = 'system' | 'light' | 'dark'
 
 export interface AppSettings {
@@ -40,7 +68,7 @@ export function loadSettings(): AppSettings {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULT_SETTINGS }
     const parsed = JSON.parse(raw) as Partial<AppSettings>
-    return {
+    const merged: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...parsed,
       aiCharacter: {
@@ -48,6 +76,15 @@ export function loadSettings(): AppSettings {
         ...(parsed.aiCharacter ?? {}),
       },
     }
+    // 過去バージョンで保存されたサポート外の whisperModel(例: `large-v3`)を
+    // 検出してデフォルトに戻す。そうしないと nodejs-whisper が拒否する。
+    if (!VALID_WHISPER_MODELS.has(merged.whisperModel)) {
+      console.warn(
+        `[settings] Unsupported whisperModel "${merged.whisperModel}" detected; falling back to "${DEFAULT_SETTINGS.whisperModel}"`,
+      )
+      merged.whisperModel = DEFAULT_SETTINGS.whisperModel
+    }
+    return merged
   } catch {
     return { ...DEFAULT_SETTINGS }
   }

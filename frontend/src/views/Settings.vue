@@ -14,6 +14,7 @@ import {
   pullOllamaModel,
   type InstalledModel,
 } from '../services/api'
+import type { WhisperModel } from '../storage/settings'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore } from '../stores/theme'
 import {
@@ -118,7 +119,7 @@ const whisperPresets = [
   { value: 'base', label: 'base (~142MB)' },
   { value: 'small', label: 'small (~466MB)' },
   { value: 'medium', label: 'medium (~1.5GB)' },
-  { value: 'large-v3', label: 'large-v3 (~2.9GB)' },
+  { value: 'large-v1', label: 'large-v1 (~2.9GB)' },
   { value: 'large-v3-turbo', label: 'large-v3-turbo (~1.5GB)' },
 ]
 
@@ -215,7 +216,7 @@ function updateTtsRateLink(e: Event) {
 }
 function updateWhisper(e: Event) {
   settings.update({
-    whisperModel: (e.target as HTMLSelectElement).value as 'small' | 'medium' | 'large-v3',
+    whisperModel: (e.target as HTMLSelectElement).value as WhisperModel,
   })
 }
 function updateLlm(e: Event) {
@@ -328,9 +329,12 @@ async function handleDeleteAll() {
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateWhisper"
           >
-            <option value="small">small (~500MB)</option>
+            <option value="tiny">tiny (~75MB)</option>
+            <option value="base">base (~142MB)</option>
+            <option value="small">small (~466MB)</option>
             <option value="medium">medium (~1.5GB)</option>
-            <option value="large-v3">large-v3 (~3GB)</option>
+            <option value="large-v1">large-v1 (~2.9GB)</option>
+            <option value="large-v3-turbo">large-v3-turbo (~1.5GB)</option>
           </select>
           <p class="mt-1 text-xs text-text-muted">
             ※ 切り替えは backend 環境変数(OLLAMA_MODEL系)で行ってください

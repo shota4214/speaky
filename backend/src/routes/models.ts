@@ -211,6 +211,8 @@ modelsRouter.post('/models/ollama/pull', adminAuth, async (req: Request, res: Re
 
 // ----- Whisper download (SSE, direct from Hugging Face) -----
 
+// nodejs-whisper の MODELS_LIST に含まれ、かつ Hugging Face で実在する
+// `ggml-${name}.bin` を持つ名前のみ許可。`large` は HF で 404 になるため除外。
 const WHISPER_PRESETS = new Set([
   'tiny',
   'tiny.en',
@@ -220,7 +222,7 @@ const WHISPER_PRESETS = new Set([
   'small.en',
   'medium',
   'medium.en',
-  'large-v3',
+  'large-v1',
   'large-v3-turbo',
 ])
 

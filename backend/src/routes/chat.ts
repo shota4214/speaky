@@ -1,5 +1,10 @@
 import { Router, type Request, type Response } from 'express'
-import { buildSystemPrompt, type Level, type Mode } from '../services/conversation-prompt.js'
+import {
+  buildOpeningUserPrompt,
+  buildSystemPrompt,
+  type Level,
+  type Mode,
+} from '../services/conversation-prompt.js'
 import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
 
 const MAX_RETRIES = 3
@@ -142,6 +147,10 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       const ollamaRes = await chatWithOllama(messages, {
         model: context.model,
         timeoutMs: 90_000,
+        // バリエーション重視: 高め temperature + 繰り返しペナルティ
+        temperature: 0.85,
+        topP: 0.92,
+        repeatPenalty: 1.15,
       })
       lastRawContent = ollamaRes.message?.content ?? ''
       const reply = parseChatReply(lastRawContent, mode)
@@ -159,6 +168,71 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         }
       }
       console.error('[chat] unexpected error:', e)
+      return res.status(500).json({ error: (e as Error).message })
+    }
+  }
+
+  return res.status(502).json({
+    error: `Ollama did not return valid JSON after ${MAX_RETRIES} attempts.`,
+    rawContent: lastRawContent,
+  })
+})
+
+// 会話開始時に AI から最初に話しかけてもらうための endpoint。
+// userText を受け取らず、合成プロンプトで AI に挨拶+話題切り出しを生成させる。
+chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
+  const { context = {} } = (req.body ?? {}) as { context?: ChatContext }
+  const mode: Mode = 'normal'
+
+  const systemPrompt = buildSystemPrompt({
+    aiName: context.aiName,
+    level: context.level,
+    topic: context.topic,
+    topicDescription: context.topicDescription,
+    mode,
+    vocabFocus: context.vocabFocus,
+    userProfile: context.userProfile,
+    lastConversationSummary: context.lastConversationSummary,
+  })
+
+  const openingUserPrompt = buildOpeningUserPrompt({
+    aiName: context.aiName,
+    topic: context.topic,
+    userProfile: context.userProfile,
+    lastConversationSummary: context.lastConversationSummary,
+  })
+
+  const messages: OllamaChatMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: openingUserPrompt },
+  ]
+
+  let lastRawContent: string | undefined
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const ollamaRes = await chatWithOllama(messages, {
+        model: context.model,
+        timeoutMs: 90_000,
+        // 挨拶はバリエーション最重視
+        temperature: 0.95,
+        topP: 0.95,
+        repeatPenalty: 1.2,
+      })
+      lastRawContent = ollamaRes.message?.content ?? ''
+      const reply = parseChatReply(lastRawContent, mode)
+      if (reply) return res.json(reply)
+      console.warn(
+        `[chat/opening] JSON parse failed (attempt ${attempt}/${MAX_RETRIES}). raw=`,
+        lastRawContent.slice(0, 200),
+      )
+    } catch (e) {
+      if (e instanceof OllamaError) {
+        if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
+          return res.status(503).json({ error: e.message, code: e.code })
+        }
+      }
+      console.error('[chat/opening] unexpected error:', e)
       return res.status(500).json({ error: (e as Error).message })
     }
   }

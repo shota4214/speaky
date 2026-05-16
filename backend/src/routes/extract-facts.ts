@@ -70,6 +70,9 @@ Extract new facts the user revealed in this transcript.`
       jsonFormat: true,
       model,
       timeoutMs: 60_000,
+      // 事実抽出は安定性重視: 低 temperature
+      temperature: 0.2,
+      topP: 0.8,
     })
     const raw = ollamaRes.message?.content ?? ''
     try {

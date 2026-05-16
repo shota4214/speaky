@@ -4,6 +4,7 @@ import { messagesRepo } from '../db/repos/messages'
 import type { Message } from '../db/types'
 import {
   chat,
+  chatOpening,
   extractFacts,
   summarize,
   transcribeAudio,
@@ -73,7 +74,65 @@ export function useConversationLoop() {
     lastAiReplyEn.value = ''
 
     await profile.load().catch(() => undefined)
-    await runLoop(input)
+    await playOpening(input)
+    if (!stopRequested.value) {
+      await runLoop(input)
+    }
+  }
+
+  /**
+   * 会話開始時に AI から最初の挨拶を生成 → 表示 → 読み上げ。
+   * 失敗してもループは継続する(挨拶なしで普通に会話開始)。
+   */
+  async function playOpening(input: StartLoopInput) {
+    if (!conversation.id) return
+
+    // Phase 1: 挨拶生成(API失敗時は完全にスキップしてユーザー主導の会話に)
+    conversation.setMode('thinking')
+    let reply
+    try {
+      reply = await chatOpening({
+        aiName: settings.settings.aiCharacter.name,
+        level: conversation.level,
+        topic: conversation.topic,
+        vocabFocus: input.vocabFocusWords,
+        userProfile: profile.facts.map((f) => f.fact),
+        lastConversationSummary: input.lastConversationSummary,
+        model: settings.settings.llmModel,
+      })
+    } catch (e) {
+      console.warn('[loop] opening generation failed, skipping:', e)
+      return
+    }
+
+    if (stopRequested.value || !conversation.id) return
+
+    // Phase 2: メッセージ永続化(IndexedDB)
+    const aiMsg = await messagesRepo.create({
+      conversationId: conversation.id,
+      timestamp: new Date(),
+      role: 'ai',
+      userText: null,
+      inputLanguage: null,
+      replyEn: reply.reply_en,
+      replyJa: reply.reply_ja,
+      feedback: null,
+      vocabulary: reply.vocabulary,
+      mode: 'normal',
+    })
+    conversation.appendMessage(aiMsg)
+    lastAiReplyEn.value = reply.reply_en
+
+    // Phase 3: 読み上げ(失敗してもメッセージは画面に出ているので、
+    // ユーザーに「読み上げ失敗」を明示してテキストを読んでもらう導線へ)
+    try {
+      conversation.setMode('aiSpeaking')
+      await tts.speak(reply.reply_en, { rate: speakRateForLevel() })
+    } catch (e) {
+      console.warn('[loop] opening TTS failed:', e)
+      errorMessage.value =
+        'AI挨拶の音声合成に失敗しました。上の英文を読んでから話しかけてください。'
+    }
   }
 
   async function runLoop(input: StartLoopInput) {
@@ -234,8 +293,13 @@ export function useConversationLoop() {
     if (!conversation.id) return null
     const transcriptItems: ChatHistoryItem[] = buildHistory()
 
+    // AI からの opening だけで終わった(ユーザー発話無し)場合は
+    // 要約・事実抽出をスキップする。そうしないと「挨拶しただけ」のセッションが
+    // turn 1 / summary 有りで履歴に残り、次回 lastConversationSummary にも混入する。
+    const hasUserTurn = transcriptItems.some((x) => x.role === 'user')
+
     let summaryText = ''
-    if (transcriptItems.length > 0) {
+    if (hasUserTurn) {
       try {
         const res = await summarize(transcriptItems, conversation.topic, {
           model: settings.settings.llmModel,
@@ -267,6 +331,8 @@ export function useConversationLoop() {
       } catch (e) {
         console.warn('[loop] extract-facts failed:', e)
       }
+    } else {
+      console.log('[loop] no user turn — skipping summary & fact extraction')
     }
 
     const endedAt = new Date()

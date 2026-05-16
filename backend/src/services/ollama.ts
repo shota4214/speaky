@@ -27,7 +27,13 @@ type OllamaChatRequest = {
   messages: OllamaChatMessage[]
   format?: 'json'
   stream?: boolean
-  options?: { temperature?: number }
+  options?: {
+    temperature?: number
+    top_p?: number
+    top_k?: number
+    seed?: number
+    repeat_penalty?: number
+  }
 }
 
 export type OllamaChatResponse = {
@@ -53,6 +59,14 @@ export class OllamaError extends Error {
 export interface ChatWithOllamaOptions {
   jsonFormat?: boolean
   temperature?: number
+  /** nucleus sampling: 0.0-1.0. 高いほど候補が広い。デフォルト 0.9 */
+  topP?: number
+  /** Top-K サンプリング。0で無効化。デフォルト 40 */
+  topK?: number
+  /** 同じ入力でも異なる結果を得るための seed。省略時は毎回ランダム */
+  seed?: number
+  /** 繰り返しペナルティ。1.1 程度で同じフレーズの再使用を抑制 */
+  repeatPenalty?: number
   model?: string
   /** タイムアウト (ms)。0で無効化。デフォルト90秒 */
   timeoutMs?: number
@@ -66,6 +80,12 @@ export async function chatWithOllama(
 ): Promise<OllamaChatResponse> {
   const jsonFormat = options.jsonFormat ?? true
   const temperature = options.temperature ?? 0.7
+  const topP = options.topP ?? 0.9
+  const topK = options.topK ?? 40
+  const repeatPenalty = options.repeatPenalty ?? 1.1
+  // 同じプロンプトでも毎回違う返答を引き出すため、seed を毎回ランダム化。
+  // 固定したい場合は呼び出し側で seed を渡す。
+  const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31)
   const model = resolveLlmModel(options.model)
   const timeoutMs = options.timeoutMs ?? 90_000
 
@@ -84,7 +104,13 @@ export async function chatWithOllama(
       model,
       messages,
       stream: false,
-      options: { temperature },
+      options: {
+        temperature,
+        top_p: topP,
+        top_k: topK,
+        seed,
+        repeat_penalty: repeatPenalty,
+      },
     }
     if (jsonFormat) body.format = 'json'
 

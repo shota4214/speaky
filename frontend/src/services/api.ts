@@ -77,8 +77,9 @@ export async function transcribeAudio(
   } = {},
 ): Promise<TranscribeResult> {
   const form = new FormData()
-  form.append('audio', blob, options.filename ?? 'recording.webm')
+  // text フィールドは file より前に append する(multer の挙動に合わせる)
   if (options.model) form.append('model', options.model)
+  form.append('audio', blob, options.filename ?? 'recording.webm')
   const res = await fetch('/api/transcribe', {
     method: 'POST',
     body: form,
@@ -96,6 +97,23 @@ export async function chat(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userText, context }),
+    signal: options.signal,
+  })
+  return asJson<ChatReply>(res)
+}
+
+/**
+ * 会話開始時に AI から最初に話しかけてもらうエンドポイント。
+ * userText を送らず、context だけで AI が挨拶 + 話題切り出しを生成する。
+ */
+export async function chatOpening(
+  context: ChatRequestContext = {},
+  options: { signal?: AbortSignal } = {},
+): Promise<ChatReply> {
+  const res = await fetch('/api/chat/opening', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context }),
     signal: options.signal,
   })
   return asJson<ChatReply>(res)

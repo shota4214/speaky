@@ -44,6 +44,9 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
       jsonFormat: false,
       model,
       timeoutMs: 60_000,
+      // 要約は安定性重視: 低 temperature
+      temperature: 0.3,
+      topP: 0.85,
     })
     const raw = ollamaRes.message?.content ?? ''
     const summary = raw.trim().slice(0, 240) // safety cap

@@ -102,6 +102,13 @@ transcribeRouter.post(
     const requestedModel = typeof req.body?.model === 'string' ? req.body.model : undefined
     const modelName = resolveWhisperModel(requestedModel)
 
+    // 念のため最終ガード(本来は resolveWhisperModel が常に文字列を返す)
+    if (!modelName) {
+      return res.status(500).json({ error: 'Internal: failed to resolve whisper model name' })
+    }
+
+    console.log(`[transcribe] start: requested=${requestedModel ?? '(none)'} resolved=${modelName}`)
+
     try {
       const result = await nodewhisper(filePath, {
         modelName,

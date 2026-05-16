@@ -289,8 +289,26 @@ export function useConversationLoop() {
     tts.cancel()
   }
 
+  // endAndPersist の二重実行ガード(handleEnd が何らかの理由で 2 回呼ばれても
+  // 1 回目だけ実際の処理を走らせる。2 回目は同じ id を返して安全に終わる)
+  let endInFlight: Promise<string | null> | null = null
+
   async function endAndPersist(): Promise<string | null> {
-    if (!conversation.id) return null
+    if (endInFlight) return endInFlight
+    endInFlight = doEndAndPersist().finally(() => {
+      endInFlight = null
+    })
+    return endInFlight
+  }
+
+  async function doEndAndPersist(): Promise<string | null> {
+    // 関数の最初に conversation.id を「キャプチャ」しておく。
+    // 以降の await 中に store の id が null に書き換わっても、
+    // ここで保持した id を使い続ける(Table.get(null) を避ける)。
+    const conversationId = conversation.id
+    if (!conversationId) return null
+
+    const topic = conversation.topic
     const transcriptItems: ChatHistoryItem[] = buildHistory()
 
     // AI からの opening だけで終わった(ユーザー発話無し)場合は
@@ -301,7 +319,7 @@ export function useConversationLoop() {
     let summaryText = ''
     if (hasUserTurn) {
       try {
-        const res = await summarize(transcriptItems, conversation.topic, {
+        const res = await summarize(transcriptItems, topic, {
           model: settings.settings.llmModel,
         })
         summaryText = res.summary
@@ -320,7 +338,7 @@ export function useConversationLoop() {
           if (!knownSet.has(fact)) {
             await profile.addFact({
               fact,
-              learnedFromConversationId: conversation.id,
+              learnedFromConversationId: conversationId,
             })
             knownSet.add(fact)
           }
@@ -336,12 +354,14 @@ export function useConversationLoop() {
     }
 
     const endedAt = new Date()
-    await conversationsRepo.update(conversation.id, {
+    // endedAt/summary の永続化は会話終了の主処理なので、失敗時は呼び出し側に
+    // 投げてユーザーがリトライできるようにする(握りつぶさない)。
+    await conversationsRepo.update(conversationId, {
       endedAt,
       summary: summaryText || null,
     })
 
-    return conversation.id
+    return conversationId
   }
 
   return {

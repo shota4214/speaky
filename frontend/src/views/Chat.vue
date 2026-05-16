@@ -126,15 +126,36 @@ const bars = computed(() => {
   return arr
 })
 
+const ending = ref(false)
+const endErrorMessage = ref<string>('')
+
 async function handleEnd() {
-  loop.stop()
-  const id = await loop.endAndPersist()
-  conversation.end()
-  vocabStore.clear()
-  if (id) {
-    await router.push({ path: '/chat/summary', query: { id } })
-  } else {
-    await router.push('/')
+  // 二重押し防止: 1 回目の終了処理が完了するまで 2 回目以降は無視
+  if (ending.value) return
+  ending.value = true
+  endErrorMessage.value = ''
+  try {
+    loop.stop()
+    let id: string | null
+    try {
+      id = await loop.endAndPersist()
+    } catch (e) {
+      // 保存失敗時は会話状態(conversation.id / messages)を保持し、
+      // ユーザーが「会話を終わる」をもう一度押せば再試行できるようにする。
+      // 履歴に endedAt 無しの会話が残るのを防ぐ。
+      endErrorMessage.value = `会話の保存に失敗しました: ${(e as Error).message}\nもう一度「会話を終わる」を押すと再試行します。`
+      console.error('[chat] endAndPersist failed:', e)
+      return
+    }
+    conversation.end()
+    vocabStore.clear()
+    if (id) {
+      await router.push({ path: '/chat/summary', query: { id } })
+    } else {
+      await router.push('/')
+    }
+  } finally {
+    ending.value = false
   }
 }
 
@@ -184,7 +205,15 @@ function isVocabSaved(message: Message, word: string): boolean {
             <span v-if="conversation.isPaused" class="text-amber-500"> ⏸ 一時停止中 </span>
           </div>
         </div>
-        <BaseButton variant="danger" size="sm" @click="handleEnd"> ⏹ 会話を終わる </BaseButton>
+        <BaseButton variant="danger" size="sm" :disabled="ending" @click="handleEnd">
+          {{ ending ? '終了処理中...' : '⏹ 会話を終わる' }}
+        </BaseButton>
+      </div>
+      <div
+        v-if="endErrorMessage"
+        class="mx-auto mt-2 max-w-4xl whitespace-pre-wrap rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/30 dark:text-rose-300"
+      >
+        {{ endErrorMessage }}
       </div>
     </header>
 

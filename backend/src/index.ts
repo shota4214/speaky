@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import { chatRouter } from './routes/chat'
 import { extractFactsRouter } from './routes/extract-facts'
+import { modelsRouter } from './routes/models'
 import { summarizeRouter } from './routes/summarize'
 import { transcribeRouter } from './routes/transcribe'
 import { ollamaConfig } from './services/ollama'
@@ -49,6 +50,7 @@ app.use('/api', chatRouter)
 app.use('/api', summarizeRouter)
 app.use('/api', extractFactsRouter)
 app.use('/api', transcribeRouter)
+app.use('/api', modelsRouter)
 
 app.listen(PORT, () => {
   console.log(`[backend] listening on http://localhost:${PORT}`)

@@ -3,7 +3,15 @@ import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
-import { checkOllamaHealth } from '../services/api'
+import {
+  buildWhisperCpp,
+  checkOllamaHealth,
+  downloadWhisperModelStream,
+  getWhisperCppStatus,
+  listOllamaModels,
+  listWhisperModels,
+  pullOllamaModel,
+} from '../services/api'
 import { useSettingsStore } from '../stores/settings'
 
 const router = useRouter()
@@ -42,16 +50,121 @@ async function checkOllama() {
 
 watch(step, (s) => {
   if (s === 2) checkOllama()
+  if (s === 4) refreshStep4Status()
 })
 
 onMounted(() => {
   if (step.value === 2) checkOllama()
+  if (step.value === 4) refreshStep4Status()
 })
 
 const llmModel = ref(settings.settings.llmModel)
 const whisperModel = ref(settings.settings.whisperModel)
 const aiName = ref(settings.settings.aiCharacter.name)
 const aiGender = ref<'female' | 'male'>(settings.settings.aiCharacter.gender)
+
+// Step 4: download state
+const llmPulled = ref(false)
+const llmPulling = ref(false)
+const llmPullProgress = ref(0)
+const llmPullStatus = ref('')
+const llmPullError = ref('')
+
+const whisperCppBuilt = ref(false)
+const buildingWhisperCpp = ref(false)
+const buildError = ref('')
+const buildLog = ref('')
+
+const whisperDownloaded = ref(false)
+const whisperDownloading = ref(false)
+const whisperProgress = ref(0)
+const whisperStatus = ref('')
+const whisperError = ref('')
+
+async function refreshStep4Status() {
+  try {
+    const llmList = await listOllamaModels()
+    llmPulled.value = llmList.models.some((m) => m.name === llmModel.value)
+  } catch {
+    llmPulled.value = false
+  }
+  try {
+    const wList = await listWhisperModels()
+    whisperDownloaded.value = wList.models.some(
+      (m) => m.name === `ggml-${whisperModel.value}.bin`,
+    )
+  } catch {
+    whisperDownloaded.value = false
+  }
+  try {
+    const s = await getWhisperCppStatus()
+    whisperCppBuilt.value = s.built
+  } catch {
+    whisperCppBuilt.value = false
+  }
+}
+
+async function pullLlm() {
+  llmPulling.value = true
+  llmPullProgress.value = 0
+  llmPullStatus.value = 'starting...'
+  llmPullError.value = ''
+  try {
+    await pullOllamaModel(llmModel.value, (p) => {
+      if (p.status) llmPullStatus.value = p.status
+      if (p.total && p.completed) {
+        llmPullProgress.value = Math.round((p.completed / p.total) * 100)
+      }
+    })
+    llmPulled.value = true
+    llmPullStatus.value = 'done'
+  } catch (e) {
+    llmPullError.value = (e as Error).message
+  } finally {
+    llmPulling.value = false
+  }
+}
+
+async function buildWhisper() {
+  buildingWhisperCpp.value = true
+  buildError.value = ''
+  buildLog.value = ''
+  try {
+    await buildWhisperCpp((p) => {
+      if (p.command) buildLog.value += `\n$ ${p.command}\n`
+      if (p.stdout) buildLog.value += p.stdout
+      if (p.stderr) buildLog.value += p.stderr
+      if (p.status === 'done') buildLog.value += `\n[${p.step} ✓]\n`
+    })
+    whisperCppBuilt.value = true
+    buildLog.value += '\n[ビルド完了 ✓]\n'
+  } catch (e) {
+    buildError.value = (e as Error).message
+  } finally {
+    buildingWhisperCpp.value = false
+  }
+}
+
+async function downloadWhisper() {
+  whisperDownloading.value = true
+  whisperProgress.value = 0
+  whisperStatus.value = 'starting...'
+  whisperError.value = ''
+  try {
+    await downloadWhisperModelStream(whisperModel.value, (p) => {
+      if (p.status) whisperStatus.value = p.status
+      if (p.total && p.completed) {
+        whisperProgress.value = Math.round((p.completed / p.total) * 100)
+      }
+    })
+    whisperDownloaded.value = true
+    whisperStatus.value = 'done'
+  } catch (e) {
+    whisperError.value = (e as Error).message
+  } finally {
+    whisperDownloading.value = false
+  }
+}
 
 function next() {
   if (step.value < 6) step.value = (step.value + 1) as Step
@@ -182,21 +295,144 @@ function complete() {
           </div>
         </div>
 
-        <div v-else-if="step === 4" class="space-y-4">
+        <div v-else-if="step === 4" class="space-y-5">
           <h2 class="text-xl font-semibold">モデルダウンロード</h2>
           <p class="text-sm text-text-muted">
-            次のコマンドをターミナルで実行してください(初回のみ):
+            選択したモデルをダウンロードします。Wi-Fi推奨、合計で 5〜30 分。
           </p>
-          <div class="rounded-lg bg-bg p-3 font-mono text-xs">
-            <div># LLM(数GB、Wi-Fi推奨)</div>
-            <div>ollama pull {{ llmModel }}</div>
-            <div class="mt-2"># Whisper モデル + whisper.cpp ビルド</div>
-            <div>cd backend</div>
-            <div>npx --yes nodejs-whisper download</div>
-            <div>(プロンプトで {{ whisperModel }} と入力)</div>
+
+          <!-- LLM Pull -->
+          <div class="rounded-lg border border-border p-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-medium">
+                  LLM: <code class="font-mono">{{ llmModel }}</code>
+                </div>
+                <div class="text-xs text-text-muted">
+                  Ollama 経由でダウンロード
+                </div>
+              </div>
+              <span
+                v-if="llmPulled"
+                class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+              >
+                ✓ 取得済み
+              </span>
+            </div>
+            <BaseButton
+              v-if="!llmPulled"
+              class="mt-3"
+              size="sm"
+              :disabled="llmPulling"
+              @click="pullLlm"
+            >
+              {{ llmPulling ? '取得中...' : '📥 LLM をダウンロード' }}
+            </BaseButton>
+            <div v-if="llmPulling || llmPullStatus" class="mt-2">
+              <div class="flex justify-between text-[10px] text-text-muted">
+                <span>{{ llmPullStatus }}</span>
+                <span v-if="llmPullProgress > 0">{{ llmPullProgress }}%</span>
+              </div>
+              <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-border">
+                <div
+                  class="h-full bg-primary transition-all"
+                  :style="{ width: `${llmPullProgress}%` }"
+                />
+              </div>
+            </div>
+            <p v-if="llmPullError" class="mt-2 text-xs text-rose-500">
+              {{ llmPullError }}
+            </p>
           </div>
+
+          <!-- whisper.cpp build -->
+          <div class="rounded-lg border border-border p-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-medium">whisper.cpp ビルド</div>
+                <div class="text-xs text-text-muted">
+                  音声認識エンジンを最初に1回だけビルド(cmake が必要)
+                </div>
+              </div>
+              <span
+                v-if="whisperCppBuilt"
+                class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+              >
+                ✓ ビルド済み
+              </span>
+            </div>
+            <BaseButton
+              v-if="!whisperCppBuilt"
+              class="mt-3"
+              size="sm"
+              :disabled="buildingWhisperCpp"
+              @click="buildWhisper"
+            >
+              {{ buildingWhisperCpp ? 'ビルド中...' : '🔨 ビルドする' }}
+            </BaseButton>
+            <pre
+              v-if="buildLog"
+              class="mt-2 max-h-32 overflow-y-auto rounded bg-bg p-2 font-mono text-[10px]"
+            >{{ buildLog }}</pre>
+            <p v-if="buildError" class="mt-2 text-xs text-rose-500">
+              {{ buildError }}
+            </p>
+          </div>
+
+          <!-- Whisper download -->
+          <div class="rounded-lg border border-border p-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-medium">
+                  Whisper: <code class="font-mono">{{ whisperModel }}</code>
+                </div>
+                <div class="text-xs text-text-muted">
+                  音声認識モデルをダウンロード
+                </div>
+              </div>
+              <span
+                v-if="whisperDownloaded"
+                class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+              >
+                ✓ 取得済み
+              </span>
+            </div>
+            <BaseButton
+              v-if="!whisperDownloaded"
+              class="mt-3"
+              size="sm"
+              :disabled="whisperDownloading || !whisperCppBuilt"
+              @click="downloadWhisper"
+            >
+              {{
+                whisperDownloading ? '取得中...' : '📥 Whisper をダウンロード'
+              }}
+            </BaseButton>
+            <p
+              v-if="!whisperCppBuilt"
+              class="mt-2 text-xs text-amber-600 dark:text-amber-400"
+            >
+              ⚠ 先に whisper.cpp をビルドしてください
+            </p>
+            <div v-if="whisperDownloading || whisperStatus" class="mt-2">
+              <div class="flex justify-between text-[10px] text-text-muted">
+                <span>{{ whisperStatus }}</span>
+                <span v-if="whisperProgress > 0">{{ whisperProgress }}%</span>
+              </div>
+              <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-border">
+                <div
+                  class="h-full bg-primary transition-all"
+                  :style="{ width: `${whisperProgress}%` }"
+                />
+              </div>
+            </div>
+            <p v-if="whisperError" class="mt-2 text-xs text-rose-500">
+              {{ whisperError }}
+            </p>
+          </div>
+
           <p class="text-xs text-text-muted">
-            ダウンロード完了後、このページに戻って「次へ」を押してください。
+            すべて ✓ になったら「次へ」を押してください。
           </p>
         </div>
 
@@ -254,7 +490,11 @@ function complete() {
         </BaseButton>
         <BaseButton
           v-if="step < 6"
-          :disabled="step === 2 && ollamaStatus !== 'ok'"
+          :disabled="
+            (step === 2 && ollamaStatus !== 'ok') ||
+            (step === 4 &&
+              (!llmPulled || !whisperCppBuilt || !whisperDownloaded))
+          "
           @click="next"
         >
           次へ →

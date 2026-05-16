@@ -135,3 +135,173 @@ export async function checkOllamaHealth(): Promise<OllamaHealth> {
     return { ok: false, error: (e as Error).message }
   }
 }
+
+export interface InstalledModel {
+  name: string
+  sizeBytes: number
+  sizeMB: number
+  modifiedAt: string
+}
+
+export interface OllamaModelsResponse {
+  models: InstalledModel[]
+  defaultModel: string
+}
+
+export interface WhisperModelsResponse {
+  models: InstalledModel[]
+  dir: string
+}
+
+export async function listOllamaModels(): Promise<OllamaModelsResponse> {
+  const res = await fetch('/api/models/ollama')
+  return asJson<OllamaModelsResponse>(res)
+}
+
+export async function deleteOllamaModel(name: string): Promise<void> {
+  const res = await fetch(`/api/models/ollama/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+  await asJson<{ ok: boolean }>(res)
+}
+
+export async function listWhisperModels(): Promise<WhisperModelsResponse> {
+  const res = await fetch('/api/models/whisper')
+  return asJson<WhisperModelsResponse>(res)
+}
+
+export async function deleteWhisperModel(filename: string): Promise<void> {
+  const res = await fetch(
+    `/api/models/whisper/${encodeURIComponent(filename)}`,
+    {
+      method: 'DELETE',
+    },
+  )
+  await asJson<{ ok: boolean }>(res)
+}
+
+// ----- SSE Streaming download / build helpers -----
+
+async function* parseSSE(
+  response: Response,
+): AsyncGenerator<Record<string, unknown>> {
+  if (!response.body) throw new Error('No response body for SSE')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      let idx: number
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const event = buffer.slice(0, idx)
+        buffer = buffer.slice(idx + 2)
+
+        for (const line of event.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6)
+          if (!data) continue
+          try {
+            yield JSON.parse(data) as Record<string, unknown>
+          } catch {
+            // skip
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+export interface OllamaPullProgress {
+  status?: string
+  digest?: string
+  total?: number
+  completed?: number
+  error?: string
+}
+
+export async function pullOllamaModel(
+  name: string,
+  onProgress: (p: OllamaPullProgress) => void,
+): Promise<void> {
+  const res = await fetch('/api/models/ollama/pull', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+  }
+  for await (const event of parseSSE(res)) {
+    const p = event as OllamaPullProgress
+    onProgress(p)
+    if (p.error) throw new Error(p.error)
+  }
+}
+
+export interface WhisperDownloadProgress {
+  status?: string
+  completed?: number
+  total?: number
+  error?: string
+}
+
+export async function downloadWhisperModelStream(
+  name: string,
+  onProgress: (p: WhisperDownloadProgress) => void,
+): Promise<void> {
+  const res = await fetch('/api/models/whisper/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+  }
+  for await (const event of parseSSE(res)) {
+    const p = event as WhisperDownloadProgress
+    onProgress(p)
+    if (p.error) throw new Error(p.error)
+  }
+}
+
+export interface WhisperCppStatus {
+  built: boolean
+  dir: string
+}
+
+export async function getWhisperCppStatus(): Promise<WhisperCppStatus> {
+  const res = await fetch('/api/setup/whisper-cpp-status')
+  return asJson<WhisperCppStatus>(res)
+}
+
+export interface WhisperBuildProgress {
+  step?: string
+  status?: string
+  stdout?: string
+  stderr?: string
+  command?: string
+  error?: string
+}
+
+export async function buildWhisperCpp(
+  onProgress: (p: WhisperBuildProgress) => void,
+): Promise<void> {
+  const res = await fetch('/api/setup/build-whisper-cpp', {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+  }
+  for await (const event of parseSSE(res)) {
+    const p = event as WhisperBuildProgress
+    onProgress(p)
+    if (p.error) throw new Error(p.error)
+  }
+}

@@ -94,9 +94,7 @@ function formatDate(d: Date): string {
             <div class="text-xs text-text-muted">名前</div>
             <div class="text-base">{{ profile.name || '(未設定)' }}</div>
           </div>
-          <BaseButton variant="ghost" size="sm" @click="startEditName">
-            編集
-          </BaseButton>
+          <BaseButton variant="ghost" size="sm" @click="startEditName"> 編集 </BaseButton>
         </div>
         <div v-else class="flex items-end gap-2">
           <div class="flex-1">
@@ -137,30 +135,16 @@ function formatDate(d: Date): string {
               </div>
               <div class="flex shrink-0 gap-2 text-xs">
                 <template v-if="editingFactId === f.id">
-                  <button
-                    class="text-primary hover:underline"
-                    @click="saveFact"
-                  >
-                    保存
-                  </button>
-                  <button
-                    class="text-text-muted hover:underline"
-                    @click="editingFactId = null"
-                  >
+                  <button class="text-primary hover:underline" @click="saveFact">保存</button>
+                  <button class="text-text-muted hover:underline" @click="editingFactId = null">
                     キャンセル
                   </button>
                 </template>
                 <template v-else>
-                  <button
-                    class="text-primary hover:underline"
-                    @click="startEditFact(f.id, f.fact)"
-                  >
+                  <button class="text-primary hover:underline" @click="startEditFact(f.id, f.fact)">
                     編集
                   </button>
-                  <button
-                    class="text-rose-500 hover:underline"
-                    @click="removeFact(f.id)"
-                  >
+                  <button class="text-rose-500 hover:underline" @click="removeFact(f.id)">
                     削除
                   </button>
                 </template>
@@ -185,20 +169,14 @@ function formatDate(d: Date): string {
                 {{ settings.settings.aiCharacter.name }}
               </div>
             </div>
-            <BaseButton variant="ghost" size="sm" @click="startEditAiName">
-              編集
-            </BaseButton>
+            <BaseButton variant="ghost" size="sm" @click="startEditAiName"> 編集 </BaseButton>
           </div>
           <div v-else class="flex items-end gap-2">
             <div class="flex-1">
               <BaseInput v-model="aiNameInput" label="名前" />
             </div>
             <BaseButton size="sm" @click="saveAiName">保存</BaseButton>
-            <BaseButton
-              variant="ghost"
-              size="sm"
-              @click="editingAiName = false"
-            >
+            <BaseButton variant="ghost" size="sm" @click="editingAiName = false">
               キャンセル
             </BaseButton>
           </div>
@@ -208,22 +186,14 @@ function formatDate(d: Date): string {
           <div class="text-xs text-text-muted">性別 / 声</div>
           <div class="mt-2 flex gap-2">
             <BaseButton
-              :variant="
-                settings.settings.aiCharacter.gender === 'female'
-                  ? 'primary'
-                  : 'secondary'
-              "
+              :variant="settings.settings.aiCharacter.gender === 'female' ? 'primary' : 'secondary'"
               size="sm"
               @click="setGender('female')"
             >
               女性 (Samantha)
             </BaseButton>
             <BaseButton
-              :variant="
-                settings.settings.aiCharacter.gender === 'male'
-                  ? 'primary'
-                  : 'secondary'
-              "
+              :variant="settings.settings.aiCharacter.gender === 'male' ? 'primary' : 'secondary'"
               size="sm"
               @click="setGender('male')"
             >

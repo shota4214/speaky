@@ -38,9 +38,7 @@ onMounted(async () => {
 
   // vocab focus
   if (conversation.vocabFocusIds.length > 0) {
-    const items = await Promise.all(
-      conversation.vocabFocusIds.map((id) => vocabularyRepo.get(id)),
-    )
+    const items = await Promise.all(conversation.vocabFocusIds.map((id) => vocabularyRepo.get(id)))
     vocabFocusWords.value = items
       .filter((v): v is NonNullable<typeof v> => v != null)
       .map((v) => v.word)
@@ -82,13 +80,9 @@ async function endFromDialog() {
 }
 
 const isActive = computed(() =>
-  [
-    'recording',
-    'processing',
-    'thinking',
-    'aiSpeaking',
-    'awaitingPromptedSpeech',
-  ].includes(conversation.mode),
+  ['recording', 'processing', 'thinking', 'aiSpeaking', 'awaitingPromptedSpeech'].includes(
+    conversation.mode,
+  ),
 )
 
 const statusLabel = computed(() => {
@@ -116,8 +110,7 @@ const statusDotClass = computed(() => ({
   'bg-amber-500 animate-pulse':
     conversation.mode === 'processing' || conversation.mode === 'thinking',
   'bg-sky-500 animate-pulse': conversation.mode === 'aiSpeaking',
-  'bg-violet-500 animate-pulse':
-    conversation.mode === 'awaitingPromptedSpeech',
+  'bg-violet-500 animate-pulse': conversation.mode === 'awaitingPromptedSpeech',
 }))
 
 const barCount = 32
@@ -152,10 +145,7 @@ async function saveVocabItem(message: Message, item: VocabItem) {
     example: item.example,
     partOfSpeech: null,
   })
-  savedVocab.value = new Set([
-    ...savedVocab.value,
-    `${message.id}:${item.word}`,
-  ])
+  savedVocab.value = new Set([...savedVocab.value, `${message.id}:${item.word}`])
 }
 
 async function saveAllFromMessage(message: Message) {
@@ -191,14 +181,10 @@ function isVocabSaved(message: Message, word: string): boolean {
           <div class="mt-1 flex items-center gap-2 text-xs">
             <LevelBadge :level="conversation.level" size="sm" />
             <TopicChip :label="conversation.topic" size="sm" />
-            <span v-if="conversation.isPaused" class="text-amber-500">
-              ⏸ 一時停止中
-            </span>
+            <span v-if="conversation.isPaused" class="text-amber-500"> ⏸ 一時停止中 </span>
           </div>
         </div>
-        <BaseButton variant="danger" size="sm" @click="handleEnd">
-          ⏹ 会話を終わる
-        </BaseButton>
+        <BaseButton variant="danger" size="sm" @click="handleEnd"> ⏹ 会話を終わる </BaseButton>
       </div>
     </header>
 
@@ -253,13 +239,9 @@ function isVocabSaved(message: Message, word: string): boolean {
               v-if="m.feedback"
               class="ml-2 max-w-[75%] rounded-xl bg-amber-50 px-3 py-2 text-xs ring-1 ring-amber-200 dark:bg-amber-900/20 dark:ring-amber-700/40"
             >
-              <div class="font-semibold text-amber-700 dark:text-amber-300">
-                ✏️ 添削
-              </div>
+              <div class="font-semibold text-amber-700 dark:text-amber-300">✏️ 添削</div>
               <div class="mt-1">
-                <span class="text-rose-500 line-through">{{
-                  m.feedback.userSaid
-                }}</span>
+                <span class="text-rose-500 line-through">{{ m.feedback.userSaid }}</span>
                 <span class="mx-1 text-text-muted">→</span>
                 <strong class="text-emerald-600 dark:text-emerald-400">{{
                   m.feedback.corrected
@@ -275,9 +257,7 @@ function isVocabSaved(message: Message, word: string): boolean {
               class="ml-2 max-w-[75%] rounded-xl bg-primary-light/40 px-3 py-2 text-xs"
             >
               <div class="flex items-center justify-between">
-                <div class="font-semibold text-primary-dark">
-                  📚 単語・フレーズ
-                </div>
+                <div class="font-semibold text-primary-dark">📚 単語・フレーズ</div>
                 <button
                   class="text-[10px] text-primary hover:underline"
                   @click="saveAllFromMessage(m)"
@@ -294,19 +274,14 @@ function isVocabSaved(message: Message, word: string): boolean {
                   <div>
                     <strong>{{ v.word }}</strong>
                     <span class="ml-2 text-text-muted">— {{ v.meaning }}</span>
-                    <div
-                      v-if="v.example"
-                      class="text-[10px] italic text-text-muted"
-                    >
+                    <div v-if="v.example" class="text-[10px] italic text-text-muted">
                       "{{ v.example }}"
                     </div>
                   </div>
                   <button
                     class="shrink-0 text-[10px]"
                     :class="
-                      isVocabSaved(m, v.word)
-                        ? 'text-text-muted'
-                        : 'text-primary hover:underline'
+                      isVocabSaved(m, v.word) ? 'text-text-muted' : 'text-primary hover:underline'
                     "
                     :disabled="isVocabSaved(m, v.word)"
                     @click="saveVocabItem(m, v)"
@@ -328,22 +303,14 @@ function isVocabSaved(message: Message, word: string): boolean {
           <div class="flex items-center gap-2">
             <span class="h-2.5 w-2.5 rounded-full" :class="statusDotClass" />
             <span class="text-sm font-medium">{{ statusLabel }}</span>
-            <span
-              v-if="loop.consecutiveSilent.value > 0"
-              class="text-xs text-text-muted"
-            >
+            <span v-if="loop.consecutiveSilent.value > 0" class="text-xs text-text-muted">
               · {{ loop.consecutiveSilent.value }} silent
             </span>
-            <span
-              v-if="loop.promptedAttempts.value > 0"
-              class="text-xs text-violet-500"
-            >
+            <span v-if="loop.promptedAttempts.value > 0" class="text-xs text-violet-500">
               · 言ってみて {{ loop.promptedAttempts.value }}/3
             </span>
           </div>
-          <span v-if="!isActive" class="text-xs text-text-muted">
-            会話セッション終了済み
-          </span>
+          <span v-if="!isActive" class="text-xs text-text-muted"> 会話セッション終了済み </span>
         </div>
         <div class="mt-3 flex h-12 items-center justify-center gap-1">
           <span
@@ -351,8 +318,7 @@ function isVocabSaved(message: Message, word: string): boolean {
             :key="i"
             class="w-1 rounded-full transition-all duration-75"
             :class="
-              conversation.mode === 'recording' ||
-              conversation.mode === 'awaitingPromptedSpeech'
+              conversation.mode === 'recording' || conversation.mode === 'awaitingPromptedSpeech'
                 ? 'bg-primary'
                 : 'bg-border'
             "
@@ -373,24 +339,16 @@ function isVocabSaved(message: Message, word: string): boolean {
       v-if="showInactivityDialog"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
     >
-      <div
-        class="mx-4 max-w-md rounded-2xl bg-surface p-6 shadow-xl ring-1 ring-border"
-      >
+      <div class="mx-4 max-w-md rounded-2xl bg-surface p-6 shadow-xl ring-1 ring-border">
         <h3 class="text-lg font-semibold">会話を続けますか?</h3>
         <p class="mt-2 text-sm text-text-muted">
           無音が続いています。会話を続けるか、終了するかを選んでください。
         </p>
         <div class="mt-6 flex gap-2">
-          <BaseButton
-            variant="secondary"
-            class="flex-1"
-            @click="endFromDialog"
-          >
+          <BaseButton variant="secondary" class="flex-1" @click="endFromDialog">
             会話を終わる
           </BaseButton>
-          <BaseButton class="flex-1" @click="continueConversation">
-            続ける
-          </BaseButton>
+          <BaseButton class="flex-1" @click="continueConversation"> 続ける </BaseButton>
         </div>
       </div>
     </div>

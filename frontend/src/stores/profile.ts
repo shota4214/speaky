@@ -19,10 +19,7 @@ export const useProfileStore = defineStore('profile', () => {
     profile.value = await userProfileRepo.update({ name: newName })
   }
 
-  async function addFact(input: {
-    fact: string
-    learnedFromConversationId: string | null
-  }) {
+  async function addFact(input: { fact: string; learnedFromConversationId: string | null }) {
     await userProfileRepo.addFact(input)
     profile.value = await userProfileRepo.getOrCreate()
   }

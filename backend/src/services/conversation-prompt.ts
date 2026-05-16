@@ -21,9 +21,7 @@ export function buildSystemPrompt(input: BuildPromptInput = {}): string {
   const userProfile = input.userProfile ?? []
   const lastSummary = input.lastConversationSummary ?? null
 
-  const topicLine = input.topicDescription
-    ? `${topic}: ${input.topicDescription}`
-    : topic
+  const topicLine = input.topicDescription ? `${topic}: ${input.topicDescription}` : topic
 
   const vocabFocusInstr =
     vocabFocus.length > 0

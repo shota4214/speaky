@@ -1,14 +1,6 @@
 import { Router, type Request, type Response } from 'express'
-import {
-  buildSystemPrompt,
-  type Level,
-  type Mode,
-} from '../services/conversation-prompt'
-import {
-  chatWithOllama,
-  OllamaError,
-  type OllamaChatMessage,
-} from '../services/ollama'
+import { buildSystemPrompt, type Level, type Mode } from '../services/conversation-prompt.js'
+import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
 
 const MAX_RETRIES = 3
 const MAX_HISTORY_TURNS = 10 // user + ai pairs to keep in context
@@ -28,6 +20,8 @@ interface ChatContext {
   userProfile?: string[]
   lastConversationSummary?: string | null
   conversationHistory?: HistoryItem[]
+  /** 明示的に指定されたLLMモデル(allowlist内のみ採用、それ以外は default) */
+  model?: string
 }
 
 interface ChatRequestBody {
@@ -74,10 +68,7 @@ function isVocabItem(x: unknown): x is VocabItem {
 function parseChatReply(content: string, fallbackMode: Mode): ChatReply | null {
   try {
     const parsed = JSON.parse(content) as Record<string, unknown>
-    if (
-      typeof parsed.reply_en !== 'string' ||
-      typeof parsed.reply_ja !== 'string'
-    ) {
+    if (typeof parsed.reply_en !== 'string' || typeof parsed.reply_ja !== 'string') {
       return null
     }
 
@@ -94,9 +85,7 @@ function parseChatReply(content: string, fallbackMode: Mode): ChatReply | null {
       : []
 
     const mode: Mode =
-      parsed.mode === 'japanese_help' ||
-      parsed.mode === 'mixed' ||
-      parsed.mode === 'normal'
+      parsed.mode === 'japanese_help' || parsed.mode === 'mixed' || parsed.mode === 'normal'
         ? parsed.mode
         : fallbackMode
 
@@ -118,9 +107,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   const { userText, context = {} } = (req.body ?? {}) as ChatRequestBody
 
   if (typeof userText !== 'string' || userText.trim().length === 0) {
-    return res
-      .status(400)
-      .json({ error: 'userText is required (non-empty string)' })
+    return res.status(400).json({ error: 'userText is required (non-empty string)' })
   }
 
   const mode: Mode = context.mode ?? 'normal'
@@ -135,14 +122,10 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     lastConversationSummary: context.lastConversationSummary,
   })
 
-  const messages: OllamaChatMessage[] = [
-    { role: 'system', content: systemPrompt },
-  ]
+  const messages: OllamaChatMessage[] = [{ role: 'system', content: systemPrompt }]
 
   // 直近のN往復を文脈として渡す
-  const history = (context.conversationHistory ?? []).slice(
-    -MAX_HISTORY_TURNS * 2,
-  )
+  const history = (context.conversationHistory ?? []).slice(-MAX_HISTORY_TURNS * 2)
   for (const h of history) {
     messages.push({
       role: h.role === 'user' ? 'user' : 'assistant',
@@ -156,7 +139,10 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const ollamaRes = await chatWithOllama(messages)
+      const ollamaRes = await chatWithOllama(messages, {
+        model: context.model,
+        timeoutMs: 90_000,
+      })
       lastRawContent = ollamaRes.message?.content ?? ''
       const reply = parseChatReply(lastRawContent, mode)
       if (reply) {
@@ -168,7 +154,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       )
     } catch (e) {
       if (e instanceof OllamaError) {
-        if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND') {
+        if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
           return res.status(503).json({ error: e.message, code: e.code })
         }
       }

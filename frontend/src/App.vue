@@ -16,8 +16,7 @@ const ONBOARDED_KEY = 'speaky:onboarded'
 onMounted(async () => {
   // 未オンボーディングなら /onboarding にリダイレクト
   const onboarded =
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem(ONBOARDED_KEY) === 'true'
+    typeof localStorage !== 'undefined' && localStorage.getItem(ONBOARDED_KEY) === 'true'
   if (!onboarded && route.path !== '/onboarding') {
     await router.replace('/onboarding')
     return

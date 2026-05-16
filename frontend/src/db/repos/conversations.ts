@@ -11,8 +11,7 @@ export type CreateConversationInput = Omit<Conversation, 'id' | 'expiresAt'> & {
 export const conversationsRepo = {
   async create(input: CreateConversationInput): Promise<Conversation> {
     const id = input.id ?? crypto.randomUUID()
-    const expiresAt =
-      input.expiresAt ?? new Date(input.startedAt.getTime() + THIRTY_DAYS_MS)
+    const expiresAt = input.expiresAt ?? new Date(input.startedAt.getTime() + THIRTY_DAYS_MS)
     // Vue reactive Proxy 等が混入しても IndexedDB が拒否しないよう
     // 各フィールドを明示的にプレーン値で構築する
     const conv: Conversation = {
@@ -36,15 +35,11 @@ export const conversationsRepo = {
     return db.conversations.get(id)
   },
 
-  async list(
-    options: { since?: Date; limit?: number } = {},
-  ): Promise<Conversation[]> {
+  async list(options: { since?: Date; limit?: number } = {}): Promise<Conversation[]> {
     let collection = db.conversations.orderBy('startedAt').reverse()
     if (options.since) {
       const sinceTime = options.since.getTime()
-      collection = collection.filter(
-        (c) => c.startedAt.getTime() >= sinceTime,
-      )
+      collection = collection.filter((c) => c.startedAt.getTime() >= sinceTime)
     }
     if (options.limit !== undefined) {
       collection = collection.limit(options.limit)
@@ -79,10 +74,7 @@ export const conversationsRepo = {
   },
 
   async cleanupExpired(now: Date = new Date()): Promise<number> {
-    const expired = await db.conversations
-      .where('expiresAt')
-      .below(now)
-      .toArray()
+    const expired = await db.conversations.where('expiresAt').below(now).toArray()
     const ids = expired.map((c) => c.id)
     if (ids.length === 0) return 0
     await db.transaction('rw', db.conversations, db.messages, async () => {

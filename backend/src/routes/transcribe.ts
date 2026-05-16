@@ -18,9 +18,50 @@ const upload = multer({
 })
 
 type Language = 'en' | 'ja' | 'mixed' | 'unknown'
+type WhisperModelName =
+  | 'tiny'
+  | 'tiny.en'
+  | 'base'
+  | 'base.en'
+  | 'small'
+  | 'small.en'
+  | 'medium'
+  | 'medium.en'
+  | 'large-v3'
+  | 'large-v3-turbo'
+
+const ALLOWED_WHISPER_MODELS = new Set<WhisperModelName>([
+  'tiny',
+  'tiny.en',
+  'base',
+  'base.en',
+  'small',
+  'small.en',
+  'medium',
+  'medium.en',
+  'large-v3',
+  'large-v3-turbo',
+])
+
+function pickDefaultWhisperModel(): WhisperModelName {
+  const envModel = process.env.WHISPER_MODEL
+  if (envModel && ALLOWED_WHISPER_MODELS.has(envModel as WhisperModelName)) {
+    return envModel as WhisperModelName
+  }
+  return 'medium'
+}
+
+const DEFAULT_WHISPER_MODEL: WhisperModelName = pickDefaultWhisperModel()
+
+function resolveWhisperModel(requested?: string): WhisperModelName {
+  if (requested && ALLOWED_WHISPER_MODELS.has(requested as WhisperModelName)) {
+    return requested as WhisperModelName
+  }
+  return DEFAULT_WHISPER_MODEL
+}
 
 function detectLanguage(text: string): Language {
-  const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(text)
+  const hasJapanese = /[぀-ゟ゠-ヿ一-龯]/.test(text)
   const hasEnglish = /[A-Za-z]/.test(text)
   if (hasJapanese && hasEnglish) return 'mixed'
   if (hasJapanese) return 'ja'
@@ -33,9 +74,7 @@ function extractText(raw: unknown): string {
   return raw
     .split('\n')
     .map((line) => {
-      const m = line.match(
-        /^\[\d{2}:\d{2}:\d{2}\.\d+\s*-->\s*\d{2}:\d{2}:\d{2}\.\d+\]\s*(.*)$/,
-      )
+      const m = line.match(/^\[\d{2}:\d{2}:\d{2}\.\d+\s*-->\s*\d{2}:\d{2}:\d{2}\.\d+\]\s*(.*)$/)
       return m ? m[1]!.trim() : ''
     })
     .filter((line) => line.length > 0)
@@ -50,18 +89,23 @@ transcribeRouter.post(
   upload.single('audio'),
   async (req: Request, res: Response) => {
     if (!req.file) {
-      return res
-        .status(400)
-        .json({ error: 'audio file required (multipart field name: "audio")' })
+      return res.status(400).json({
+        error: 'audio file required (multipart field name: "audio")',
+      })
     }
 
     const filePath = req.file.path
     const startedAt = Date.now()
 
+    // multipart の追加フィールド `model` で Whisper モデルを指定可能。
+    // allowlist 検証で安全化(任意のファイル名を受け付けない)。
+    const requestedModel = typeof req.body?.model === 'string' ? req.body.model : undefined
+    const modelName = resolveWhisperModel(requestedModel)
+
     try {
       const result = await nodewhisper(filePath, {
-        modelName: 'medium',
-        autoDownloadModelName: 'medium',
+        modelName,
+        autoDownloadModelName: modelName,
         removeWavFileAfterTranscription: true,
         whisperOptions: {
           language: 'auto',
@@ -71,7 +115,7 @@ transcribeRouter.post(
           outputInSrt: false,
           translateToEnglish: false,
           wordTimestamps: false,
-        } as never, // language は新しめのオプションで型定義に追従していない可能性あり
+        } as never,
       })
 
       const text = extractText(result)
@@ -79,10 +123,10 @@ transcribeRouter.post(
       const durationMs = Date.now() - startedAt
 
       console.log(
-        `[transcribe] ${durationMs}ms lang=${language} text="${text.slice(0, 80)}"`,
+        `[transcribe] model=${modelName} ${durationMs}ms lang=${language} text="${text.slice(0, 80)}"`,
       )
 
-      return res.json({ text, language, durationMs })
+      return res.json({ text, language, durationMs, model: modelName })
     } catch (e) {
       console.error('[transcribe] error:', e)
       return res.status(500).json({ error: (e as Error).message })

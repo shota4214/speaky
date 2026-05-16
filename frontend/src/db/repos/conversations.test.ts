@@ -1,14 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../index'
-import {
-  conversationsRepo,
-  type CreateConversationInput,
-} from './conversations'
+import { conversationsRepo, type CreateConversationInput } from './conversations'
 import { messagesRepo } from './messages'
 
-function makeInput(
-  overrides: Partial<CreateConversationInput> = {},
-): CreateConversationInput {
+function makeInput(overrides: Partial<CreateConversationInput> = {}): CreateConversationInput {
   return {
     startedAt: new Date('2026-05-15T10:00:00Z'),
     endedAt: null,
@@ -55,9 +50,7 @@ describe('conversationsRepo', () => {
   it('expiresAt is 30 days after startedAt by default', async () => {
     const startedAt = new Date('2026-05-15T10:00:00Z')
     const conv = await conversationsRepo.create(makeInput({ startedAt }))
-    const days =
-      (conv.expiresAt.getTime() - startedAt.getTime()) /
-      (1000 * 60 * 60 * 24)
+    const days = (conv.expiresAt.getTime() - startedAt.getTime()) / (1000 * 60 * 60 * 24)
     expect(days).toBeCloseTo(30, 1)
   })
 
@@ -84,9 +77,7 @@ describe('conversationsRepo', () => {
     const recent = await conversationsRepo.create(
       makeInput({ startedAt: yesterday, topic: 'recent' }),
     )
-    const old = await conversationsRepo.create(
-      makeInput({ startedAt: longAgo, topic: 'old' }),
-    )
+    const old = await conversationsRepo.create(makeInput({ startedAt: longAgo, topic: 'old' }))
 
     await messagesRepo.create({
       conversationId: old.id,

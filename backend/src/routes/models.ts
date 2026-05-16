@@ -1,12 +1,9 @@
 import { Router, type Request, type Response } from 'express'
 import { spawn } from 'node:child_process'
-import {
-  createWriteStream,
-  existsSync,
-  promises as fs,
-} from 'node:fs'
+import { createWriteStream, existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
-import { ollamaConfig } from '../services/ollama'
+import { adminAuth } from '../services/admin-token.js'
+import { ollamaConfig } from '../services/ollama.js'
 
 interface OllamaTag {
   name: string
@@ -29,14 +26,7 @@ function findWhisperModelsDir(): string {
       'whisper.cpp',
       'models',
     ),
-    path.resolve(
-      process.cwd(),
-      'node_modules',
-      'nodejs-whisper',
-      'cpp',
-      'whisper.cpp',
-      'models',
-    ),
+    path.resolve(process.cwd(), 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp', 'models'),
   ]
   for (const c of candidates) {
     if (existsSync(c)) return c
@@ -46,21 +36,8 @@ function findWhisperModelsDir(): string {
 
 function findWhisperCppDir(): string {
   const candidates = [
-    path.resolve(
-      process.cwd(),
-      '..',
-      'node_modules',
-      'nodejs-whisper',
-      'cpp',
-      'whisper.cpp',
-    ),
-    path.resolve(
-      process.cwd(),
-      'node_modules',
-      'nodejs-whisper',
-      'cpp',
-      'whisper.cpp',
-    ),
+    path.resolve(process.cwd(), '..', 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp'),
+    path.resolve(process.cwd(), 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp'),
   ]
   for (const c of candidates) {
     if (existsSync(c)) return c
@@ -88,9 +65,7 @@ modelsRouter.get('/models/ollama', async (_req, res) => {
   try {
     const response = await fetch(`${ollamaConfig.baseUrl}/api/tags`)
     if (!response.ok) {
-      return res
-        .status(503)
-        .json({ error: `Ollama returned ${response.status}` })
+      return res.status(503).json({ error: `Ollama returned ${response.status}` })
     }
     const data = (await response.json()) as OllamaTagsResponse
     const models = (data.models ?? []).map((m) => ({
@@ -108,34 +83,31 @@ modelsRouter.get('/models/ollama', async (_req, res) => {
   }
 })
 
-modelsRouter.delete(
-  '/models/ollama/:name',
-  async (req: Request, res: Response) => {
-    const name = decodeURIComponent(req.params.name)
-    if (!name || name.includes('..') || name.includes('/')) {
-      return res.status(400).json({ error: 'Invalid model name' })
+modelsRouter.delete('/models/ollama/:name', adminAuth, async (req: Request, res: Response) => {
+  const name = decodeURIComponent(req.params.name)
+  if (!name || name.includes('..') || name.includes('/')) {
+    return res.status(400).json({ error: 'Invalid model name' })
+  }
+  if (name === ollamaConfig.model) {
+    return res.status(400).json({
+      error: `現在のデフォルトモデル(${name})は削除できません。先に別のモデルに切り替えてから削除してください。`,
+    })
+  }
+  try {
+    const response = await fetch(`${ollamaConfig.baseUrl}/api/delete`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      return res.status(response.status).json({ error: text })
     }
-    if (name === ollamaConfig.model) {
-      return res.status(400).json({
-        error: `現在のデフォルトモデル(${name})は削除できません。先に別のモデルに切り替えてから削除してください。`,
-      })
-    }
-    try {
-      const response = await fetch(`${ollamaConfig.baseUrl}/api/delete`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-      })
-      if (!response.ok) {
-        const text = await response.text()
-        return res.status(response.status).json({ error: text })
-      }
-      return res.json({ ok: true })
-    } catch (e) {
-      return res.status(503).json({ error: (e as Error).message })
-    }
-  },
-)
+    return res.json({ ok: true })
+  } catch (e) {
+    return res.status(503).json({ error: (e as Error).message })
+  }
+})
 
 modelsRouter.get('/models/whisper', async (_req, res) => {
   const dir = findWhisperModelsDir()
@@ -168,32 +140,29 @@ modelsRouter.get('/models/whisper', async (_req, res) => {
   }
 })
 
-modelsRouter.delete(
-  '/models/whisper/:filename',
-  async (req: Request, res: Response) => {
-    const filename = decodeURIComponent(req.params.filename)
-    if (
-      !filename.startsWith('ggml-') ||
-      !filename.endsWith('.bin') ||
-      filename.includes('/') ||
-      filename.includes('..')
-    ) {
-      return res.status(400).json({ error: 'Invalid filename' })
-    }
-    const dir = findWhisperModelsDir()
-    const fullPath = path.join(dir, filename)
-    try {
-      await fs.unlink(fullPath)
-      return res.json({ ok: true })
-    } catch (e) {
-      return res.status(500).json({ error: (e as Error).message })
-    }
-  },
-)
+modelsRouter.delete('/models/whisper/:filename', adminAuth, async (req: Request, res: Response) => {
+  const filename = decodeURIComponent(req.params.filename)
+  if (
+    !filename.startsWith('ggml-') ||
+    !filename.endsWith('.bin') ||
+    filename.includes('/') ||
+    filename.includes('..')
+  ) {
+    return res.status(400).json({ error: 'Invalid filename' })
+  }
+  const dir = findWhisperModelsDir()
+  const fullPath = path.join(dir, filename)
+  try {
+    await fs.unlink(fullPath)
+    return res.json({ ok: true })
+  } catch (e) {
+    return res.status(500).json({ error: (e as Error).message })
+  }
+})
 
 // ----- Ollama pull (SSE) -----
 
-modelsRouter.post('/models/ollama/pull', async (req: Request, res: Response) => {
+modelsRouter.post('/models/ollama/pull', adminAuth, async (req: Request, res: Response) => {
   const { name } = (req.body ?? {}) as { name?: string }
   if (!name || typeof name !== 'string') {
     return res.status(400).json({ error: 'name is required' })
@@ -255,42 +224,55 @@ const WHISPER_PRESETS = new Set([
   'large-v3-turbo',
 ])
 
-modelsRouter.post(
-  '/models/whisper/download',
-  async (req: Request, res: Response) => {
-    const { name } = (req.body ?? {}) as { name?: string }
-    if (!name || !WHISPER_PRESETS.has(name)) {
-      return res.status(400).json({ error: 'invalid name' })
+modelsRouter.post('/models/whisper/download', adminAuth, async (req: Request, res: Response) => {
+  const { name } = (req.body ?? {}) as { name?: string }
+  if (!name || !WHISPER_PRESETS.has(name)) {
+    return res.status(400).json({ error: 'invalid name' })
+  }
+
+  setupSSE(res)
+
+  const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${name}.bin`
+  const dir = findWhisperModelsDir()
+  const targetPath = path.join(dir, `ggml-${name}.bin`)
+  // 途中で失敗した時に壊れた .bin を残さないように、まず .tmp に書き出す。
+  const tempPath = `${targetPath}.tmp`
+
+  async function cleanupTmp() {
+    try {
+      await fs.unlink(tempPath)
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    await fs.mkdir(dir, { recursive: true })
+    await cleanupTmp() // 前回失敗の残骸があれば消す
+
+    const response = await fetch(url)
+    if (!response.ok || !response.body) {
+      sseSend(res, { error: `HTTP ${response.status}` })
+      return res.end()
     }
 
-    setupSSE(res)
+    const total = Number(response.headers.get('content-length') ?? 0)
+    let downloaded = 0
+    let lastReport = 0
 
-    const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${name}.bin`
-    const dir = findWhisperModelsDir()
-    const targetPath = path.join(dir, `ggml-${name}.bin`)
+    sseSend(res, { status: 'starting', total })
+
+    const fileStream = createWriteStream(tempPath)
+    const reader = response.body.getReader()
 
     try {
-      await fs.mkdir(dir, { recursive: true })
-
-      const response = await fetch(url)
-      if (!response.ok || !response.body) {
-        sseSend(res, { error: `HTTP ${response.status}` })
-        return res.end()
-      }
-
-      const total = Number(response.headers.get('content-length') ?? 0)
-      let downloaded = 0
-      let lastReport = 0
-
-      sseSend(res, { status: 'starting', total })
-
-      const fileStream = createWriteStream(targetPath)
-      const reader = response.body.getReader()
-
       while (true) {
         const { value, done } = await reader.read()
         if (done) break
-        fileStream.write(value)
+        // back-pressure を尊重
+        if (!fileStream.write(value)) {
+          await new Promise<void>((resolve) => fileStream.once('drain', () => resolve()))
+        }
         downloaded += value.byteLength
         const now = Date.now()
         if (now - lastReport > 300) {
@@ -302,21 +284,38 @@ modelsRouter.post(
           lastReport = now
         }
       }
-
-      fileStream.end()
-      await new Promise<void>((resolve, reject) => {
-        fileStream.on('finish', () => resolve())
-        fileStream.on('error', reject)
-      })
-
-      sseSend(res, { status: 'success', completed: downloaded, total })
-      return res.end()
     } catch (e) {
-      sseSend(res, { error: (e as Error).message })
+      fileStream.destroy()
+      await cleanupTmp()
+      throw e
+    }
+
+    fileStream.end()
+    await new Promise<void>((resolve, reject) => {
+      fileStream.on('finish', () => resolve())
+      fileStream.on('error', reject)
+    })
+
+    // Content-Length と実ダウンロード量が食い違ったら破損とみなす
+    if (total > 0 && downloaded !== total) {
+      await cleanupTmp()
+      sseSend(res, {
+        error: `Download size mismatch: expected ${total} bytes, got ${downloaded}`,
+      })
       return res.end()
     }
-  },
-)
+
+    // atomic rename(同一FS内のrenameは原則アトミック)
+    await fs.rename(tempPath, targetPath)
+
+    sseSend(res, { status: 'success', completed: downloaded, total })
+    return res.end()
+  } catch (e) {
+    await cleanupTmp()
+    sseSend(res, { error: (e as Error).message })
+    return res.end()
+  }
+})
 
 // ----- Whisper.cpp build (SSE) -----
 
@@ -329,74 +328,60 @@ modelsRouter.get('/setup/whisper-cpp-status', async (_req, res) => {
   })
 })
 
-modelsRouter.post(
-  '/setup/build-whisper-cpp',
-  async (_req: Request, res: Response) => {
-    setupSSE(res)
-    const dir = findWhisperCppDir()
-    if (!existsSync(dir)) {
+modelsRouter.post('/setup/build-whisper-cpp', adminAuth, async (_req: Request, res: Response) => {
+  setupSSE(res)
+  const dir = findWhisperCppDir()
+  if (!existsSync(dir)) {
+    sseSend(res, {
+      error: `whisper.cpp directory not found: ${dir}. Run 'npm install' from the project root first.`,
+    })
+    return res.end()
+  }
+
+  function runCmd(cmd: string, args: string[], step: string): Promise<void> {
+    return new Promise((resolve, reject) => {
       sseSend(res, {
-        error: `whisper.cpp directory not found: ${dir}. Run 'npm install' from the project root first.`,
+        step,
+        status: 'started',
+        command: `${cmd} ${args.join(' ')}`,
       })
-      return res.end()
-    }
+      const proc = spawn(cmd, args, { cwd: dir })
 
-    function runCmd(
-      cmd: string,
-      args: string[],
-      step: string,
-    ): Promise<void> {
-      return new Promise((resolve, reject) => {
-        sseSend(res, {
-          step,
-          status: 'started',
-          command: `${cmd} ${args.join(' ')}`,
-        })
-        const proc = spawn(cmd, args, { cwd: dir })
-
-        proc.stdout.on('data', (chunk: Buffer) => {
-          sseSend(res, { step, stdout: chunk.toString() })
-        })
-        proc.stderr.on('data', (chunk: Buffer) => {
-          sseSend(res, { step, stderr: chunk.toString() })
-        })
-        proc.on('error', (err) => {
-          if (
-            (err as NodeJS.ErrnoException).code === 'ENOENT' ||
-            err.message.includes('ENOENT')
-          ) {
-            reject(
-              new Error(
-                `${cmd} が見つかりません。Homebrewでインストールしてください: brew install cmake`,
-              ),
-            )
-          } else {
-            reject(err)
-          }
-        })
-        proc.on('close', (code) => {
-          if (code === 0) {
-            sseSend(res, { step, status: 'done' })
-            resolve()
-          } else {
-            reject(new Error(`${step} failed with exit code ${code}`))
-          }
-        })
+      proc.stdout.on('data', (chunk: Buffer) => {
+        sseSend(res, { step, stdout: chunk.toString() })
       })
-    }
+      proc.stderr.on('data', (chunk: Buffer) => {
+        sseSend(res, { step, stderr: chunk.toString() })
+      })
+      proc.on('error', (err) => {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT' || err.message.includes('ENOENT')) {
+          reject(
+            new Error(
+              `${cmd} が見つかりません。Homebrewでインストールしてください: brew install cmake`,
+            ),
+          )
+        } else {
+          reject(err)
+        }
+      })
+      proc.on('close', (code) => {
+        if (code === 0) {
+          sseSend(res, { step, status: 'done' })
+          resolve()
+        } else {
+          reject(new Error(`${step} failed with exit code ${code}`))
+        }
+      })
+    })
+  }
 
-    try {
-      await runCmd('cmake', ['-B', 'build'], 'configure')
-      await runCmd(
-        'cmake',
-        ['--build', 'build', '-j', '--config', 'Release'],
-        'build',
-      )
-      sseSend(res, { status: 'success' })
-      return res.end()
-    } catch (e) {
-      sseSend(res, { error: (e as Error).message })
-      return res.end()
-    }
-  },
-)
+  try {
+    await runCmd('cmake', ['-B', 'build'], 'configure')
+    await runCmd('cmake', ['--build', 'build', '-j', '--config', 'Release'], 'build')
+    sseSend(res, { status: 'success' })
+    return res.end()
+  } catch (e) {
+    sseSend(res, { error: (e as Error).message })
+    return res.end()
+  }
+})

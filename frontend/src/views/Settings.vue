@@ -151,12 +151,7 @@ const buildError = ref('')
 
 async function handleBuildWhisperCpp() {
   if (buildingWhisperCpp.value) return
-  if (
-    !confirm(
-      'whisper.cpp をビルドします(cmake が必要、5〜10分かかります)。続行しますか?',
-    )
-  )
-    return
+  if (!confirm('whisper.cpp をビルドします(cmake が必要、5〜10分かかります)。続行しますか?')) return
   buildingWhisperCpp.value = true
   buildLog.value = ''
   buildError.value = ''
@@ -220,10 +215,7 @@ function updateTtsRateLink(e: Event) {
 }
 function updateWhisper(e: Event) {
   settings.update({
-    whisperModel: (e.target as HTMLSelectElement).value as
-      | 'small'
-      | 'medium'
-      | 'large-v3',
+    whisperModel: (e.target as HTMLSelectElement).value as 'small' | 'medium' | 'large-v3',
   })
 }
 function updateLlm(e: Event) {
@@ -231,10 +223,7 @@ function updateLlm(e: Event) {
 }
 function updateDarkMode(e: Event) {
   settings.update({
-    darkMode: (e.target as HTMLSelectElement).value as
-      | 'system'
-      | 'light'
-      | 'dark',
+    darkMode: (e.target as HTMLSelectElement).value as 'system' | 'light' | 'dark',
   })
 }
 
@@ -280,14 +269,8 @@ async function handleFileSelected(e: Event) {
 }
 
 async function handleDeleteAll() {
-  if (!confirm('全データを削除します。元に戻せません。よろしいですか?'))
-    return
-  if (
-    !confirm(
-      '本当によろしいですか?会話履歴・復習リスト・プロフィール全てが消えます。',
-    )
-  )
-    return
+  if (!confirm('全データを削除します。元に戻せません。よろしいですか?')) return
+  if (!confirm('本当によろしいですか?会話履歴・復習リスト・プロフィール全てが消えます。')) return
   deleting.value = true
   try {
     await deleteAllData()
@@ -311,9 +294,7 @@ async function handleDeleteAll() {
         <div>
           <label class="block text-sm">
             無音自動送信の間隔:
-            <strong>{{
-              (settings.settings.silenceDurationMs / 1000).toFixed(1)
-            }}秒</strong>
+            <strong>{{ (settings.settings.silenceDurationMs / 1000).toFixed(1) }}秒</strong>
           </label>
           <input
             :value="settings.settings.silenceDurationMs"
@@ -411,10 +392,7 @@ async function handleDeleteAll() {
     <BaseCard class="mt-6">
       <div class="flex items-center justify-between">
         <div class="text-sm font-semibold">💽 インストール済みモデル</div>
-        <button
-          class="text-xs text-text-muted hover:text-text"
-          @click="loadInstalledModels"
-        >
+        <button class="text-xs text-text-muted hover:text-text" @click="loadInstalledModels">
           🔄 更新
         </button>
       </div>
@@ -422,9 +400,7 @@ async function handleDeleteAll() {
         ローカルにダウンロード済みの LLM と Whisper モデル。不要なものは削除して容量を空けられます。
       </p>
 
-      <div v-if="modelsLoading" class="mt-4 text-sm text-text-muted">
-        読み込み中...
-      </div>
+      <div v-if="modelsLoading" class="mt-4 text-sm text-text-muted">読み込み中...</div>
 
       <div v-else class="mt-4 space-y-5">
         <!-- LLM -->
@@ -470,9 +446,7 @@ async function handleDeleteAll() {
               </div>
             </li>
           </ul>
-          <p v-else class="text-xs text-text-muted">
-            インストール済みの LLM はありません
-          </p>
+          <p v-else class="text-xs text-text-muted">インストール済みの LLM はありません</p>
 
           <!-- LLM 追加ダウンロードフォーム -->
           <div class="mt-3 rounded-lg border border-dashed border-border p-3">
@@ -482,19 +456,11 @@ async function handleDeleteAll() {
                 :disabled="llmPulling"
                 class="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm"
               >
-                <option
-                  v-for="p in llmPresets"
-                  :key="p.value"
-                  :value="p.value"
-                >
+                <option v-for="p in llmPresets" :key="p.value" :value="p.value">
                   {{ p.label }}
                 </option>
               </select>
-              <BaseButton
-                size="sm"
-                :disabled="llmPulling"
-                @click="handlePullLlm"
-              >
+              <BaseButton size="sm" :disabled="llmPulling" @click="handlePullLlm">
                 {{ llmPulling ? '取得中...' : '+ 取得' }}
               </BaseButton>
             </div>
@@ -510,10 +476,7 @@ async function handleDeleteAll() {
                 />
               </div>
             </div>
-            <p
-              v-if="llmPullError"
-              class="mt-2 text-xs text-rose-500"
-            >
+            <p v-if="llmPullError" class="mt-2 text-xs text-rose-500">
               {{ llmPullError }}
             </p>
           </div>
@@ -544,10 +507,7 @@ async function handleDeleteAll() {
               <span class="font-mono">{{ m.name }}</span>
               <div class="flex items-center gap-3 text-xs">
                 <span class="text-text-muted">{{ formatSize(m.sizeMB) }}</span>
-                <button
-                  class="text-rose-500 hover:underline"
-                  @click="handleDeleteWhisper(m.name)"
-                >
+                <button class="text-rose-500 hover:underline" @click="handleDeleteWhisper(m.name)">
                   削除
                 </button>
               </div>
@@ -565,11 +525,7 @@ async function handleDeleteAll() {
                 :disabled="whisperDownloading || !whisperCppBuilt"
                 class="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm"
               >
-                <option
-                  v-for="p in whisperPresets"
-                  :key="p.value"
-                  :value="p.value"
-                >
+                <option v-for="p in whisperPresets" :key="p.value" :value="p.value">
                   {{ p.label }}
                 </option>
               </select>
@@ -581,10 +537,7 @@ async function handleDeleteAll() {
                 {{ whisperDownloading ? '取得中...' : '+ 取得' }}
               </BaseButton>
             </div>
-            <p
-              v-if="!whisperCppBuilt"
-              class="mt-2 text-xs text-amber-600 dark:text-amber-400"
-            >
+            <p v-if="!whisperCppBuilt" class="mt-2 text-xs text-amber-600 dark:text-amber-400">
               ⚠ 先に whisper.cpp をビルドしてください(下のセクション)
             </p>
             <div v-if="whisperDownloading || whisperStatus" class="mt-2">
@@ -599,10 +552,7 @@ async function handleDeleteAll() {
                 />
               </div>
             </div>
-            <p
-              v-if="whisperError"
-              class="mt-2 text-xs text-rose-500"
-            >
+            <p v-if="whisperError" class="mt-2 text-xs text-rose-500">
               {{ whisperError }}
             </p>
           </div>
@@ -611,9 +561,7 @@ async function handleDeleteAll() {
         <!-- whisper.cpp ビルド -->
         <div>
           <div class="mb-2 flex items-center justify-between">
-            <div
-              class="text-xs font-semibold uppercase tracking-wider text-text-muted"
-            >
+            <div class="text-xs font-semibold uppercase tracking-wider text-text-muted">
               whisper.cpp ビルド
             </div>
             <span
@@ -653,7 +601,8 @@ async function handleDeleteAll() {
           <pre
             v-if="buildLog"
             class="mt-2 max-h-48 overflow-y-auto rounded bg-bg p-2 font-mono text-[10px]"
-          >{{ buildLog }}</pre>
+            >{{ buildLog }}</pre
+          >
           <p v-if="buildError" class="mt-2 text-xs text-rose-500">
             {{ buildError }}
           </p>
@@ -668,16 +617,9 @@ async function handleDeleteAll() {
     <BaseCard class="mt-6">
       <div class="text-sm font-semibold">💾 データ</div>
       <div class="mt-4 space-y-3">
-        <p class="text-sm text-text-muted">
-          会話履歴の保存期間: 30日(変更不可)
-        </p>
+        <p class="text-sm text-text-muted">会話履歴の保存期間: 30日(変更不可)</p>
         <div class="flex flex-wrap gap-2">
-          <BaseButton
-            variant="secondary"
-            size="sm"
-            :disabled="exporting"
-            @click="handleExport"
-          >
+          <BaseButton variant="secondary" size="sm" :disabled="exporting" @click="handleExport">
             {{ exporting ? 'エクスポート中...' : '📤 データをエクスポート' }}
           </BaseButton>
           <BaseButton
@@ -709,12 +651,7 @@ async function handleDeleteAll() {
         </div>
 
         <div class="mt-4 border-t border-border pt-4">
-          <BaseButton
-            variant="danger"
-            size="sm"
-            :disabled="deleting"
-            @click="handleDeleteAll"
-          >
+          <BaseButton variant="danger" size="sm" :disabled="deleting" @click="handleDeleteAll">
             ⚠ 全データを削除
           </BaseButton>
         </div>

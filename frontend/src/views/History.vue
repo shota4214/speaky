@@ -74,27 +74,17 @@ function formatTime(d: Date): string {
     <div v-else class="mt-6 space-y-3">
       <BaseCard v-for="item in items" :key="item.id">
         <div class="flex items-start justify-between">
-          <router-link
-            :to="`/history/${item.id}`"
-            class="block flex-1 transition hover:opacity-80"
-          >
+          <router-link :to="`/history/${item.id}`" class="block flex-1 transition hover:opacity-80">
             <div class="text-sm text-text-muted">
               {{ formatDate(item.startedAt) }} {{ formatTime(item.startedAt) }}
             </div>
             <div class="mt-2 flex flex-wrap items-center gap-2">
               <TopicChip :label="item.topic" />
               <LevelBadge :level="item.level" size="sm" />
-              <span class="text-xs text-text-muted">
-                {{ item.turnCount }} turns
-              </span>
+              <span class="text-xs text-text-muted"> {{ item.turnCount }} turns </span>
             </div>
-            <p class="mt-3 line-clamp-1 text-sm text-text">
-              "{{ item.preview }}"
-            </p>
-            <p
-              v-if="item.summary"
-              class="mt-1 line-clamp-1 text-xs text-text-muted"
-            >
+            <p class="mt-3 line-clamp-1 text-sm text-text">"{{ item.preview }}"</p>
+            <p v-if="item.summary" class="mt-1 line-clamp-1 text-xs text-text-muted">
               📝 {{ item.summary }}
             </p>
           </router-link>
@@ -109,8 +99,6 @@ function formatTime(d: Date): string {
       </BaseCard>
     </div>
 
-    <p class="mt-6 text-xs text-text-muted">
-      ※ 30日経過すると自動で削除されます
-    </p>
+    <p class="mt-6 text-xs text-text-muted">※ 30日経過すると自動で削除されます</p>
   </div>
 </template>

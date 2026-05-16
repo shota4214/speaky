@@ -68,6 +68,7 @@ npx --yes nodejs-whisper download
 ```
 
 対話プロンプトで:
+
 - モデル名: `medium` と入力 → Enter
 - CUDA使用: `n` → Enter(macOSはMetal自動使用)
 

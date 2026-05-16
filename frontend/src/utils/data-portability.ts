@@ -1,16 +1,6 @@
 import { db } from '../db/index'
-import type {
-  Conversation,
-  CustomTopic,
-  Message,
-  UserProfile,
-  Vocabulary,
-} from '../db/types'
-import {
-  loadSettings,
-  saveSettings,
-  type AppSettings,
-} from '../storage/settings'
+import type { Conversation, CustomTopic, Message, UserProfile, Vocabulary } from '../db/types'
+import { loadSettings, saveSettings, type AppSettings } from '../storage/settings'
 
 export const BACKUP_VERSION = 1
 
@@ -29,14 +19,13 @@ export interface BackupV1 {
 }
 
 export async function exportAllData(): Promise<BackupV1> {
-  const [conversations, messages, vocabulary, customTopics, profile] =
-    await Promise.all([
-      db.conversations.toArray(),
-      db.messages.toArray(),
-      db.vocabulary.toArray(),
-      db.customTopics.toArray(),
-      db.userProfile.get('main'),
-    ])
+  const [conversations, messages, vocabulary, customTopics, profile] = await Promise.all([
+    db.conversations.toArray(),
+    db.messages.toArray(),
+    db.vocabulary.toArray(),
+    db.customTopics.toArray(),
+    db.userProfile.get('main'),
+  ])
   return {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
@@ -84,13 +73,7 @@ export async function importAllData(
   if (mode === 'replace') {
     await db.transaction(
       'rw',
-      [
-        db.conversations,
-        db.messages,
-        db.vocabulary,
-        db.customTopics,
-        db.userProfile,
-      ],
+      [db.conversations, db.messages, db.vocabulary, db.customTopics, db.userProfile],
       async () => {
         await db.conversations.clear()
         await db.messages.clear()
@@ -103,13 +86,7 @@ export async function importAllData(
 
   await db.transaction(
     'rw',
-    [
-      db.conversations,
-      db.messages,
-      db.vocabulary,
-      db.customTopics,
-      db.userProfile,
-    ],
+    [db.conversations, db.messages, db.vocabulary, db.customTopics, db.userProfile],
     async () => {
       for (const c of backup.data.conversations) {
         if (mode === 'merge' && (await db.conversations.get(c.id))) continue
@@ -172,13 +149,7 @@ export async function importAllData(
 export async function deleteAllData(): Promise<void> {
   await db.transaction(
     'rw',
-    [
-      db.conversations,
-      db.messages,
-      db.vocabulary,
-      db.customTopics,
-      db.userProfile,
-    ],
+    [db.conversations, db.messages, db.vocabulary, db.customTopics, db.userProfile],
     async () => {
       await db.conversations.clear()
       await db.messages.clear()

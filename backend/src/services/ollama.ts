@@ -1,6 +1,22 @@
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'gemma2:9b'
 
+// 許可するLLMモデルの allowlist。フロントから指定された場合のみ
+// この中に含まれていなければ default にフォールバック。
+export const ALLOWED_LLM_MODELS = new Set<string>([
+  'llama3.2:3b',
+  'llama3.1:8b',
+  'gemma2:9b',
+  'gemma2:2b',
+  'qwen2.5:7b',
+  'qwen2.5:14b',
+])
+
+export function resolveLlmModel(requested?: string): string {
+  if (requested && ALLOWED_LLM_MODELS.has(requested)) return requested
+  return OLLAMA_MODEL
+}
+
 export type OllamaChatMessage = {
   role: 'system' | 'user' | 'assistant'
   content: string
@@ -21,22 +37,27 @@ export type OllamaChatResponse = {
   done: boolean
 }
 
-export type OllamaErrorCode = 'NOT_RUNNING' | 'MODEL_NOT_FOUND' | 'UNKNOWN'
+export type OllamaErrorCode = 'NOT_RUNNING' | 'MODEL_NOT_FOUND' | 'TIMEOUT' | 'UNKNOWN'
 
 export class OllamaError extends Error {
-  constructor(
-    public code: OllamaErrorCode,
-    message: string,
-    public details?: unknown,
-  ) {
+  code: OllamaErrorCode
+  details?: unknown
+  constructor(code: OllamaErrorCode, message: string, details?: unknown) {
     super(message)
     this.name = 'OllamaError'
+    this.code = code
+    this.details = details
   }
 }
 
 export interface ChatWithOllamaOptions {
   jsonFormat?: boolean
   temperature?: number
+  model?: string
+  /** タイムアウト (ms)。0で無効化。デフォルト90秒 */
+  timeoutMs?: number
+  /** 外部から渡せる AbortSignal(UIキャンセル用) */
+  signal?: AbortSignal
 }
 
 export async function chatWithOllama(
@@ -45,11 +66,22 @@ export async function chatWithOllama(
 ): Promise<OllamaChatResponse> {
   const jsonFormat = options.jsonFormat ?? true
   const temperature = options.temperature ?? 0.7
+  const model = resolveLlmModel(options.model)
+  const timeoutMs = options.timeoutMs ?? 90_000
+
+  const ctrl = new AbortController()
+  const timeoutId = timeoutMs > 0 ? setTimeout(() => ctrl.abort(), timeoutMs) : null
+
+  // 外部signalがある場合はそれにもチェーン
+  if (options.signal) {
+    if (options.signal.aborted) ctrl.abort()
+    else options.signal.addEventListener('abort', () => ctrl.abort(), { once: true })
+  }
 
   let response: Response
   try {
     const body: OllamaChatRequest = {
-      model: OLLAMA_MODEL,
+      model,
       messages,
       stream: false,
       options: { temperature },
@@ -60,23 +92,28 @@ export async function chatWithOllama(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: ctrl.signal,
     })
   } catch (e) {
+    if ((e as Error).name === 'AbortError') {
+      throw new OllamaError('TIMEOUT', `Ollama 呼び出しがタイムアウトしました(${timeoutMs}ms)`, e)
+    }
     throw new OllamaError(
       'NOT_RUNNING',
       `Ollamaに接続できませんでした(${OLLAMA_BASE_URL})。'ollama serve' で起動してください。`,
       e,
     )
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId)
   }
 
   if (!response.ok) {
     const text = await response.text()
-    const looksLikeModelMissing =
-      response.status === 404 || /model.*not found/i.test(text)
+    const looksLikeModelMissing = response.status === 404 || /model.*not found/i.test(text)
     if (looksLikeModelMissing) {
       throw new OllamaError(
         'MODEL_NOT_FOUND',
-        `モデル '${OLLAMA_MODEL}' が見つかりません。'ollama pull ${OLLAMA_MODEL}' で取得してください。`,
+        `モデル '${model}' が見つかりません。'ollama pull ${model}' で取得してください。`,
         text,
       )
     }

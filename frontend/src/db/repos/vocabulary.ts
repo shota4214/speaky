@@ -39,9 +39,7 @@ export const vocabularyRepo = {
     if (search) {
       const lower = search.toLowerCase()
       collection = collection.filter(
-        (v) =>
-          v.word.toLowerCase().includes(lower) ||
-          v.meaning.toLowerCase().includes(lower),
+        (v) => v.word.toLowerCase().includes(lower) || v.meaning.toLowerCase().includes(lower),
       )
     }
     return collection.toArray()

@@ -65,12 +65,8 @@ async function startConversation() {
 
 <template>
   <div class="mx-auto max-w-3xl px-6 py-8">
-    <h1 class="text-3xl font-bold">
-      English Conversation with {{ aiName }}
-    </h1>
-    <p class="mt-2 text-sm text-text-muted">
-      レベルとトピックを選んで会話を始めましょう
-    </p>
+    <h1 class="text-3xl font-bold">English Conversation with {{ aiName }}</h1>
+    <p class="mt-2 text-sm text-text-muted">レベルとトピックを選んで会話を始めましょう</p>
 
     <BaseCard class="mt-8">
       <div class="text-sm font-semibold">今日のレベル</div>

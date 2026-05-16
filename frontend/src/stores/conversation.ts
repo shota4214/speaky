@@ -27,9 +27,7 @@ export const useConversationStore = defineStore('conversation', () => {
   const vocabFocusIds = ref<string[]>([])
 
   const isActive = computed(() => mode.value !== 'idle')
-  const turnCount = computed(
-    () => messages.value.filter((m) => m.role === 'ai').length,
-  )
+  const turnCount = computed(() => messages.value.filter((m) => m.role === 'ai').length)
 
   function start(input: StartConversationInput) {
     id.value = input.id

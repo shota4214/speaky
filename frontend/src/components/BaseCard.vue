@@ -11,22 +11,14 @@ const props = withDefaults(defineProps<Props>(), {
   shadow: 'md',
 })
 
-const paddingClass = computed(
-  () => ({ none: '', sm: 'p-3', md: 'p-6', lg: 'p-8' })[props.padding],
-)
+const paddingClass = computed(() => ({ none: '', sm: 'p-3', md: 'p-6', lg: 'p-8' })[props.padding])
 const shadowClass = computed(
-  () =>
-    ({ none: '', sm: 'shadow-sm', md: 'shadow-md', lg: 'shadow-xl' })[
-      props.shadow
-    ],
+  () => ({ none: '', sm: 'shadow-sm', md: 'shadow-md', lg: 'shadow-xl' })[props.shadow],
 )
 </script>
 
 <template>
-  <div
-    class="rounded-2xl bg-surface ring-1 ring-border"
-    :class="[paddingClass, shadowClass]"
-  >
+  <div class="rounded-2xl bg-surface ring-1 ring-border" :class="[paddingClass, shadowClass]">
     <slot />
   </div>
 </template>

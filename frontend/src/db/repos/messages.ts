@@ -37,10 +37,7 @@ export const messagesRepo = {
   },
 
   async listByConversation(conversationId: string): Promise<Message[]> {
-    return db.messages
-      .where('conversationId')
-      .equals(conversationId)
-      .sortBy('timestamp')
+    return db.messages.where('conversationId').equals(conversationId).sortBy('timestamp')
   },
 
   async deleteByConversation(conversationId: string): Promise<number> {

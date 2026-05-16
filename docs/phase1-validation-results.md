@@ -24,11 +24,11 @@ Phase 1 のスタック(Vue 3 + Express + Ollama + nodejs-whisper + Web Speech A
 
 ## 3. Whisper 認識精度
 
-| 入力 | 結果 |
-|---|---|
-| 英語 | おおむね正確、たまに固有名詞や微妙な発音で誤認識 |
-| 日本語 | Task 1.3 の単体テストで高精度を確認 |
-| 日英混在 | Phase 2 で本格テスト予定 |
+| 入力     | 結果                                             |
+| -------- | ------------------------------------------------ |
+| 英語     | おおむね正確、たまに固有名詞や微妙な発音で誤認識 |
+| 日本語   | Task 1.3 の単体テストで高精度を確認              |
+| 日英混在 | Phase 2 で本格テスト予定                         |
 
 medium モデルで十分実用。large-v3 への切り替えは現時点で不要。
 
@@ -56,25 +56,27 @@ medium モデルで十分実用。large-v3 への切り替えは現時点で不�
 **判定: ✅ Go(進める)**
 
 理由:
+
 - エンドツーエンドの最小ループが期待通り動く
 - JSON 出力が想定以上に安定(リトライ機構が一度も発動しない)
 - ハンズフリー会話の基本UXが成立している(一度クリックで複数ターン可能)
 - 既知の問題は Phase 2 のスコープで吸収できる軽微なもの
 
 Phase 2 着手時に最初に対応したい改善:
+
 - **沈黙時の Whisper 幻覚対策(問題1)** — 「これ覚えたい」「振り返り」など Phase 2 本機能を作る前に直しておくと、テスト時のストレスが下がる
 
 ## 6. 採用技術 振り返り
 
-| 技術 | Phase 1 で動いた? | Phase 2 続投? |
-|---|---|---|
-| Vue 3 + Vite + TS | ✅ | ✅ |
-| Express + TS | ✅ | ✅ |
-| Ollama (`gemma2:9b`) + `format: "json"` | ✅(極めて安定) | ✅ |
-| nodejs-whisper (`medium`) | ✅(`cmake` & `ffmpeg` 前提あり) | ✅ |
-| Web Speech API SpeechSynthesis | ✅(macOS の Samantha 音声で出力) | ✅ |
-| MediaRecorder + 無音検出 | △ 動くが沈黙幻覚対策が必要 | 要改善 |
-| Tailwind + Pinia + Dexie + Vue Router | ✅(Dexie は Phase 2 で本格活用) | ✅ |
+| 技術                                    | Phase 1 で動いた?                | Phase 2 続投? |
+| --------------------------------------- | -------------------------------- | ------------- |
+| Vue 3 + Vite + TS                       | ✅                               | ✅            |
+| Express + TS                            | ✅                               | ✅            |
+| Ollama (`gemma2:9b`) + `format: "json"` | ✅(極めて安定)                   | ✅            |
+| nodejs-whisper (`medium`)               | ✅(`cmake` & `ffmpeg` 前提あり)  | ✅            |
+| Web Speech API SpeechSynthesis          | ✅(macOS の Samantha 音声で出力) | ✅            |
+| MediaRecorder + 無音検出                | △ 動くが沈黙幻覚対策が必要       | 要改善        |
+| Tailwind + Pinia + Dexie + Vue Router   | ✅(Dexie は Phase 2 で本格活用)  | ✅            |
 
 ## 7. 副次的な学び
 

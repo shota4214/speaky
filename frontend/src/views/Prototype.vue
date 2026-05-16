@@ -2,8 +2,14 @@
 import { computed, ref } from 'vue'
 import { useAudioRecorder } from '../composables/useAudioRecorder'
 
-const { state: recState, error: recError, audioLevel, start, stop, activeMimeType } =
-  useAudioRecorder()
+const {
+  state: recState,
+  error: recError,
+  audioLevel,
+  start,
+  stop,
+  activeMimeType,
+} = useAudioRecorder()
 
 type TestState = 'idle' | 'recording' | 'transcribing' | 'done' | 'error'
 
@@ -91,10 +97,7 @@ const statusLabel = computed(() => {
         <h1 class="text-3xl font-bold text-slate-900 dark:text-slate-100">
           Prototype: Audio Recording
         </h1>
-        <router-link
-          to="/"
-          class="text-sm text-slate-600 dark:text-slate-400 hover:underline"
-        >
+        <router-link to="/" class="text-sm text-slate-600 dark:text-slate-400 hover:underline">
           ← home
         </router-link>
       </div>
@@ -134,11 +137,7 @@ const statusLabel = computed(() => {
             v-for="(h, i) in bars"
             :key="i"
             class="w-1.5 rounded-full transition-all duration-75"
-            :class="
-              testState === 'recording'
-                ? 'bg-emerald-500'
-                : 'bg-slate-300 dark:bg-slate-700'
-            "
+            :class="testState === 'recording' ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'"
             :style="{ height: `${h * 100}%` }"
           />
         </div>
@@ -162,10 +161,7 @@ const statusLabel = computed(() => {
           </button>
         </div>
 
-        <div
-          v-if="testState === 'done'"
-          class="mt-6 rounded-xl bg-slate-50 dark:bg-slate-800 p-4"
-        >
+        <div v-if="testState === 'done'" class="mt-6 rounded-xl bg-slate-50 dark:bg-slate-800 p-4">
           <div class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
             Transcribed text
           </div>
@@ -189,8 +185,8 @@ const statusLabel = computed(() => {
           <li>テキスト結果が表示される</li>
         </ol>
         <p class="mt-2">
-          recorder state: <code class="font-mono">{{ recState }}</code> /
-          mime: <code class="font-mono">{{ activeMimeType() || 'default' }}</code>
+          recorder state: <code class="font-mono">{{ recState }}</code> / mime:
+          <code class="font-mono">{{ activeMimeType() || 'default' }}</code>
         </p>
       </div>
     </div>

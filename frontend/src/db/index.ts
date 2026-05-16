@@ -1,11 +1,5 @@
 import Dexie, { type Table } from 'dexie'
-import type {
-  Conversation,
-  CustomTopic,
-  Message,
-  UserProfile,
-  Vocabulary,
-} from './types'
+import type { Conversation, CustomTopic, Message, UserProfile, Vocabulary } from './types'
 
 export class SpeakyDB extends Dexie {
   conversations!: Table<Conversation, string>

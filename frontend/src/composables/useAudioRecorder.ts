@@ -1,11 +1,6 @@
 import { onUnmounted, ref } from 'vue'
 
-export type RecorderState =
-  | 'idle'
-  | 'requestingPermission'
-  | 'recording'
-  | 'stopped'
-  | 'error'
+export type RecorderState = 'idle' | 'requestingPermission' | 'recording' | 'stopped' | 'error'
 
 export interface RecorderOptions {
   silenceDurationMs?: number
@@ -91,10 +86,7 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
     source.connect(analyser)
 
     activeMimeType = pickMimeType()
-    recorder = new MediaRecorder(
-      stream,
-      activeMimeType ? { mimeType: activeMimeType } : undefined,
-    )
+    recorder = new MediaRecorder(stream, activeMimeType ? { mimeType: activeMimeType } : undefined)
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data)
     }
@@ -102,9 +94,7 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
       const blob = new Blob(chunks, {
         type: activeMimeType || 'audio/webm',
       })
-      const durationMs = recordingStartedAt
-        ? Date.now() - recordingStartedAt
-        : 0
+      const durationMs = recordingStartedAt ? Date.now() - recordingStartedAt : 0
       const result: RecordingResult = {
         blob,
         durationMs,
@@ -121,9 +111,7 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
     recorder.onerror = (e) => {
       cleanup()
       state.value = 'error'
-      const err =
-        (e as unknown as { error?: Error }).error ??
-        new Error('MediaRecorder error')
+      const err = (e as unknown as { error?: Error }).error ?? new Error('MediaRecorder error')
       error.value = err.message
       rejectStop?.(err)
       resolveStop = null
@@ -163,10 +151,7 @@ export function useAudioRecorder(options: RecorderOptions = {}) {
       const now = Date.now()
 
       // 強制停止: maxRecordingMs を超えたら止める
-      if (
-        recordingStartedAt !== null &&
-        now - recordingStartedAt > maxRecordingMs
-      ) {
+      if (recordingStartedAt !== null && now - recordingStartedAt > maxRecordingMs) {
         stop()
         return
       }

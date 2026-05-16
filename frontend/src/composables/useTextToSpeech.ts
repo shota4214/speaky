@@ -16,9 +16,7 @@ export function useTextToSpeech(options: TTSOptions = {}) {
   } = options
 
   const speaking = ref(false)
-  const supported = ref(
-    typeof window !== 'undefined' && 'speechSynthesis' in window,
-  )
+  const supported = ref(typeof window !== 'undefined' && 'speechSynthesis' in window)
 
   function ensureVoicesLoaded(): Promise<SpeechSynthesisVoice[]> {
     return new Promise((resolve) => {
@@ -30,10 +28,7 @@ export function useTextToSpeech(options: TTSOptions = {}) {
       const onVoicesChanged = () => {
         const list = window.speechSynthesis.getVoices()
         if (list.length > 0) {
-          window.speechSynthesis.removeEventListener(
-            'voiceschanged',
-            onVoicesChanged,
-          )
+          window.speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged)
           resolve(list)
         }
       }
@@ -42,10 +37,7 @@ export function useTextToSpeech(options: TTSOptions = {}) {
     })
   }
 
-  async function speak(
-    text: string,
-    overrides: Partial<TTSOptions> = {},
-  ): Promise<void> {
+  async function speak(text: string, overrides: Partial<TTSOptions> = {}): Promise<void> {
     if (!supported.value) {
       throw new Error('Web Speech API SpeechSynthesis is not supported')
     }
@@ -60,9 +52,7 @@ export function useTextToSpeech(options: TTSOptions = {}) {
 
       for (const pref of voicePreference) {
         const v = voices.find(
-          (vc) =>
-            vc.name === pref ||
-            vc.name.toLowerCase().includes(pref.toLowerCase()),
+          (vc) => vc.name === pref || vc.name.toLowerCase().includes(pref.toLowerCase()),
         )
         if (v) {
           utterance.voice = v

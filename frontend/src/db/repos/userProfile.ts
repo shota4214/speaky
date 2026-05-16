@@ -51,16 +51,11 @@ export const userProfileRepo = {
     })
   },
 
-  async updateFact(
-    factId: string,
-    patch: Partial<Pick<UserFact, 'fact'>>,
-  ): Promise<void> {
+  async updateFact(factId: string, patch: Partial<Pick<UserFact, 'fact'>>): Promise<void> {
     const current = await this.getOrCreate()
     await db.userProfile.put({
       ...current,
-      facts: current.facts.map((f) =>
-        f.id === factId ? { ...f, ...patch } : f,
-      ),
+      facts: current.facts.map((f) => (f.id === factId ? { ...f, ...patch } : f)),
     })
   },
 }

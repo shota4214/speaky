@@ -32,9 +32,7 @@ const durationMin = computed(() => {
   return Math.max(1, Math.round(ms / 60_000))
 })
 
-const turnCount = computed(
-  () => messages.value.filter((m) => m.role === 'ai').length,
-)
+const turnCount = computed(() => messages.value.filter((m) => m.role === 'ai').length)
 
 function formatTime(d: Date): string {
   return d.toLocaleTimeString('ja-JP', {
@@ -61,9 +59,7 @@ function replay(text: string) {
 
     <div v-else-if="!conversation" class="mt-6">
       <BaseCard>
-        <p class="text-text-muted">
-          会話が見つかりませんでした(30日経過で削除済みの可能性)
-        </p>
+        <p class="text-text-muted">会話が見つかりませんでした(30日経過で削除済みの可能性)</p>
       </BaseCard>
     </div>
 
@@ -72,9 +68,7 @@ function replay(text: string) {
         <div class="flex flex-wrap items-center gap-3 text-sm">
           <TopicChip :label="conversation.topic" />
           <LevelBadge :level="conversation.level" size="sm" />
-          <span v-if="durationMin" class="text-text-muted">
-            {{ durationMin }}分
-          </span>
+          <span v-if="durationMin" class="text-text-muted"> {{ durationMin }}分 </span>
           <span class="text-text-muted">{{ turnCount }} turns</span>
         </div>
         <p v-if="conversation.summary" class="mt-3 text-sm text-text-muted">
@@ -85,9 +79,7 @@ function replay(text: string) {
       <div class="mt-6 space-y-3">
         <div v-for="m in messages" :key="m.id">
           <div v-if="m.role === 'user'" class="flex justify-end">
-            <div
-              class="max-w-[75%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-white"
-            >
+            <div class="max-w-[75%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-white">
               <div class="text-sm">{{ m.userText }}</div>
               <div class="mt-1 text-[10px] opacity-80">
                 {{ formatTime(m.timestamp) }}
@@ -113,13 +105,9 @@ function replay(text: string) {
               v-if="m.feedback"
               class="ml-2 max-w-[75%] rounded-xl bg-amber-50 px-3 py-2 text-xs ring-1 ring-amber-200 dark:bg-amber-900/20 dark:ring-amber-700/40"
             >
-              <div class="font-semibold text-amber-700 dark:text-amber-300">
-                ✏️ 添削
-              </div>
+              <div class="font-semibold text-amber-700 dark:text-amber-300">✏️ 添削</div>
               <div class="mt-1">
-                <span class="text-rose-500 line-through">{{
-                  m.feedback.userSaid
-                }}</span>
+                <span class="text-rose-500 line-through">{{ m.feedback.userSaid }}</span>
                 <span class="mx-1 text-text-muted">→</span>
                 <strong class="text-emerald-600 dark:text-emerald-400">{{
                   m.feedback.corrected
@@ -138,10 +126,7 @@ function replay(text: string) {
                 <li v-for="v in m.vocabulary" :key="v.word">
                   <strong>{{ v.word }}</strong>
                   <span class="ml-2 text-text-muted">— {{ v.meaning }}</span>
-                  <div
-                    v-if="v.example"
-                    class="text-[10px] italic text-text-muted"
-                  >
+                  <div v-if="v.example" class="text-[10px] italic text-text-muted">
                     "{{ v.example }}"
                   </div>
                 </li>

@@ -17,15 +17,9 @@ const errorInput = ref('invalid')
     <div class="mx-auto max-w-5xl px-6 py-8">
       <div class="flex items-center justify-between">
         <h1 class="text-3xl font-bold">Components Preview</h1>
-        <router-link
-          to="/"
-          class="text-sm text-text-muted hover:underline"
-          >← home</router-link
-        >
+        <router-link to="/" class="text-sm text-text-muted hover:underline">← home</router-link>
       </div>
-      <p class="mt-2 text-sm text-text-muted">
-        Task 2.1 — テーマ切替とベースコンポーネント表示
-      </p>
+      <p class="mt-2 text-sm text-text-muted">Task 2.1 — テーマ切替とベースコンポーネント表示</p>
 
       <!-- Theme switcher -->
       <BaseCard class="mt-6">
@@ -74,11 +68,7 @@ const errorInput = ref('invalid')
             placeholder="Shota"
             hint="AIが呼びかけるときに使う"
           />
-          <BaseInput
-            v-model="errorInput"
-            label="エラー例"
-            error="この値は無効です"
-          />
+          <BaseInput v-model="errorInput" label="エラー例" error="この値は無効です" />
         </div>
       </BaseCard>
 
@@ -123,15 +113,9 @@ const errorInput = ref('invalid')
           <h2 class="text-3xl font-bold">Heading 2 — text-3xl</h2>
           <h3 class="text-2xl font-semibold">Heading 3 — text-2xl</h3>
           <h4 class="text-xl font-semibold">Heading 4 — text-xl</h4>
-          <p class="text-base">
-            Body — text-base. The quick brown fox jumps over the lazy dog.
-          </p>
-          <p class="text-sm text-text-muted">
-            Small muted — text-sm text-text-muted
-          </p>
-          <p class="text-xs text-text-muted">
-            Caption — text-xs text-text-muted
-          </p>
+          <p class="text-base">Body — text-base. The quick brown fox jumps over the lazy dog.</p>
+          <p class="text-sm text-text-muted">Small muted — text-sm text-text-muted</p>
+          <p class="text-xs text-text-muted">Caption — text-xs text-text-muted</p>
         </div>
       </BaseCard>
 
@@ -139,36 +123,18 @@ const errorInput = ref('invalid')
       <BaseCard class="mt-6">
         <div class="text-sm font-semibold">Color Tokens</div>
         <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <div class="rounded-lg bg-primary p-3 text-xs text-white">
-            bg-primary
-          </div>
-          <div
-            class="rounded-lg bg-primary-light p-3 text-xs text-primary-dark"
-          >
+          <div class="rounded-lg bg-primary p-3 text-xs text-white">bg-primary</div>
+          <div class="rounded-lg bg-primary-light p-3 text-xs text-primary-dark">
             bg-primary-light
           </div>
-          <div class="rounded-lg bg-primary-dark p-3 text-xs text-white">
-            bg-primary-dark
-          </div>
-          <div class="rounded-lg bg-accent p-3 text-xs text-white">
-            bg-accent
-          </div>
-          <div
-            class="rounded-lg bg-bg p-3 text-xs text-text ring-1 ring-border"
-          >
-            bg-bg
-          </div>
-          <div
-            class="rounded-lg bg-surface p-3 text-xs text-text ring-1 ring-border"
-          >
+          <div class="rounded-lg bg-primary-dark p-3 text-xs text-white">bg-primary-dark</div>
+          <div class="rounded-lg bg-accent p-3 text-xs text-white">bg-accent</div>
+          <div class="rounded-lg bg-bg p-3 text-xs text-text ring-1 ring-border">bg-bg</div>
+          <div class="rounded-lg bg-surface p-3 text-xs text-text ring-1 ring-border">
             bg-surface
           </div>
-          <div class="rounded-lg p-3 text-xs text-text ring-1 ring-border">
-            text-text
-          </div>
-          <div
-            class="rounded-lg p-3 text-xs text-text-muted ring-1 ring-border"
-          >
+          <div class="rounded-lg p-3 text-xs text-text ring-1 ring-border">text-text</div>
+          <div class="rounded-lg p-3 text-xs text-text-muted ring-1 ring-border">
             text-text-muted
           </div>
         </div>

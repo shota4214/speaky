@@ -12,11 +12,7 @@ import {
 import { useConversationStore } from '../stores/conversation'
 import { useProfileStore } from '../stores/profile'
 import { useSettingsStore } from '../stores/settings'
-import {
-  detectInputMode,
-  isTooShort,
-  looksLikeHallucination,
-} from '../utils/language-detection'
+import { detectInputMode, isTooShort, looksLikeHallucination } from '../utils/language-detection'
 import { useAudioRecorder } from './useAudioRecorder'
 import { useTextToSpeech } from './useTextToSpeech'
 
@@ -83,9 +79,7 @@ export function useConversationLoop() {
   async function runLoop(input: StartLoopInput) {
     try {
       while (!stopRequested.value && conversation.id) {
-        conversation.setMode(
-          promptedAttempts.value > 0 ? 'awaitingPromptedSpeech' : 'recording',
-        )
+        conversation.setMode(promptedAttempts.value > 0 ? 'awaitingPromptedSpeech' : 'recording')
 
         const recording = await recorder.start()
         if (stopRequested.value) break
@@ -98,10 +92,10 @@ export function useConversationLoop() {
         conversation.setMode('processing')
         let trans
         try {
-          trans = await transcribeAudio(
-            recording.blob,
-            `recording.${pickExtension(recording.mimeType)}`,
-          )
+          trans = await transcribeAudio(recording.blob, {
+            filename: `recording.${pickExtension(recording.mimeType)}`,
+            model: settings.settings.whisperModel,
+          })
         } catch (e) {
           console.warn('[loop] transcribe failed:', e)
           continue
@@ -123,8 +117,7 @@ export function useConversationLoop() {
           timestamp: new Date(),
           role: 'user',
           userText: trans.text,
-          inputLanguage:
-            trans.language === 'unknown' ? null : trans.language,
+          inputLanguage: trans.language === 'unknown' ? null : trans.language,
           replyEn: null,
           replyJa: null,
           feedback: null,
@@ -143,6 +136,7 @@ export function useConversationLoop() {
           userProfile: profile.facts.map((f) => f.fact),
           lastConversationSummary: input.lastConversationSummary,
           conversationHistory: buildHistory().slice(-20),
+          model: settings.settings.llmModel,
         })
 
         if (stopRequested.value) break
@@ -208,10 +202,10 @@ export function useConversationLoop() {
     consecutiveSilent.value += 1
     if (consecutiveSilent.value >= MAX_SILENT_BEFORE_HINT) {
       conversation.setMode('aiSpeaking')
-      await tts.speak(
-        'もしかして分からない?英語が分からなければ日本語で話してくれてもいいよ。',
-        { lang: 'ja-JP', rate: 0.95 },
-      )
+      await tts.speak('もしかして分からない?英語が分からなければ日本語で話してくれてもいいよ。', {
+        lang: 'ja-JP',
+        rate: 0.95,
+      })
       consecutiveSilent.value = 0
     }
   }
@@ -243,7 +237,9 @@ export function useConversationLoop() {
     let summaryText = ''
     if (transcriptItems.length > 0) {
       try {
-        const res = await summarize(transcriptItems, conversation.topic)
+        const res = await summarize(transcriptItems, conversation.topic, {
+          model: settings.settings.llmModel,
+        })
         summaryText = res.summary
       } catch (e) {
         console.warn('[loop] summarize failed:', e)
@@ -252,11 +248,9 @@ export function useConversationLoop() {
       // ユーザーの新事実をプロフィールに学習追加
       try {
         const existingFacts = profile.facts.map((f) => f.fact)
-        const result = await extractFacts(
-          transcriptItems,
-          existingFacts,
-          profile.name,
-        )
+        const result = await extractFacts(transcriptItems, existingFacts, profile.name, {
+          model: settings.settings.llmModel,
+        })
         const knownSet = new Set(existingFacts)
         for (const fact of result.newFacts) {
           if (!knownSet.has(fact)) {

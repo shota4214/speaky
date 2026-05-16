@@ -47,9 +47,7 @@ function goStart() {
   <div class="mx-auto max-w-3xl px-6 py-8 pb-32">
     <h1 class="text-3xl font-bold">
       復習リスト
-      <span class="ml-2 text-sm font-normal text-text-muted">
-        ({{ items.length }}個)
-      </span>
+      <span class="ml-2 text-sm font-normal text-text-muted"> ({{ items.length }}個) </span>
     </h1>
 
     <div class="mt-6 flex flex-wrap items-center gap-3">
@@ -91,9 +89,7 @@ function goStart() {
             type="checkbox"
             class="mt-1 h-4 w-4 rounded accent-primary"
             :checked="vocabStore.isSelected(item.id)"
-            :disabled="
-              !vocabStore.isSelected(item.id) && !vocabStore.canAddMore
-            "
+            :disabled="!vocabStore.isSelected(item.id) && !vocabStore.canAddMore"
             @change="toggle(item.id)"
           />
           <div class="flex-1">
@@ -104,27 +100,18 @@ function goStart() {
               </span>
             </div>
             <div class="mt-1 text-sm text-text">{{ item.meaning }}</div>
-            <div
-              v-if="item.example"
-              class="mt-1 text-xs italic text-text-muted"
-            >
+            <div v-if="item.example" class="mt-1 text-xs italic text-text-muted">
               "{{ item.example }}"
             </div>
           </div>
-          <button
-            class="text-xs text-rose-500 hover:underline"
-            @click="deleteItem(item.id)"
-          >
+          <button class="text-xs text-rose-500 hover:underline" @click="deleteItem(item.id)">
             削除
           </button>
         </div>
       </BaseCard>
     </div>
 
-    <div
-      v-if="items.length > 0"
-      class="fixed bottom-4 left-60 right-4 z-10 mx-auto max-w-3xl px-2"
-    >
+    <div v-if="items.length > 0" class="fixed bottom-4 left-60 right-4 z-10 mx-auto max-w-3xl px-2">
       <BaseCard>
         <div class="flex items-center justify-between gap-3">
           <div class="text-sm text-text-muted">

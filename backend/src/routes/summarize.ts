@@ -1,9 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import {
-  chatWithOllama,
-  OllamaError,
-  type OllamaChatMessage,
-} from '../services/ollama'
+import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
 
 interface TranscriptItem {
   role: 'user' | 'ai'
@@ -13,6 +9,7 @@ interface TranscriptItem {
 interface SummarizeRequestBody {
   transcript?: TranscriptItem[]
   topic?: string
+  model?: string
 }
 
 const SUMMARY_SYSTEM_PROMPT = `You are an assistant who summarizes English conversation practice sessions.
@@ -21,7 +18,7 @@ Given the transcript between an English-learning user (Japanese speaker) and an 
 export const summarizeRouter = Router()
 
 summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
-  const { transcript, topic } = (req.body ?? {}) as SummarizeRequestBody
+  const { transcript, topic, model } = (req.body ?? {}) as SummarizeRequestBody
 
   if (!Array.isArray(transcript) || transcript.length === 0) {
     return res.status(400).json({
@@ -43,13 +40,17 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
   ]
 
   try {
-    const ollamaRes = await chatWithOllama(messages, { jsonFormat: false })
+    const ollamaRes = await chatWithOllama(messages, {
+      jsonFormat: false,
+      model,
+      timeoutMs: 60_000,
+    })
     const raw = ollamaRes.message?.content ?? ''
     const summary = raw.trim().slice(0, 240) // safety cap
     return res.json({ summary })
   } catch (e) {
     if (e instanceof OllamaError) {
-      if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND') {
+      if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
         return res.status(503).json({ error: e.message, code: e.code })
       }
     }

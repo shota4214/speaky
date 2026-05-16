@@ -21,6 +21,8 @@ export interface ChatRequestContext {
   userProfile?: string[]
   lastConversationSummary?: string | null
   conversationHistory?: ChatHistoryItem[]
+  /** 使用するLLMモデル(allowlist内のみサーバ側で採用) */
+  model?: string
 }
 
 export interface FeedbackResponse {
@@ -68,22 +70,33 @@ async function asJson<T>(res: Response): Promise<T> {
 
 export async function transcribeAudio(
   blob: Blob,
-  filename = 'recording.webm',
+  options: {
+    filename?: string
+    model?: string
+    signal?: AbortSignal
+  } = {},
 ): Promise<TranscribeResult> {
   const form = new FormData()
-  form.append('audio', blob, filename)
-  const res = await fetch('/api/transcribe', { method: 'POST', body: form })
+  form.append('audio', blob, options.filename ?? 'recording.webm')
+  if (options.model) form.append('model', options.model)
+  const res = await fetch('/api/transcribe', {
+    method: 'POST',
+    body: form,
+    signal: options.signal,
+  })
   return asJson<TranscribeResult>(res)
 }
 
 export async function chat(
   userText: string,
   context: ChatRequestContext = {},
+  options: { signal?: AbortSignal } = {},
 ): Promise<ChatReply> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userText, context }),
+    signal: options.signal,
   })
   return asJson<ChatReply>(res)
 }
@@ -91,11 +104,13 @@ export async function chat(
 export async function summarize(
   transcript: ChatHistoryItem[],
   topic?: string,
+  options: { model?: string; signal?: AbortSignal } = {},
 ): Promise<{ summary: string }> {
   const res = await fetch('/api/summarize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transcript, topic }),
+    body: JSON.stringify({ transcript, topic, model: options.model }),
+    signal: options.signal,
   })
   return asJson<{ summary: string }>(res)
 }
@@ -109,11 +124,18 @@ export async function extractFacts(
   transcript: ChatHistoryItem[],
   existingFacts: string[],
   existingName: string | null,
+  options: { model?: string; signal?: AbortSignal } = {},
 ): Promise<ExtractFactsResult> {
   const res = await fetch('/api/extract-facts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transcript, existingFacts, existingName }),
+    body: JSON.stringify({
+      transcript,
+      existingFacts,
+      existingName,
+      model: options.model,
+    }),
+    signal: options.signal,
   })
   return asJson<ExtractFactsResult>(res)
 }
@@ -134,6 +156,23 @@ export async function checkOllamaHealth(): Promise<OllamaHealth> {
   } catch (e) {
     return { ok: false, error: (e as Error).message }
   }
+}
+
+// ----- Admin token (for management API auth) -----
+
+let _adminTokenCache: string | null = null
+
+export async function fetchAdminToken(force = false): Promise<string> {
+  if (_adminTokenCache && !force) return _adminTokenCache
+  const res = await fetch('/api/auth/admin-token')
+  const data = await asJson<{ token: string }>(res)
+  _adminTokenCache = data.token
+  return _adminTokenCache
+}
+
+async function adminHeaders(extra: Record<string, string> = {}): Promise<Record<string, string>> {
+  const token = await fetchAdminToken()
+  return { 'X-Admin-Token': token, ...extra }
 }
 
 export interface InstalledModel {
@@ -161,6 +200,7 @@ export async function listOllamaModels(): Promise<OllamaModelsResponse> {
 export async function deleteOllamaModel(name: string): Promise<void> {
   const res = await fetch(`/api/models/ollama/${encodeURIComponent(name)}`, {
     method: 'DELETE',
+    headers: await adminHeaders(),
   })
   await asJson<{ ok: boolean }>(res)
 }
@@ -171,20 +211,16 @@ export async function listWhisperModels(): Promise<WhisperModelsResponse> {
 }
 
 export async function deleteWhisperModel(filename: string): Promise<void> {
-  const res = await fetch(
-    `/api/models/whisper/${encodeURIComponent(filename)}`,
-    {
-      method: 'DELETE',
-    },
-  )
+  const res = await fetch(`/api/models/whisper/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+    headers: await adminHeaders(),
+  })
   await asJson<{ ok: boolean }>(res)
 }
 
 // ----- SSE Streaming download / build helpers -----
 
-async function* parseSSE(
-  response: Response,
-): AsyncGenerator<Record<string, unknown>> {
+async function* parseSSE(response: Response): AsyncGenerator<Record<string, unknown>> {
   if (!response.body) throw new Error('No response body for SSE')
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -232,7 +268,7 @@ export async function pullOllamaModel(
 ): Promise<void> {
   const res = await fetch('/api/models/ollama/pull', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await adminHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ name }),
   })
   if (!res.ok) {
@@ -258,7 +294,7 @@ export async function downloadWhisperModelStream(
 ): Promise<void> {
   const res = await fetch('/api/models/whisper/download', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await adminHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ name }),
   })
   if (!res.ok) {
@@ -295,6 +331,7 @@ export async function buildWhisperCpp(
 ): Promise<void> {
   const res = await fetch('/api/setup/build-whisper-cpp', {
     method: 'POST',
+    headers: await adminHeaders(),
   })
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${await res.text()}`)

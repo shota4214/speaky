@@ -90,9 +90,7 @@ async function refreshStep4Status() {
   }
   try {
     const wList = await listWhisperModels()
-    whisperDownloaded.value = wList.models.some(
-      (m) => m.name === `ggml-${whisperModel.value}.bin`,
-    )
+    whisperDownloaded.value = wList.models.some((m) => m.name === `ggml-${whisperModel.value}.bin`)
   } catch {
     whisperDownloaded.value = false
   }
@@ -207,8 +205,8 @@ function complete() {
           <h2 class="text-xl font-semibold">英会話練習アプリ speaky へようこそ</h2>
           <p>
             このアプリは <strong>完全ローカル動作</strong> の英会話練習アプリです。
-            Whisper(音声認識)・Ollama(LLM)・Web Speech API(音声合成)
-            を組み合わせ、外部API課金ゼロで AI と英会話練習ができます。
+            Whisper(音声認識)・Ollama(LLM)・Web Speech API(音声合成) を組み合わせ、外部API課金ゼロで
+            AI と英会話練習ができます。
           </p>
           <ul class="list-disc space-y-1 pl-5 text-sm text-text-muted">
             <li>マイクから英語/日本語で話しかけると AI が応答します</li>
@@ -216,16 +214,12 @@ function complete() {
             <li>会話履歴は30日間ローカルに保存</li>
             <li>外部にデータが送信されることはありません</li>
           </ul>
-          <p class="text-sm text-text-muted">
-            初回セットアップを始めましょう。
-          </p>
+          <p class="text-sm text-text-muted">初回セットアップを始めましょう。</p>
         </div>
 
         <div v-else-if="step === 2" class="space-y-4">
           <h2 class="text-xl font-semibold">Ollama の確認</h2>
-          <p class="text-sm">
-            Ollama がローカルで起動しているか確認します。
-          </p>
+          <p class="text-sm">Ollama がローカルで起動しているか確認します。</p>
 
           <div
             v-if="ollamaStatus === 'checking'"
@@ -308,9 +302,7 @@ function complete() {
                 <div class="text-sm font-medium">
                   LLM: <code class="font-mono">{{ llmModel }}</code>
                 </div>
-                <div class="text-xs text-text-muted">
-                  Ollama 経由でダウンロード
-                </div>
+                <div class="text-xs text-text-muted">Ollama 経由でダウンロード</div>
               </div>
               <span
                 v-if="llmPulled"
@@ -373,7 +365,8 @@ function complete() {
             <pre
               v-if="buildLog"
               class="mt-2 max-h-32 overflow-y-auto rounded bg-bg p-2 font-mono text-[10px]"
-            >{{ buildLog }}</pre>
+              >{{ buildLog }}</pre
+            >
             <p v-if="buildError" class="mt-2 text-xs text-rose-500">
               {{ buildError }}
             </p>
@@ -386,9 +379,7 @@ function complete() {
                 <div class="text-sm font-medium">
                   Whisper: <code class="font-mono">{{ whisperModel }}</code>
                 </div>
-                <div class="text-xs text-text-muted">
-                  音声認識モデルをダウンロード
-                </div>
+                <div class="text-xs text-text-muted">音声認識モデルをダウンロード</div>
               </div>
               <span
                 v-if="whisperDownloaded"
@@ -404,14 +395,9 @@ function complete() {
               :disabled="whisperDownloading || !whisperCppBuilt"
               @click="downloadWhisper"
             >
-              {{
-                whisperDownloading ? '取得中...' : '📥 Whisper をダウンロード'
-              }}
+              {{ whisperDownloading ? '取得中...' : '📥 Whisper をダウンロード' }}
             </BaseButton>
-            <p
-              v-if="!whisperCppBuilt"
-              class="mt-2 text-xs text-amber-600 dark:text-amber-400"
-            >
+            <p v-if="!whisperCppBuilt" class="mt-2 text-xs text-amber-600 dark:text-amber-400">
               ⚠ 先に whisper.cpp をビルドしてください
             </p>
             <div v-if="whisperDownloading || whisperStatus" class="mt-2">
@@ -431,16 +417,12 @@ function complete() {
             </p>
           </div>
 
-          <p class="text-xs text-text-muted">
-            すべて ✓ になったら「次へ」を押してください。
-          </p>
+          <p class="text-xs text-text-muted">すべて ✓ になったら「次へ」を押してください。</p>
         </div>
 
         <div v-else-if="step === 5" class="space-y-4">
           <h2 class="text-xl font-semibold">AIキャラクター設定</h2>
-          <p class="text-sm text-text-muted">
-            会話相手のAIに名前を付けます。
-          </p>
+          <p class="text-sm text-text-muted">会話相手のAIに名前を付けます。</p>
           <div>
             <label class="block text-sm font-medium">名前</label>
             <input
@@ -448,9 +430,7 @@ function complete() {
               type="text"
               class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             />
-            <div class="mt-2 text-xs text-text-muted">
-              候補: Emma · Mike · Alex · Sarah · James
-            </div>
+            <div class="mt-2 text-xs text-text-muted">候補: Emma · Mike · Alex · Sarah · James</div>
           </div>
           <div>
             <div class="text-sm font-medium">性別 / 声</div>
@@ -478,22 +458,17 @@ function complete() {
           <p class="text-sm">
             これで設定は完了です。「会話を始める」をクリックして最初の会話に進みましょう。
           </p>
-          <p class="text-xs text-text-muted">
-            これらの設定は後から「設定」画面で変更できます。
-          </p>
+          <p class="text-xs text-text-muted">これらの設定は後から「設定」画面で変更できます。</p>
         </div>
       </BaseCard>
 
       <footer class="mt-6 flex items-center justify-between">
-        <BaseButton variant="ghost" :disabled="step === 1" @click="prev">
-          ← 戻る
-        </BaseButton>
+        <BaseButton variant="ghost" :disabled="step === 1" @click="prev"> ← 戻る </BaseButton>
         <BaseButton
           v-if="step < 6"
           :disabled="
             (step === 2 && ollamaStatus !== 'ok') ||
-            (step === 4 &&
-              (!llmPulled || !whisperCppBuilt || !whisperDownloaded))
+            (step === 4 && (!llmPulled || !whisperCppBuilt || !whisperDownloaded))
           "
           @click="next"
         >

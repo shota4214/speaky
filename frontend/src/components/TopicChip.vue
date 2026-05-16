@@ -23,9 +23,7 @@ const sizeClass = computed(
 )
 
 const colorClass = computed(() =>
-  props.active
-    ? 'bg-accent text-white shadow-sm'
-    : 'bg-accent/10 text-accent hover:bg-accent/20',
+  props.active ? 'bg-accent text-white shadow-sm' : 'bg-accent/10 text-accent hover:bg-accent/20',
 )
 </script>
 

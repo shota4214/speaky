@@ -37,9 +37,7 @@ const durationMin = computed(() => {
   return Math.max(1, Math.round(ms / 60_000))
 })
 
-const turnCount = computed(
-  () => messages.value.filter((m) => m.role === 'ai').length,
-)
+const turnCount = computed(() => messages.value.filter((m) => m.role === 'ai').length)
 
 const allVocabulary = computed<VocabItem[]>(() => {
   const seen = new Set<string>()
@@ -73,9 +71,7 @@ function restart() {
 
     <div v-else-if="!conversation" class="mt-6">
       <BaseCard>
-        <p class="text-sm text-text-muted">
-          会話データが見つかりませんでした。
-        </p>
+        <p class="text-sm text-text-muted">会話データが見つかりませんでした。</p>
       </BaseCard>
     </div>
 
@@ -136,9 +132,7 @@ function restart() {
       <router-link to="/" class="flex-1">
         <BaseButton variant="secondary" class="w-full">ホームに戻る</BaseButton>
       </router-link>
-      <BaseButton class="flex-1" @click="restart">
-        もう一度会話する
-      </BaseButton>
+      <BaseButton class="flex-1" @click="restart"> もう一度会話する </BaseButton>
     </div>
   </div>
 </template>

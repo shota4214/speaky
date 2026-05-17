@@ -1,0 +1,19 @@
+{
+  "name": "electron",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Electron wrapper for Speaky",
+  "main": "dist/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && electron dist/main.js",
+    "dist": "electron-builder --mac --arm64"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "~6.0.2"
+  }
+}

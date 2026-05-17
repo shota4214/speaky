@@ -6,13 +6,16 @@
   "description": "ローカル英会話学習アプリ(Local English conversation practice with Whisper + Ollama)",
   "workspaces": [
     "frontend",
-    "backend"
+    "backend",
+    "electron"
   ],
   "scripts": {
     "dev": "concurrently -n FE,BE -c blue,green \"npm run dev -w frontend\" \"npm run dev -w backend\"",
     "dev:frontend": "npm run dev -w frontend",
     "dev:backend": "npm run dev -w backend",
+    "dev:electron": "npm run dev -w electron",
     "build": "npm run build -w frontend && npm run build -w backend",
+    "dist": "npm run build && npm run build -w electron && npm run dist -w electron",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,vue,js,json,md,css}\"",

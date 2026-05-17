@@ -329,15 +329,17 @@ async function handleDeleteAll() {
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateWhisper"
           >
-            <option value="tiny">tiny (~75MB)</option>
-            <option value="base">base (~142MB)</option>
-            <option value="small">small (~466MB)</option>
-            <option value="medium">medium (~1.5GB)</option>
-            <option value="large-v1">large-v1 (~2.9GB)</option>
-            <option value="large-v3-turbo">large-v3-turbo (~1.5GB)</option>
+            <option value="tiny">⚡⚡ tiny (~75MB / 超高速・精度低)</option>
+            <option value="base">⚡ base (~142MB / 高速)</option>
+            <option value="small">⚡ small (~466MB / 高速・実用精度)</option>
+            <option value="medium">⚖ medium (~1.5GB / バランス・推奨)</option>
+            <option value="large-v1">🎯 large-v1 (~2.9GB / 高精度・低速)</option>
+            <option value="large-v3-turbo">🎯 large-v3-turbo (~1.5GB / 高精度・最新)</option>
           </select>
           <p class="mt-1 text-xs text-text-muted">
-            ※ 切り替えは backend 環境変数(OLLAMA_MODEL系)で行ってください
+            英会話学習なら
+            <strong class="text-text">small または medium</strong> がスピードと精度のバランス良。
+            会話のラリーを優先したいなら small へ。
           </p>
         </div>
         <div>
@@ -347,12 +349,18 @@ async function handleDeleteAll() {
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateLlm"
           >
-            <option value="llama3.2:3b">軽量 (Llama 3.2 3B)</option>
-            <option value="gemma2:9b">推奨 (Gemma 2 9B)</option>
-            <option value="qwen2.5:14b">高精度 (Qwen 2.5 14B)</option>
+            <option value="llama3.2:3b">⚡ 軽量・高速 (Llama 3.2 3B / ~2GB)</option>
+            <option value="gemma2:9b">⚖ バランス (Gemma 2 9B / ~5.5GB)</option>
+            <option value="qwen2.5:14b">🎯 高精度・低速 (Qwen 2.5 14B / ~9GB)</option>
           </select>
           <p class="mt-1 text-xs text-text-muted">
-            ※ 切り替え時は <code>ollama pull</code> で取得後、backend を再起動
+            速度の目安(M4/M5):
+            <strong class="text-text">Llama 3B ≈ 1-2秒</strong> /
+            <strong class="text-text">Gemma 9B ≈ 3-5秒</strong> /
+            <strong class="text-text">Qwen 14B ≈ 5-10秒</strong> per turn
+          </p>
+          <p class="mt-1 text-xs text-text-muted">
+            ※ 未取得モデルは「インストール済みモデル」セクションの「+ 取得」ボタンで先に DL
           </p>
         </div>
       </div>

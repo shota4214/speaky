@@ -33,6 +33,7 @@ type OllamaChatRequest = {
     top_k?: number
     seed?: number
     repeat_penalty?: number
+    num_predict?: number
   }
 }
 
@@ -67,6 +68,16 @@ export interface ChatWithOllamaOptions {
   seed?: number
   /** 繰り返しペナルティ。1.1 程度で同じフレーズの再使用を抑制 */
   repeatPenalty?: number
+  /**
+   * 生成する最大トークン数。短く切ることで応答速度が上がる。
+   * 現在の運用値(routes 側で設定):
+   * - /chat:           初期 500 → リトライで 1000 → 2000(length 切断時の自動倍化)
+   * - /chat/opening:   初期 400 → リトライで 800 → 1600(同上)
+   * - /summarize:      300(plain text なので切断 = 短い要約)
+   * - /extract-facts:  初期 700 → 失敗時 1400(JSON が事実多数で切れることがあるため大きめ)
+   * デフォルトは未指定(モデルの判断、長くなりがち)
+   */
+  numPredict?: number
   model?: string
   /** タイムアウト (ms)。0で無効化。デフォルト90秒 */
   timeoutMs?: number
@@ -110,6 +121,7 @@ export async function chatWithOllama(
         top_k: topK,
         seed,
         repeat_penalty: repeatPenalty,
+        ...(options.numPredict !== undefined && { num_predict: options.numPredict }),
       },
     }
     if (jsonFormat) body.format = 'json'

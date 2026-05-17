@@ -47,6 +47,8 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
       // 要約は安定性重視: 低 temperature
       temperature: 0.3,
       topP: 0.85,
+      // 1-2 文 + 安全マージン。plain text なので length 切断されても短いサマリーになるだけ。
+      numPredict: 300,
     })
     const raw = ollamaRes.message?.content ?? ''
     const summary = raw.trim().slice(0, 240) // safety cap

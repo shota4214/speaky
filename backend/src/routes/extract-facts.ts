@@ -65,36 +65,64 @@ Extract new facts the user revealed in this transcript.`
     { role: 'user', content: userPrompt },
   ]
 
-  try {
-    const ollamaRes = await chatWithOllama(messages, {
-      jsonFormat: true,
-      model,
-      timeoutMs: 60_000,
-      // 事実抽出は安定性重視: 低 temperature
-      temperature: 0.2,
-      topP: 0.8,
-    })
-    const raw = ollamaRes.message?.content ?? ''
+  // 事実が多い会話で JSON が length 切断されないように、
+  // 最初は 700、parse 失敗時は 1400 でリトライする(プロフィール抽出漏れ防止)
+  const ATTEMPT_BUDGETS = [700, 1400]
+  let lastRaw = ''
+  let lastParseError: unknown = null
+
+  for (let attempt = 0; attempt < ATTEMPT_BUDGETS.length; attempt++) {
+    const numPredict = ATTEMPT_BUDGETS[attempt]!
     try {
-      const parsed = JSON.parse(raw) as ExtractFactsResult
-      const newFacts = Array.isArray(parsed.newFacts)
-        ? parsed.newFacts.filter((f): f is string => typeof f === 'string' && f.length > 0)
-        : []
-      const updatedName =
-        typeof parsed.updatedName === 'string' && parsed.updatedName.length > 0
-          ? parsed.updatedName
-          : null
-      return res.json({ newFacts, updatedName })
-    } catch {
-      return res.json({ newFacts: [], updatedName: null })
-    }
-  } catch (e) {
-    if (e instanceof OllamaError) {
-      if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
-        return res.status(503).json({ error: e.message, code: e.code })
+      const ollamaRes = await chatWithOllama(messages, {
+        jsonFormat: true,
+        model,
+        timeoutMs: 60_000,
+        temperature: 0.2,
+        topP: 0.8,
+        numPredict,
+      })
+      lastRaw = ollamaRes.message?.content ?? ''
+      try {
+        const parsed = JSON.parse(lastRaw) as ExtractFactsResult
+        const newFacts = Array.isArray(parsed.newFacts)
+          ? parsed.newFacts.filter((f): f is string => typeof f === 'string' && f.length > 0)
+          : []
+        const updatedName =
+          typeof parsed.updatedName === 'string' && parsed.updatedName.length > 0
+            ? parsed.updatedName
+            : null
+        return res.json({ newFacts, updatedName })
+      } catch (parseErr) {
+        lastParseError = parseErr
+        console.warn(
+          `[extract-facts] JSON parse failed (attempt ${attempt + 1}/${ATTEMPT_BUDGETS.length}, numPredict=${numPredict}). ` +
+            `length-truncation の可能性。raw=`,
+          lastRaw.slice(0, 200),
+        )
+        // 次のループで budget を増やしてリトライ
       }
+    } catch (e) {
+      if (e instanceof OllamaError) {
+        if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
+          return res.status(503).json({ error: e.message, code: e.code })
+        }
+      }
+      console.error('[extract-facts] error:', e)
+      return res.status(500).json({ error: (e as Error).message })
     }
-    console.error('[extract-facts] error:', e)
-    return res.status(500).json({ error: (e as Error).message })
   }
+
+  // 全リトライ失敗。500 を返してフロント側の catch でログ可能にする
+  // (フロントは現状 try/catch で握って学習スキップするが、エラーは記録される)
+  console.error(
+    '[extract-facts] all attempts failed to parse JSON. lastRaw=',
+    lastRaw.slice(0, 400),
+    'lastError:',
+    lastParseError,
+  )
+  return res.status(502).json({
+    error: 'Failed to parse extract-facts JSON response after retries',
+    rawContent: lastRaw,
+  })
 })

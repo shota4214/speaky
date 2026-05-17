@@ -49,7 +49,8 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   aiCharacter: { name: 'Emma', gender: 'female' },
-  silenceDurationMs: 2000,
+  // 1.5秒: 体感のラリー速度と誤切れのバランス点。設定画面で 1-5 秒に調整可能。
+  silenceDurationMs: 1500,
   llmModel: 'gemma2:9b',
   whisperModel: 'medium',
   darkMode: 'system',

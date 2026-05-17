@@ -10,6 +10,12 @@ import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services
 const MAX_RETRIES = 3
 const MAX_HISTORY_TURNS = 10 // user + ai pairs to keep in context
 
+// reply_en + reply_ja + feedback + 最大3件 vocabulary + JSONオーバーヘッドの上限を
+// 安全側に見積もり、220 では足りないケースが出るので 500 を初期値にする。
+// リトライ時はさらに倍化(500 → 1000 → 2000)し、length 切断による失敗を確実に救う。
+const CHAT_BASE_NUM_PREDICT = 500
+const OPENING_BASE_NUM_PREDICT = 400
+
 interface HistoryItem {
   role: 'user' | 'ai'
   text: string
@@ -143,6 +149,8 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   let lastRawContent: string | undefined
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    // length 切断対策: リトライごとに上限を倍化(500 → 1000 → 2000)
+    const numPredict = CHAT_BASE_NUM_PREDICT * (1 << (attempt - 1))
     try {
       const ollamaRes = await chatWithOllama(messages, {
         model: context.model,
@@ -151,6 +159,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         temperature: 0.85,
         topP: 0.92,
         repeatPenalty: 1.15,
+        numPredict,
       })
       lastRawContent = ollamaRes.message?.content ?? ''
       const reply = parseChatReply(lastRawContent, mode)
@@ -158,7 +167,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         return res.json(reply)
       }
       console.warn(
-        `[chat] JSON parse failed (attempt ${attempt}/${MAX_RETRIES}). raw=`,
+        `[chat] JSON parse failed (attempt ${attempt}/${MAX_RETRIES}, numPredict=${numPredict}). raw=`,
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
@@ -210,6 +219,8 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
   let lastRawContent: string | undefined
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    // length 切断対策: リトライごとに倍化(400 → 800 → 1600)
+    const numPredict = OPENING_BASE_NUM_PREDICT * (1 << (attempt - 1))
     try {
       const ollamaRes = await chatWithOllama(messages, {
         model: context.model,
@@ -218,12 +229,13 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
         temperature: 0.95,
         topP: 0.95,
         repeatPenalty: 1.2,
+        numPredict,
       })
       lastRawContent = ollamaRes.message?.content ?? ''
       const reply = parseChatReply(lastRawContent, mode)
       if (reply) return res.json(reply)
       console.warn(
-        `[chat/opening] JSON parse failed (attempt ${attempt}/${MAX_RETRIES}). raw=`,
+        `[chat/opening] JSON parse failed (attempt ${attempt}/${MAX_RETRIES}, numPredict=${numPredict}). raw=`,
         lastRawContent.slice(0, 200),
       )
     } catch (e) {

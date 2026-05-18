@@ -4,6 +4,7 @@
   "private": true,
   "description": "Isolated runtime deps that must be shipped alongside the esbuild backend bundle. nodejs-whisper has shelljs/readline-sync etc. as transitive deps which esbuild cannot inline (uses __dirname for cpp/ binary paths).",
   "dependencies": {
+    "ffmpeg-static": "^5.2.0",
     "nodejs-whisper": "^0.3.0"
   }
 }

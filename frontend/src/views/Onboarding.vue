@@ -248,10 +248,20 @@ function complete() {
           >
             ❌ Ollama に接続できませんでした
             <div class="mt-1 text-xs text-text-muted">{{ ollamaError }}</div>
-            <div class="mt-3 space-y-1 text-xs">
-              <div>インストール: <code>brew install ollama</code></div>
-              <div>起動: <code>brew services start ollama</code></div>
-              <div>または: <code>ollama serve</code>(フォアグラウンド)</div>
+            <div class="mt-3 space-y-2 text-xs">
+              <p>
+                Ollama は別アプリです。以下のリンクから macOS 用インストーラー(.dmg)を
+                ダウンロードしてインストール → Ollama を起動してから「🔄
+                再チェック」を押してください。
+              </p>
+              <a
+                href="https://ollama.com/download/mac"
+                target="_blank"
+                rel="noopener"
+                class="inline-block rounded bg-primary px-3 py-1.5 text-white hover:bg-primary-dark"
+              >
+                📥 Ollama を公式サイトからダウンロード
+              </a>
             </div>
           </div>
 
@@ -345,9 +355,7 @@ function complete() {
             <div class="flex items-center justify-between">
               <div>
                 <div class="text-sm font-medium">whisper.cpp ビルド</div>
-                <div class="text-xs text-text-muted">
-                  音声認識エンジンを最初に1回だけビルド(cmake が必要)
-                </div>
+                <div class="text-xs text-text-muted">音声認識エンジン(通常は配布版に同梱済み)</div>
               </div>
               <span
                 v-if="whisperCppBuilt"

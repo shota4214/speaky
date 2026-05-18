@@ -20,6 +20,18 @@ interface RuntimeLayout {
   frontendDist: string
   /** SPEAKY_WHISPER_BASE_DIR に渡す絶対パス。writable であること */
   whisperPackageDir: string
+  /** 同梱した ffmpeg-static のディレクトリ(null なら system PATH の ffmpeg に頼る) */
+  ffmpegDir: string | null
+}
+
+function findFfmpegDir(searchRoots: string[]): string | null {
+  for (const root of searchRoots) {
+    const candidate = path.join(root, 'node_modules', 'ffmpeg-static')
+    if (existsSync(path.join(candidate, 'ffmpeg'))) {
+      return candidate
+    }
+  }
+  return null
 }
 
 /**
@@ -37,6 +49,7 @@ function setupRuntime(): RuntimeLayout {
       runtimeDir: path.join(workspaceRoot, 'backend', 'dist'),
       frontendDist: path.join(workspaceRoot, 'frontend', 'dist'),
       whisperPackageDir: path.join(workspaceRoot, 'node_modules', 'nodejs-whisper'),
+      ffmpegDir: findFfmpegDir([path.join(workspaceRoot, 'backend', 'vendor'), workspaceRoot]),
     }
   }
 
@@ -82,6 +95,7 @@ function setupRuntime(): RuntimeLayout {
     runtimeDir,
     frontendDist: path.join(process.resourcesPath, 'frontend-dist'),
     whisperPackageDir,
+    ffmpegDir: findFfmpegDir([runtimeDir]),
   }
 }
 
@@ -149,11 +163,24 @@ function syncRuntime(templateDir: string, runtimeDir: string): void {
 }
 
 async function startBackend(layout: RuntimeLayout): Promise<void> {
+  // 同梱の ffmpeg-static を PATH の先頭に追加して、nodejs-whisper の
+  // `spawn('ffmpeg', ...)` が確実にバンドル版を拾うようにする。
+  // ユーザー Mac に Homebrew や ffmpeg が無くても OK。
+  const augmentedPath = layout.ffmpegDir
+    ? `${layout.ffmpegDir}:${process.env.PATH ?? ''}`
+    : (process.env.PATH ?? '')
+  if (!layout.ffmpegDir) {
+    console.warn('[electron] bundled ffmpeg not found; will rely on system PATH ffmpeg')
+  } else {
+    console.log(`[electron] using bundled ffmpeg at ${layout.ffmpegDir}`)
+  }
+
   // Electron 実行ファイル自体を Node として使う(spawn 用に同梱の Node が不要)
   backendProc = spawn(process.execPath, [layout.entryPath], {
     cwd: layout.runtimeDir,
     env: {
       ...process.env,
+      PATH: augmentedPath,
       PORT: String(BACKEND_PORT),
       HOST: BACKEND_HOST,
       SPEAKY_FRONTEND_PATH: layout.frontendDist,

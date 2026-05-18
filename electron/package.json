@@ -42,13 +42,17 @@
         "to": "backend-template/node_modules",
         "filter": [
           "**/*",
-          "!nodejs-whisper/cpp/whisper.cpp/build/**",
           "!nodejs-whisper/cpp/whisper.cpp/.git/**",
           "!nodejs-whisper/cpp/whisper.cpp/tests/**",
           "!nodejs-whisper/cpp/whisper.cpp/samples/**",
           "!nodejs-whisper/cpp/whisper.cpp/models/ggml-*.bin",
           "!nodejs-whisper/cpp/whisper.cpp/models/*.gguf",
-          "!nodejs-whisper/cpp/whisper.cpp/models/*.mlmodelc/**"
+          "!nodejs-whisper/cpp/whisper.cpp/models/*.mlmodelc/**",
+          "!nodejs-whisper/cpp/whisper.cpp/build/**",
+          "nodejs-whisper/cpp/whisper.cpp/build/bin/whisper-cli",
+          "nodejs-whisper/cpp/whisper.cpp/build/bin/ggml-metal.metal",
+          "nodejs-whisper/cpp/whisper.cpp/build/bin/ggml-common.h",
+          "nodejs-whisper/cpp/whisper.cpp/build/bin/ggml-metal-impl.h"
         ]
       }
     ],

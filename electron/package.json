@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc && electron dist/main.js",
+    "dev:packaged": "tsc && SPEAKY_LOAD_BUILD=1 electron dist/main.js",
     "dist": "electron-builder --mac --arm64"
   },
   "devDependencies": {
@@ -15,5 +16,53 @@
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8",
     "typescript": "~6.0.2"
+  },
+  "build": {
+    "appId": "com.speaky.app",
+    "productName": "Speaky",
+    "directories": {
+      "output": "dist-app",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "frontend-dist"
+      },
+      {
+        "from": "../backend/dist-bundle/index.cjs",
+        "to": "backend-template/index.cjs"
+      },
+      {
+        "from": "../backend/vendor/node_modules",
+        "to": "backend-template/node_modules",
+        "filter": [
+          "**/*",
+          "!nodejs-whisper/cpp/whisper.cpp/build/**",
+          "!nodejs-whisper/cpp/whisper.cpp/.git/**",
+          "!nodejs-whisper/cpp/whisper.cpp/tests/**",
+          "!nodejs-whisper/cpp/whisper.cpp/samples/**",
+          "!nodejs-whisper/cpp/whisper.cpp/models/ggml-*.bin",
+          "!nodejs-whisper/cpp/whisper.cpp/models/*.gguf",
+          "!nodejs-whisper/cpp/whisper.cpp/models/*.mlmodelc/**"
+        ]
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.education",
+      "hardenedRuntime": false,
+      "identity": null,
+      "entitlements": null
+    },
+    "dmg": {
+      "writeUpdateInfo": false
+    }
   }
 }

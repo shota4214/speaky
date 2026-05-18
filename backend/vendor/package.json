@@ -1,0 +1,9 @@
+{
+  "name": "speaky-backend-vendor",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Isolated runtime deps that must be shipped alongside the esbuild backend bundle. nodejs-whisper has shelljs/readline-sync etc. as transitive deps which esbuild cannot inline (uses __dirname for cpp/ binary paths).",
+  "dependencies": {
+    "nodejs-whisper": "^0.3.0"
+  }
+}

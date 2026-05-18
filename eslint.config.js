@@ -6,7 +6,13 @@ import configPrettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   {
-    ignores: ['**/node_modules/**', '**/dist/**', 'frontend/.vite/**'],
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/dist-bundle/**',
+      '**/dist-app/**',
+      'frontend/.vite/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

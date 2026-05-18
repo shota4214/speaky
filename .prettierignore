@@ -1,5 +1,7 @@
 node_modules
 dist
+dist-bundle
+dist-app
 package-lock.json
 *.log
 .git

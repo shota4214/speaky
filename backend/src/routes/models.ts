@@ -15,18 +15,22 @@ interface OllamaTagsResponse {
   models?: OllamaTag[]
 }
 
-function findWhisperModelsDir(): string {
+/**
+ * nodejs-whisper パッケージのインストール先(writable な場所)を解決する。
+ * 優先順位:
+ *  1. SPEAKY_WHISPER_BASE_DIR env(Electron が writable な userData を指定)
+ *  2. cwd + './node_modules/nodejs-whisper'   (packaged: backend-runtime cwd)
+ *  3. cwd + '../node_modules/nodejs-whisper'  (backend/dist 内 + 隣の node_modules)
+ *  4. cwd + '../../node_modules/nodejs-whisper' (workspace dev: backend/dist + root hoist)
+ */
+function getWhisperPackageDir(): string {
+  const fromEnv = process.env.SPEAKY_WHISPER_BASE_DIR
+  if (fromEnv && existsSync(fromEnv)) return fromEnv
+
   const candidates = [
-    path.resolve(
-      process.cwd(),
-      '..',
-      'node_modules',
-      'nodejs-whisper',
-      'cpp',
-      'whisper.cpp',
-      'models',
-    ),
-    path.resolve(process.cwd(), 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp', 'models'),
+    path.resolve(process.cwd(), 'node_modules', 'nodejs-whisper'),
+    path.resolve(process.cwd(), '..', 'node_modules', 'nodejs-whisper'),
+    path.resolve(process.cwd(), '..', '..', 'node_modules', 'nodejs-whisper'),
   ]
   for (const c of candidates) {
     if (existsSync(c)) return c
@@ -34,15 +38,12 @@ function findWhisperModelsDir(): string {
   return candidates[0]!
 }
 
+function findWhisperModelsDir(): string {
+  return path.join(getWhisperPackageDir(), 'cpp', 'whisper.cpp', 'models')
+}
+
 function findWhisperCppDir(): string {
-  const candidates = [
-    path.resolve(process.cwd(), '..', 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp'),
-    path.resolve(process.cwd(), 'node_modules', 'nodejs-whisper', 'cpp', 'whisper.cpp'),
-  ]
-  for (const c of candidates) {
-    if (existsSync(c)) return c
-  }
-  return candidates[0]!
+  return path.join(getWhisperPackageDir(), 'cpp', 'whisper.cpp')
 }
 
 function setupSSE(res: Response): void {

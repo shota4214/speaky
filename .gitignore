@@ -3,8 +3,14 @@ node_modules/
 
 # Build outputs
 dist/
+dist-bundle/
+dist-app/
 build/
 *.tsbuildinfo
+
+# Isolated vendor install for distribution packaging
+# (package-lock.json is committed for reproducible npm ci builds)
+backend/vendor/node_modules/
 
 # Logs
 *.log

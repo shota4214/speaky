@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist-bundle/index.cjs --external:nodejs-whisper --external:fsevents",
+    "prep:vendor": "cd vendor && rm -rf node_modules && npm ci --omit=dev --no-fund --no-audit --silent",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
@@ -21,6 +23,7 @@
     "@types/express": "^4.17.21",
     "@types/multer": "^2.1.0",
     "@types/node": "^20.16.0",
+    "esbuild": "^0.28.0",
     "tsx": "^4.19.0",
     "typescript": "~6.0.2"
   }

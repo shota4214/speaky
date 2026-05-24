@@ -349,9 +349,9 @@ async function handleDeleteAll() {
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateLlm"
           >
-            <option value="llama3.2:3b">⚡ 軽量・高速 (Llama 3.2 3B / ~2GB)</option>
-            <option value="gemma2:9b">⚖ バランス (Gemma 2 9B / ~5.5GB)</option>
-            <option value="qwen2.5:14b">🎯 高精度・低速 (Qwen 2.5 14B / ~9GB)</option>
+            <option value="llama3.2:3b">軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
+            <option value="gemma2:9b">標準 (Gemma 2 9B / ~5.5GB)</option>
+            <option value="qwen2.5:14b">高品質 (Qwen 2.5 14B / ~9GB)</option>
           </select>
           <p class="mt-1 text-xs text-text-muted">
             速度の目安(M4/M5):

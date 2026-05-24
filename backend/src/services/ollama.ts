@@ -1,5 +1,5 @@
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434'
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'gemma2:9b'
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'llama3.2:3b'
 
 // 許可するLLMモデルの allowlist。フロントから指定された場合のみ
 // この中に含まれていなければ default にフォールバック。

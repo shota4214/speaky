@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
@@ -29,33 +29,64 @@ const stepLabels: Record<Step, string> = {
   6: '完了',
 }
 
-const ollamaStatus = ref<'unknown' | 'checking' | 'ok' | 'error'>('unknown')
-const ollamaError = ref<string>('')
-const hasDefaultModel = ref(false)
-const availableModels = ref<string[]>([])
+// Step 2: Ollama は Electron が sidecar 起動するので、ここでは ready 待ちだけ行う。
+// 10 秒以内に running になれば自動で次へ進む。失敗なら再試行 UI を出す。
+const OLLAMA_POLL_INTERVAL_MS = 2_000
+const OLLAMA_READY_TIMEOUT_MS = 10_000
 
-async function checkOllama() {
-  ollamaStatus.value = 'checking'
-  ollamaError.value = ''
-  const res = await checkOllamaHealth()
-  if (res.ok) {
-    ollamaStatus.value = 'ok'
-    hasDefaultModel.value = res.hasDefaultModel ?? false
-    availableModels.value = res.models ?? []
-  } else {
-    ollamaStatus.value = 'error'
-    ollamaError.value = res.error ?? 'Ollama not reachable'
+const ollamaReady = ref(false)
+const ollamaWaitFailed = ref(false)
+let ollamaPollTimer: ReturnType<typeof setInterval> | null = null
+let ollamaWaitDeadline = 0
+
+function stopOllamaPolling() {
+  if (ollamaPollTimer !== null) {
+    clearInterval(ollamaPollTimer)
+    ollamaPollTimer = null
   }
 }
 
+async function pollOllamaOnce() {
+  const res = await checkOllamaHealth()
+  if (res.ok) {
+    ollamaReady.value = true
+    stopOllamaPolling()
+    // 600ms 待ってから次へ自動遷移(完了表示を一瞬視認できるように)
+    setTimeout(() => {
+      if (step.value === 2) next()
+    }, 600)
+    return
+  }
+  if (Date.now() >= ollamaWaitDeadline) {
+    ollamaWaitFailed.value = true
+    stopOllamaPolling()
+  }
+}
+
+function startOllamaPolling() {
+  stopOllamaPolling()
+  ollamaReady.value = false
+  ollamaWaitFailed.value = false
+  ollamaWaitDeadline = Date.now() + OLLAMA_READY_TIMEOUT_MS
+  void pollOllamaOnce()
+  ollamaPollTimer = setInterval(() => {
+    void pollOllamaOnce()
+  }, OLLAMA_POLL_INTERVAL_MS)
+}
+
 watch(step, (s) => {
-  if (s === 2) checkOllama()
+  if (s === 2) startOllamaPolling()
+  else stopOllamaPolling()
   if (s === 4) refreshStep4Status()
 })
 
 onMounted(() => {
-  if (step.value === 2) checkOllama()
+  if (step.value === 2) startOllamaPolling()
   if (step.value === 4) refreshStep4Status()
+})
+
+onUnmounted(() => {
+  stopOllamaPolling()
 })
 
 const llmModel = ref(settings.settings.llmModel)
@@ -218,56 +249,32 @@ function complete() {
         </div>
 
         <div v-else-if="step === 2" class="space-y-4">
-          <h2 class="text-xl font-semibold">Ollama の確認</h2>
-          <p class="text-sm">Ollama がローカルで起動しているか確認します。</p>
+          <h2 class="text-xl font-semibold">LLM ランタイムを準備しています</h2>
+          <p class="text-sm text-text-muted">Ollama の起動を待っています...</p>
 
           <div
-            v-if="ollamaStatus === 'checking'"
-            class="rounded-lg bg-amber-50 px-3 py-2 text-sm dark:bg-amber-900/20"
-          >
-            🔄 確認中...
-          </div>
-          <div
-            v-else-if="ollamaStatus === 'ok'"
+            v-if="ollamaReady"
             class="rounded-lg bg-emerald-50 px-3 py-2 text-sm dark:bg-emerald-900/20"
           >
-            ✅ Ollama に接続できました
-            <div class="mt-2 text-xs text-text-muted">
-              利用可能なモデル: {{ availableModels.join(', ') || '(なし)' }}
-            </div>
-            <div
-              v-if="!hasDefaultModel"
-              class="mt-2 rounded bg-amber-100 px-2 py-1 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-            >
-              ⚠ デフォルトモデル(gemma2:9b)が未取得です。次のステップでダウンロードします。
-            </div>
+            ✅ 準備が完了しました。まもなく次のステップへ進みます。
           </div>
           <div
-            v-else-if="ollamaStatus === 'error'"
+            v-else-if="ollamaWaitFailed"
             class="rounded-lg bg-rose-50 px-3 py-2 text-sm dark:bg-rose-900/20"
           >
-            ❌ Ollama に接続できませんでした
-            <div class="mt-1 text-xs text-text-muted">{{ ollamaError }}</div>
-            <div class="mt-3 space-y-2 text-xs">
-              <p>
-                Ollama は別アプリです。以下のリンクから macOS 用インストーラー(.dmg)を
-                ダウンロードしてインストール → Ollama を起動してから「🔄
-                再チェック」を押してください。
-              </p>
-              <a
-                href="https://ollama.com/download/mac"
-                target="_blank"
-                rel="noopener"
-                class="inline-block rounded bg-primary px-3 py-1.5 text-white hover:bg-primary-dark"
-              >
-                📥 Ollama を公式サイトからダウンロード
-              </a>
+            ❌ Ollama の起動に失敗しました。アプリを再起動してください。
+            <div class="mt-3">
+              <BaseButton variant="secondary" size="sm" @click="startOllamaPolling">
+                🔄 再試行
+              </BaseButton>
             </div>
           </div>
-
-          <BaseButton variant="secondary" size="sm" @click="checkOllama">
-            🔄 再チェック
-          </BaseButton>
+          <div v-else class="flex items-center gap-2 text-sm text-text-muted">
+            <span
+              class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent"
+            />
+            起動中...
+          </div>
         </div>
 
         <div v-else-if="step === 3" class="space-y-4">
@@ -281,9 +288,9 @@ function complete() {
               v-model="llmModel"
               class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             >
-              <option value="llama3.2:3b">軽量 (Llama 3.2 3B / ~2GB)</option>
-              <option value="gemma2:9b">推奨 (Gemma 2 9B / ~5.5GB)</option>
-              <option value="qwen2.5:14b">高精度 (Qwen 2.5 14B / ~9GB)</option>
+              <option value="llama3.2:3b">軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
+              <option value="gemma2:9b">標準 (Gemma 2 9B / ~5.5GB)</option>
+              <option value="qwen2.5:14b">高品質 (Qwen 2.5 14B / ~9GB)</option>
             </select>
           </div>
           <div>
@@ -478,7 +485,7 @@ function complete() {
         <BaseButton
           v-if="step < 6"
           :disabled="
-            (step === 2 && ollamaStatus !== 'ok') ||
+            (step === 2 && !ollamaReady) ||
             (step === 4 && (!llmPulled || !whisperCppBuilt || !whisperDownloaded))
           "
           @click="next"

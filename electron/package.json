@@ -6,10 +6,11 @@
   "main": "dist/main.js",
   "type": "commonjs",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc && electron dist/main.js",
-    "dev:packaged": "tsc && SPEAKY_LOAD_BUILD=1 electron dist/main.js",
-    "dist": "electron-builder --mac --arm64"
+    "build": "tsc && node -e \"require('node:fs').copyFileSync('src/splash.html','dist/splash.html')\"",
+    "dev": "npm run build && electron dist/main.js",
+    "dev:packaged": "npm run build && SPEAKY_LOAD_BUILD=1 electron dist/main.js",
+    "dist": "electron-builder --mac --arm64",
+    "prep:vendor:llama-model": "node ../scripts/prep-llama-model.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.16.0",
@@ -46,6 +47,7 @@
           "!nodejs-whisper/cpp/whisper.cpp/tests/**",
           "!nodejs-whisper/cpp/whisper.cpp/samples/**",
           "!nodejs-whisper/cpp/whisper.cpp/models/ggml-*.bin",
+          "nodejs-whisper/cpp/whisper.cpp/models/ggml-medium.bin",
           "!nodejs-whisper/cpp/whisper.cpp/models/*.gguf",
           "!nodejs-whisper/cpp/whisper.cpp/models/*.mlmodelc/**",
           "!nodejs-whisper/cpp/whisper.cpp/build/**",
@@ -54,6 +56,10 @@
           "nodejs-whisper/cpp/whisper.cpp/build/bin/ggml-common.h",
           "nodejs-whisper/cpp/whisper.cpp/build/bin/ggml-metal-impl.h"
         ]
+      },
+      {
+        "from": "build-resources/ollama-data",
+        "to": "backend-template/ollama-data"
       }
     ],
     "mac": {
@@ -68,5 +74,8 @@
     "dmg": {
       "writeUpdateInfo": false
     }
+  },
+  "dependencies": {
+    "electron-ollama": "^0.1.25"
   }
 }

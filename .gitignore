@@ -44,3 +44,9 @@ models/
 
 # whisper.cpp build artifacts
 whisper.cpp/
+
+# electron-ollama runtime cache (dev では repo 直下に作られる)
+electron-ollama/
+
+# 配布同梱用に prep スクリプトが用意する大容量バンドル(Llama blobs/manifests 等)
+electron/build-resources/

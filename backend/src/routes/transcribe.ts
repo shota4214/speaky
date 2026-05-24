@@ -5,6 +5,73 @@ import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { existsSync } from 'node:fs'
+
+const execFileAsync = promisify(execFile)
+
+// nodejs-whisper の同期 shelljs.exec が Electron の GUI 起動コンテキストで
+// 不安定なため(undefined を返して "Cannot read properties of undefined (reading 'code')"
+// になる)、事前に WAV 変換しておいて nodejs-whisper の ffmpeg 呼び出しパスをバイパスする。
+// 同梱した ffmpeg-static の絶対パスを直接 spawn する。
+//
+// ffmpeg-static は backend/vendor/node_modules/ にしか存在せず static import では
+// resolve できないため、ランタイムで cwd 起点の候補パスを順に存在チェックする。
+let cachedFfmpegPath: string | null | undefined
+function resolveFfmpegPath(): string | null {
+  if (cachedFfmpegPath !== undefined) return cachedFfmpegPath
+  // 1) 明示的な env で上書き(Electron から伝達可能)
+  const fromEnv = process.env.SPEAKY_FFMPEG_PATH
+  if (fromEnv && existsSync(fromEnv)) {
+    cachedFfmpegPath = fromEnv
+    return cachedFfmpegPath
+  }
+  // 2) ffmpeg-static の慣例パスを順に探索:
+  //    - packaged: cwd = backend-runtime/        → node_modules/ffmpeg-static/ffmpeg
+  //    - dev (tsx watch): cwd = backend/         → vendor/node_modules/ffmpeg-static/ffmpeg
+  //    - その他(将来 cwd が変わった時の保険として親階層も見る)
+  const candidates = [
+    path.resolve(process.cwd(), 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+    path.resolve(process.cwd(), 'vendor', 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+    path.resolve(process.cwd(), '..', 'vendor', 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+    path.resolve(process.cwd(), '..', 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+    path.resolve(process.cwd(), '..', '..', 'node_modules', 'ffmpeg-static', 'ffmpeg'),
+  ]
+  for (const c of candidates) {
+    if (existsSync(c)) {
+      cachedFfmpegPath = c
+      return cachedFfmpegPath
+    }
+  }
+  cachedFfmpegPath = null
+  return cachedFfmpegPath
+}
+
+async function convertAudioToWav(inputPath: string): Promise<string> {
+  const ffmpeg = resolveFfmpegPath()
+  if (!ffmpeg) {
+    throw new Error('ffmpeg binary not found (ffmpeg-static / SPEAKY_FFMPEG_PATH)')
+  }
+  const outputPath = `${inputPath}.wav`
+  // 16kHz / mono / PCM s16le は whisper.cpp が期待するフォーマット
+  await execFileAsync(ffmpeg, [
+    '-nostats',
+    '-loglevel',
+    'error',
+    '-y',
+    '-i',
+    inputPath,
+    '-ar',
+    '16000',
+    '-ac',
+    '1',
+    '-c:a',
+    'pcm_s16le',
+    outputPath,
+  ])
+  return outputPath
+}
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -113,11 +180,17 @@ transcribeRouter.post(
 
     console.log(`[transcribe] start: requested=${requestedModel ?? '(none)'} resolved=${modelName}`)
 
+    let wavPath: string | null = null
     try {
-      const result = await nodewhisper(filePath, {
+      // 事前 WAV 変換(nodejs-whisper の壊れた sync shelljs.exec をバイパス)。
+      // 既に .wav なら nodejs-whisper が isValidWavHeader で素通しするので、
+      // ffmpeg を介さず元ファイルを渡しても良いが、不正な .wav ヘッダだけ守るため
+      // 拡張子に関わらず変換する。
+      wavPath = await convertAudioToWav(filePath)
+      const result = await nodewhisper(wavPath, {
         modelName,
         autoDownloadModelName: modelName,
-        removeWavFileAfterTranscription: true,
+        removeWavFileAfterTranscription: false,
         whisperOptions: {
           language: 'auto',
           outputInJson: false,
@@ -150,6 +223,7 @@ transcribeRouter.post(
         `${filePath}.vtt`,
         `${filePath}.wav`,
       ]
+      if (wavPath && !cleanup.includes(wavPath)) cleanup.push(wavPath)
       for (const p of cleanup) {
         try {
           await fs.unlink(p)

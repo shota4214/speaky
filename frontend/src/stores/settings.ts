@@ -8,6 +8,15 @@ import {
   type AppSettings,
 } from '../storage/settings'
 
+/**
+ * update() に渡すパッチ型。
+ * aiCharacter は深いネスト構造なので、内側だけ部分指定できるよう Partial にする。
+ * (呼び出し側で voiceName / personality を毎回指定しなくて済むようにする)
+ */
+export type SettingsPatch = Partial<Omit<AppSettings, 'aiCharacter'>> & {
+  aiCharacter?: Partial<AppSettings['aiCharacter']>
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<AppSettings>(loadSettings())
 
@@ -19,7 +28,7 @@ export const useSettingsStore = defineStore('settings', () => {
     { deep: true },
   )
 
-  function update(patch: Partial<AppSettings>) {
+  function update(patch: SettingsPatch) {
     settings.value = {
       ...settings.value,
       ...patch,

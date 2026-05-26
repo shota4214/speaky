@@ -4,6 +4,7 @@ import {
   buildSystemPrompt,
   type Level,
   type Mode,
+  type PersonalityPreset,
 } from '../services/conversation-prompt.js'
 import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
 
@@ -33,6 +34,8 @@ interface ChatContext {
   conversationHistory?: HistoryItem[]
   /** 明示的に指定されたLLMモデル(allowlist内のみ採用、それ以外は default) */
   model?: string
+  /** AI の性格プリセット。未指定時は buildSystemPrompt 側で 'friendly' にフォールバック。 */
+  personality?: PersonalityPreset
 }
 
 interface ChatRequestBody {
@@ -131,6 +134,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     vocabFocus: context.vocabFocus,
     userProfile: context.userProfile,
     lastConversationSummary: context.lastConversationSummary,
+    personality: context.personality,
   })
 
   const messages: OllamaChatMessage[] = [{ role: 'system', content: systemPrompt }]
@@ -202,6 +206,7 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
     vocabFocus: context.vocabFocus,
     userProfile: context.userProfile,
     lastConversationSummary: context.lastConversationSummary,
+    personality: context.personality,
   })
 
   const openingUserPrompt = buildOpeningUserPrompt({
@@ -209,6 +214,10 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
     topic: context.topic,
     userProfile: context.userProfile,
     lastConversationSummary: context.lastConversationSummary,
+    // personality を渡して opening の挨拶トーンを人格に合わせる。
+    // system prompt と user prompt の双方を整合させないと、teacher などを
+    // 選んだのに最初の一言だけ friend-like になる矛盾が出る。
+    personality: context.personality,
   })
 
   const messages: OllamaChatMessage[] = [

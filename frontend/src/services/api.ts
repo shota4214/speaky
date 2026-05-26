@@ -1,4 +1,4 @@
-import type { Level, Mode, VocabItem } from '../db/types'
+import type { Level, Mode, PersonalityPreset, VocabItem } from '../db/types'
 
 export interface TranscribeResult {
   text: string
@@ -23,6 +23,8 @@ export interface ChatRequestContext {
   conversationHistory?: ChatHistoryItem[]
   /** 使用するLLMモデル(allowlist内のみサーバ側で採用) */
   model?: string
+  /** AI の性格プリセット。未指定なら backend 側で 'friendly' にフォールバック。 */
+  personality?: PersonalityPreset
 }
 
 export interface FeedbackResponse {

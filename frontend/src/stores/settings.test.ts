@@ -27,9 +27,11 @@ describe('useSettingsStore', () => {
 
   it('update preserves nested aiCharacter fields', () => {
     const s = useSettingsStore()
-    s.update({ aiCharacter: { name: 'Mike' } as { name: string; gender: 'male' | 'female' } })
+    s.update({ aiCharacter: { name: 'Mike' } })
     expect(s.settings.aiCharacter.name).toBe('Mike')
     expect(s.settings.aiCharacter.gender).toBe(DEFAULT_SETTINGS.aiCharacter.gender)
+    expect(s.settings.aiCharacter.voiceName).toBe(DEFAULT_SETTINGS.aiCharacter.voiceName)
+    expect(s.settings.aiCharacter.personality).toBe(DEFAULT_SETTINGS.aiCharacter.personality)
   })
 
   it('reset restores DEFAULT_SETTINGS and clears storage', () => {
@@ -49,5 +51,54 @@ describe('useSettingsStore', () => {
     setActivePinia(createPinia())
     const s2 = useSettingsStore()
     expect(s2.settings.silenceDurationMs).toBe(2500)
+  })
+
+  // 旧バージョン(voiceName / personality / ttsRate / ttsPitch を持たない)
+  // から読み込んだ場合にデフォルト値が補完されることを確認する。
+  it('migrates legacy settings missing new fields', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        aiCharacter: { name: 'OldEmma', gender: 'female' },
+        silenceDurationMs: 1500,
+        llmModel: 'llama3.2:3b',
+        whisperModel: 'medium',
+        darkMode: 'system',
+        ttsRateConnectedToLevel: true,
+        lastCleanupAt: null,
+        defaultLevel: 'intermediate',
+      }),
+    )
+    const s = useSettingsStore()
+    expect(s.settings.aiCharacter.name).toBe('OldEmma')
+    expect(s.settings.aiCharacter.voiceName).toBeNull()
+    expect(s.settings.aiCharacter.personality).toBe('friendly')
+    expect(s.settings.ttsRate).toBe(DEFAULT_SETTINGS.ttsRate)
+    expect(s.settings.ttsPitch).toBe(DEFAULT_SETTINGS.ttsPitch)
+  })
+
+  // 範囲外の ttsRate / ttsPitch が保存されていた場合に clamp されることを確認する。
+  it('clamps out-of-range ttsRate / ttsPitch on load', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        ttsRate: 5.0, // out of range
+        ttsPitch: 0.1, // out of range
+      }),
+    )
+    const s = useSettingsStore()
+    expect(s.settings.ttsRate).toBe(1.5) // TTS_RATE_MAX
+    expect(s.settings.ttsPitch).toBe(0.7) // TTS_PITCH_MIN
+  })
+
+  it('persists personality changes', async () => {
+    const s = useSettingsStore()
+    s.update({ aiCharacter: { personality: 'teacher' } })
+    expect(s.settings.aiCharacter.personality).toBe('teacher')
+    await Promise.resolve()
+    const raw = localStorage.getItem('speaky:settings')
+    expect(raw).toBeTruthy()
+    expect(JSON.parse(raw!).aiCharacter.personality).toBe('teacher')
   })
 })

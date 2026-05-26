@@ -12,6 +12,7 @@ import {
   listWhisperModels,
   pullOllamaModel,
 } from '../services/api'
+import type { PersonalityPreset } from '../db/types'
 import { useSettingsStore } from '../stores/settings'
 
 const router = useRouter()
@@ -93,6 +94,15 @@ const llmModel = ref(settings.settings.llmModel)
 const whisperModel = ref(settings.settings.whisperModel)
 const aiName = ref(settings.settings.aiCharacter.name)
 const aiGender = ref<'female' | 'male'>(settings.settings.aiCharacter.gender)
+const aiPersonality = ref<PersonalityPreset>(settings.settings.aiCharacter.personality)
+
+const personalityPresets: { value: PersonalityPreset; label: string; desc: string }[] = [
+  { value: 'friendly', label: 'friendly', desc: '親友のように暖かく(デフォルト)' },
+  { value: 'teacher', label: 'teacher', desc: '丁寧な先生 — 解説を交える' },
+  { value: 'cool', label: 'cool', desc: '落ち着いた皮肉屋' },
+  { value: 'kohai', label: 'kohai', desc: 'テンション高めの後輩' },
+  { value: 'colleague', label: 'colleague', desc: '礼儀正しい同僚' },
+]
 
 // Step 4: download state
 const llmPulled = ref(false)
@@ -206,7 +216,13 @@ function complete() {
   settings.update({
     llmModel: llmModel.value,
     whisperModel: whisperModel.value,
-    aiCharacter: { name: aiName.value.trim() || 'Emma', gender: aiGender.value },
+    aiCharacter: {
+      name: aiName.value.trim() || 'Emma',
+      gender: aiGender.value,
+      // 既存設定の voiceName は保持(未設定なら null)
+      voiceName: settings.settings.aiCharacter.voiceName ?? null,
+      personality: aiPersonality.value,
+    },
   })
   localStorage.setItem('speaky:onboarded', 'true')
   router.push('/')
@@ -468,6 +484,17 @@ function complete() {
                 男性 (Daniel)
               </BaseButton>
             </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium">性格(後から設定で変更できます)</label>
+            <select
+              v-model="aiPersonality"
+              class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            >
+              <option v-for="p in personalityPresets" :key="p.value" :value="p.value">
+                {{ p.label }} — {{ p.desc }}
+              </option>
+            </select>
           </div>
         </div>
 

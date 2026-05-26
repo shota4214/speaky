@@ -1,5 +1,6 @@
 export type Level = 'beginner' | 'intermediate' | 'advanced'
 export type Mode = 'normal' | 'japanese_help' | 'mixed'
+export type PersonalityPreset = 'friendly' | 'teacher' | 'cool' | 'kohai' | 'colleague'
 
 export interface BuildPromptInput {
   aiName?: string
@@ -10,6 +11,51 @@ export interface BuildPromptInput {
   vocabFocus?: string[]
   userProfile?: string[]
   lastConversationSummary?: string | null
+  personality?: PersonalityPreset
+}
+
+/**
+ * AI の性格プリセットを # Your personality セクションに差し込む。
+ * Llama 3.2 3B でも従いやすいよう、各プリセットは 5-8 行の簡潔な英文。
+ */
+export function buildPersonalityBlock(personality: PersonalityPreset = 'friendly'): string {
+  switch (personality) {
+    case 'teacher':
+      return `# Your personality
+- You are a patient English teacher persona.
+- Celebrate small wins ("Nice phrasing!", "That word fits perfectly.").
+- Briefly explain WHY a phrasing is natural when relevant, in one short sentence.
+- More formal than a close friend, but still warm and encouraging.
+- Use clear, well-structured sentences. Avoid heavy slang.`
+    case 'cool':
+      return `# Your personality
+- You are calm, witty, and a bit understated.
+- Keep replies short. Don't gush.
+- Light dry humor and gentle sarcasm are OK; never mean.
+- Observe rather than cheerlead ("Huh, interesting choice." instead of "Wow amazing!!").
+- Use understatement. Be the chill friend, not the hype friend.`
+    case 'kohai':
+      return `# Your personality
+- You are an energetic younger friend (kohai vibe).
+- React with excitement: "Whoa really??", "No way!", "That's so cool!".
+- Use casual interjections and light slang ("super", "kinda", "for real").
+- Quick to laugh, expressive, curious.
+- Keep it positive and a bit hyped — but still natural, not fake.`
+    case 'colleague':
+      return `# Your personality
+- You are a professional, respectful colleague — a friendly senior coworker.
+- Treat the user as an adult equal. Polite but not stiff.
+- Focus on substance over emotional reactions.
+- Avoid slang and overly casual interjections.
+- Be helpful, concise, and considerate.`
+    case 'friendly':
+    default:
+      return `# Your personality
+- Warm, friendly, encouraging
+- Talk like a real friend, not a teacher
+- Show genuine interest in what the user shares
+- Use natural expressions native speakers actually use`
+  }
 }
 
 export function buildSystemPrompt(input: BuildPromptInput = {}): string {
@@ -20,6 +66,7 @@ export function buildSystemPrompt(input: BuildPromptInput = {}): string {
   const vocabFocus = input.vocabFocus ?? []
   const userProfile = input.userProfile ?? []
   const lastSummary = input.lastConversationSummary ?? null
+  const personality = input.personality ?? 'friendly'
 
   const topicLine = input.topicDescription ? `${topic}: ${input.topicDescription}` : topic
 
@@ -38,16 +85,13 @@ export function buildSystemPrompt(input: BuildPromptInput = {}): string {
   // モード分岐: 小型モデル(Llama 3.2 3B 等)が誤って会話継続してしまうのを防ぐため、
   // 該当しないモードの説明は LLM に渡さず、現モードの指示だけを最上位に置く。
   const modeBlock = buildModeBlock(mode)
+  const personalityBlock = buildPersonalityBlock(personality)
 
-  return `You are a friendly native English-speaking friend helping a Japanese learner practice English conversation. Your name is ${aiName}.
+  return `You are a native English-speaking friend helping a Japanese learner practice English conversation. Your name is ${aiName}.
 
 ${modeBlock}
 
-# Your personality
-- Warm, friendly, encouraging
-- Talk like a real friend, not a teacher
-- Show genuine interest in what the user shares
-- Use natural expressions native speakers actually use
+${personalityBlock}
 
 # Conversation style — VARIETY IS CRITICAL
 - DO NOT repeat the same phrases ("That sounds great!", "Oh nice!" etc.) over multiple turns.
@@ -164,10 +208,14 @@ The user spoke in English. Respond naturally as their conversation partner. Foll
 /**
  * 会話開始時に AI から最初の挨拶+話題を切り出してもらうための合成プロンプト。
  * /api/chat/opening で使う(userText の代わりにこれを user role で渡す)。
+ *
+ * personality が指定されていれば、その人格に合った挨拶トーン例を載せる。
+ * system prompt の personality ブロックが本体で、ここは「最初の一言」用の補助。
  */
 export function buildOpeningUserPrompt(input: BuildPromptInput = {}): string {
   const aiName = input.aiName ?? 'Emma'
   const topic = input.topic ?? 'casual chat'
+  const personality = input.personality ?? 'friendly'
   const hasProfile = (input.userProfile?.length ?? 0) > 0
   const hasLastSummary = !!input.lastConversationSummary
 
@@ -177,17 +225,76 @@ export function buildOpeningUserPrompt(input: BuildPromptInput = {}): string {
       ? "You can subtly reference one thing you know about the user if natural, but you don't have to."
       : "You don't know much about the user yet — keep it open."
 
+  const { toneHint, examples } = buildOpeningStyle(personality, topic)
+
   return `(SYSTEM_INTERNAL: This is the very first turn of a new conversation. There is no user message yet. You (${aiName}) should speak first.
 
-Greet the user warmly in your character voice. Mention the topic "${topic}" naturally (don't read it like a label). Throw in an engaging, specific opening question that invites a personal answer. Keep it short and friend-like — not teacher-like.
+Greet the user in your character voice (defined in the system prompt). Mention the topic "${topic}" naturally (don't read it like a label). Throw in an engaging, specific opening question that invites a personal answer. ${toneHint}
 
 ${continuityHint}
 
-Vary your greeting — DON'T just say "Hi! Let's talk about X." Be creative. Examples of opening styles you might use (don't copy verbatim — invent your own):
-- "Hey! Quick question for you — ..."
-- "Yo! I was just thinking about ..."
-- "Hi there! So, about ${topic} — ..."
-- "Hello! Random one: ..."
+Vary your greeting — DON'T just say "Hi! Let's talk about X." Be creative. Example opening styles for this personality (don't copy verbatim — invent your own):
+${examples.map((e) => `- ${e}`).join('\n')}
 
 Set mode="normal", feedback=null, vocabulary=[] for this opening turn.)`
+}
+
+/**
+ * personality ごとに「最初の挨拶」の tone hint と例を返す。
+ * teacher など friendly 以外の人格を選んでいるのに opening だけ
+ * "friend-like — not teacher-like" を強制するという矛盾を避ける。
+ */
+function buildOpeningStyle(
+  personality: PersonalityPreset,
+  topic: string,
+): { toneHint: string; examples: string[] } {
+  switch (personality) {
+    case 'teacher':
+      return {
+        toneHint: 'Keep it short, warm, and professional — like a tutor opening a session.',
+        examples: [
+          `"Hi! Ready for a bit of practice? Let's chat about ${topic}."`,
+          `"Hello! Today I thought we could explore ${topic} — sound good?"`,
+          `"Hey there! Quick warmup on ${topic} before we get into it..."`,
+        ],
+      }
+    case 'cool':
+      return {
+        toneHint: "Keep it short, low-key, and observational. Don't gush.",
+        examples: [
+          `"Hey. ${topic}, huh."`,
+          `"Alright — ${topic}. Let's see."`,
+          `"So. I was just thinking about ${topic}..."`,
+        ],
+      }
+    case 'kohai':
+      return {
+        toneHint: 'High energy, excited, slightly informal. Show enthusiasm.',
+        examples: [
+          `"Hey hey!! Oh man, ${topic}?? I have THOUGHTS."`,
+          `"Hiii! Okay so ${topic} — I'm so curious what you think!"`,
+          `"Yo!! Quick one — when it comes to ${topic}..."`,
+        ],
+      }
+    case 'colleague':
+      return {
+        toneHint: 'Polite and professional, like a friendly senior coworker. Respectful.',
+        examples: [
+          `"Hi there. Glad to be chatting today — I'd love to hear your take on ${topic}."`,
+          `"Hello! Hope you're well. About ${topic} — quick question for you."`,
+          `"Hi! Thanks for making time. Let's talk a bit about ${topic}."`,
+        ],
+      }
+    case 'friendly':
+    default:
+      return {
+        toneHint: 'Keep it short and friend-like — like a real friend opening a chat.',
+        examples: [
+          `"Hey! Quick question for you — about ${topic}..."`,
+          `"Yo! I was just thinking about ${topic}..."`,
+          `"Hi there! So, about ${topic} — ..."`,
+          `"Hello! Random one: ..."`,
+        ],
+      }
+  }
 }

@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
+import {
+  getDefaultVoicePreference,
+  isConversationalEnglishVoice,
+  useTextToSpeech,
+} from '../composables/useTextToSpeech'
+import type { PersonalityPreset } from '../db/types'
 import {
   buildWhisperCpp,
   deleteOllamaModel,
@@ -28,6 +34,114 @@ import {
 const router = useRouter()
 const settings = useSettingsStore()
 const theme = useThemeStore()
+const previewTts = useTextToSpeech()
+
+// 音声選択: 利用可能な en-* voice を列挙する。
+// Chromium/Safari ともに初回呼び出しで空配列を返すことがあるため、
+// voiceschanged イベントで再取得する(useTextToSpeech.ensureVoicesLoaded と同様のパターン)。
+const englishVoices = ref<SpeechSynthesisVoice[]>([])
+
+function loadEnglishVoices() {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+  const all = window.speechSynthesis.getVoices()
+  // 会話実用に耐える音声だけに絞る(ノベルティ/旧ロボ調を除外)。
+  englishVoices.value = all
+    .filter(isConversationalEnglishVoice)
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function handleVoicesChanged() {
+  loadEnglishVoices()
+}
+
+onMounted(() => {
+  loadEnglishVoices()
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged)
+  }
+})
+
+onUnmounted(() => {
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged)
+  }
+  // 試聴中だったら止める
+  previewTts.cancel()
+})
+
+function updateVoiceName(e: Event) {
+  const value = (e.target as HTMLSelectElement).value
+  settings.update({
+    aiCharacter: {
+      ...settings.settings.aiCharacter,
+      voiceName: value === '' ? null : value,
+    },
+  })
+}
+
+function updateTtsRate(e: Event) {
+  settings.update({ ttsRate: Number((e.target as HTMLInputElement).value) })
+}
+
+function updateTtsPitch(e: Event) {
+  settings.update({ ttsPitch: Number((e.target as HTMLInputElement).value) })
+}
+
+async function previewVoice() {
+  // 連続再生防止: 既存パターン通り cancel して即発話
+  previewTts.cancel()
+  const opts = {
+    rate: settings.settings.ttsRateConnectedToLevel ? 1.0 : settings.settings.ttsRate,
+    pitch: settings.settings.ttsPitch,
+    voiceName: settings.settings.aiCharacter.voiceName,
+    voicePreference: getDefaultVoicePreference(settings.settings.aiCharacter.gender),
+  }
+  try {
+    await previewTts.speak('Hello! This is how I sound now.', opts)
+  } catch (e) {
+    console.warn('[settings] preview TTS failed:', e)
+  }
+}
+
+const personalityPresets: { value: PersonalityPreset; label: string; desc: string }[] = [
+  { value: 'friendly', label: 'friendly', desc: '親友のように暖かく(デフォルト)' },
+  { value: 'teacher', label: 'teacher', desc: '丁寧な先生 — 小さな成功を褒めて理由を簡潔に解説' },
+  { value: 'cool', label: 'cool', desc: '落ち着いた皮肉屋 — 短くドライなユーモア' },
+  { value: 'kohai', label: 'kohai', desc: 'テンション高めの後輩 — リアクション大きめ' },
+  { value: 'colleague', label: 'colleague', desc: '礼儀正しい同僚 — 大人同士の会話' },
+]
+
+function updatePersonality(e: Event) {
+  settings.update({
+    aiCharacter: {
+      ...settings.settings.aiCharacter,
+      personality: (e.target as HTMLSelectElement).value as PersonalityPreset,
+    },
+  })
+}
+
+// AI キャラの名前。入力中はローカル状態、blur or Enter で settings に反映する。
+const aiNameDraft = ref(settings.settings.aiCharacter.name)
+
+function commitAiName() {
+  const trimmed = aiNameDraft.value.trim()
+  if (!trimmed) {
+    // 空文字は許容しない。前の値に巻き戻す。
+    aiNameDraft.value = settings.settings.aiCharacter.name
+    return
+  }
+  if (trimmed === settings.settings.aiCharacter.name) return
+  settings.update({
+    aiCharacter: { ...settings.settings.aiCharacter, name: trimmed },
+  })
+}
+
+function setAiGender(g: 'female' | 'male') {
+  if (settings.settings.aiCharacter.gender === g) return
+  settings.update({
+    aiCharacter: { ...settings.settings.aiCharacter, gender: g },
+  })
+}
 
 const importMode = ref<'merge' | 'replace'>('merge')
 const importing = ref(false)
@@ -316,6 +430,119 @@ async function handleDeleteAll() {
           />
           AIの話速をレベルと連動させる
         </label>
+        <div>
+          <label class="block text-sm">
+            話す速度:
+            <strong>{{ settings.settings.ttsRate.toFixed(2) }}x</strong>
+            <span v-if="settings.settings.ttsRateConnectedToLevel" class="text-text-muted">
+              (レベル連動中は無効)
+            </span>
+          </label>
+          <input
+            :value="settings.settings.ttsRate"
+            type="range"
+            min="0.5"
+            max="1.5"
+            step="0.05"
+            class="mt-2 w-full accent-primary"
+            :disabled="settings.settings.ttsRateConnectedToLevel"
+            @input="updateTtsRate"
+          />
+        </div>
+        <div>
+          <label class="block text-sm">
+            声の高さ:
+            <strong>{{ settings.settings.ttsPitch.toFixed(2) }}</strong>
+          </label>
+          <input
+            :value="settings.settings.ttsPitch"
+            type="range"
+            min="0.7"
+            max="1.4"
+            step="0.05"
+            class="mt-2 w-full accent-primary"
+            @input="updateTtsPitch"
+          />
+        </div>
+        <div>
+          <BaseButton size="sm" variant="secondary" @click="previewVoice"> 🔊 試聴 </BaseButton>
+          <span class="ml-2 text-xs text-text-muted">
+            "Hello! This is how I sound now." を現在の設定で読み上げ
+          </span>
+        </div>
+      </div>
+    </BaseCard>
+
+    <BaseCard class="mt-6">
+      <div class="text-sm font-semibold">🤖 AI キャラクター</div>
+      <div class="mt-4 space-y-4">
+        <div>
+          <label class="block text-sm">名前</label>
+          <input
+            v-model="aiNameDraft"
+            type="text"
+            maxlength="30"
+            class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            @blur="commitAiName"
+            @keydown.enter="commitAiName"
+          />
+          <p class="mt-1 text-xs text-text-muted">
+            AI が自己紹介で名乗る名前。フォーカスを外すか Enter で保存。
+          </p>
+        </div>
+        <div>
+          <label class="block text-sm">性別</label>
+          <div class="mt-2 flex gap-2">
+            <BaseButton
+              :variant="settings.settings.aiCharacter.gender === 'female' ? 'primary' : 'secondary'"
+              size="sm"
+              @click="setAiGender('female')"
+            >
+              女性
+            </BaseButton>
+            <BaseButton
+              :variant="settings.settings.aiCharacter.gender === 'male' ? 'primary' : 'secondary'"
+              size="sm"
+              @click="setAiGender('male')"
+            >
+              男性
+            </BaseButton>
+          </div>
+          <p class="mt-1 text-xs text-text-muted">
+            「音声」が「自動」のときの初期声と、会話プロンプトの代名詞に使われます。
+          </p>
+        </div>
+        <div>
+          <label class="block text-sm">音声(Voice)</label>
+          <select
+            :value="settings.settings.aiCharacter.voiceName ?? ''"
+            class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            @change="updateVoiceName"
+          >
+            <option value="">自動(性別で自動選択)</option>
+            <option v-for="v in englishVoices" :key="v.name" :value="v.name">
+              {{ v.name }} ({{ v.lang }})
+            </option>
+          </select>
+          <p class="mt-1 text-xs text-text-muted">
+            macOS の英語音声から会話実用に耐えるものだけを表示しています。
+          </p>
+        </div>
+        <div>
+          <label class="block text-sm">性格プリセット</label>
+          <select
+            :value="settings.settings.aiCharacter.personality"
+            class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            @change="updatePersonality"
+          >
+            <option v-for="p in personalityPresets" :key="p.value" :value="p.value">
+              {{ p.label }} — {{ p.desc }}
+            </option>
+          </select>
+          <p class="mt-1 text-xs text-text-muted">
+            会話 AI の話し方の傾向。次の会話から反映されます。
+          </p>
+        </div>
       </div>
     </BaseCard>
 

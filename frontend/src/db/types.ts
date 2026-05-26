@@ -4,6 +4,16 @@ export type Mode = 'normal' | 'japanese_help' | 'mixed'
 export type Role = 'user' | 'ai'
 export type InputLanguage = 'en' | 'ja' | 'mixed'
 
+/**
+ * AI の性格プリセット。Settings から切り替えられる 5 種類。
+ * - friendly: 親友のように暖かく(デフォルト/従来挙動)
+ * - teacher: 丁寧な英語の先生
+ * - cool: 落ち着いた皮肉屋
+ * - kohai: テンション高めの後輩
+ * - colleague: 礼儀正しい同僚
+ */
+export type PersonalityPreset = 'friendly' | 'teacher' | 'cool' | 'kohai' | 'colleague'
+
 export interface AiCharacter {
   name: string
   gender: Gender

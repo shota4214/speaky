@@ -15,7 +15,7 @@ import { useProfileStore } from '../stores/profile'
 import { useSettingsStore } from '../stores/settings'
 import { detectInputMode, isTooShort, looksLikeHallucination } from '../utils/language-detection'
 import { useAudioRecorder } from './useAudioRecorder'
-import { useTextToSpeech } from './useTextToSpeech'
+import { getDefaultVoicePreference, useTextToSpeech } from './useTextToSpeech'
 
 const MAX_SILENT_BEFORE_HINT = 3
 const MAX_PROMPTED_ATTEMPTS = 3
@@ -39,6 +39,26 @@ export function useConversationLoop() {
     maxRecordingMs: 30_000,
   })
   const tts = useTextToSpeech({ rate: 1.0 })
+
+  /**
+   * 各 tts.speak 呼び出しに渡す共通のオプションを設定から組み立てる。
+   * - voiceName は settings の指定が最優先(null なら gender ベースのフォールバック)
+   * - voicePreference は gender に応じて並び順を変える
+   * - pitch は常にユーザー指定値
+   * - rate は呼び出し側で個別指定(speakRateForLevel など)
+   */
+  function buildTtsOptions(): {
+    voiceName: string | null
+    voicePreference: string[]
+    pitch: number
+  } {
+    const aiCharacter = settings.settings.aiCharacter
+    return {
+      voiceName: aiCharacter.voiceName,
+      voicePreference: getDefaultVoicePreference(aiCharacter.gender),
+      pitch: settings.settings.ttsPitch,
+    }
+  }
 
   const errorMessage = ref<string | null>(null)
   const stopRequested = ref(false)
@@ -99,6 +119,7 @@ export function useConversationLoop() {
         userProfile: profile.facts.map((f) => f.fact),
         lastConversationSummary: input.lastConversationSummary,
         model: settings.settings.llmModel,
+        personality: settings.settings.aiCharacter.personality,
       })
     } catch (e) {
       console.warn('[loop] opening generation failed, skipping:', e)
@@ -127,7 +148,13 @@ export function useConversationLoop() {
     // ユーザーに「読み上げ失敗」を明示してテキストを読んでもらう導線へ)
     try {
       conversation.setMode('aiSpeaking')
-      await tts.speak(reply.reply_en, { rate: speakRateForLevel() })
+      const opts = buildTtsOptions()
+      await tts.speak(reply.reply_en, {
+        rate: speakRateForLevel(),
+        pitch: opts.pitch,
+        voiceName: opts.voiceName,
+        voicePreference: opts.voicePreference,
+      })
     } catch (e) {
       console.warn('[loop] opening TTS failed:', e)
       errorMessage.value =
@@ -196,6 +223,7 @@ export function useConversationLoop() {
           lastConversationSummary: input.lastConversationSummary,
           conversationHistory: buildHistory().slice(-20),
           model: settings.settings.llmModel,
+          personality: settings.settings.aiCharacter.personality,
         })
 
         if (stopRequested.value) break
@@ -222,7 +250,15 @@ export function useConversationLoop() {
 
         lastAiReplyEn.value = reply.reply_en
         conversation.setMode('aiSpeaking')
-        await tts.speak(reply.reply_en, { rate: speakRateForLevel() })
+        {
+          const opts = buildTtsOptions()
+          await tts.speak(reply.reply_en, {
+            rate: speakRateForLevel(),
+            pitch: opts.pitch,
+            voiceName: opts.voiceName,
+            voicePreference: opts.voicePreference,
+          })
+        }
 
         if (stopRequested.value) break
 
@@ -246,12 +282,23 @@ export function useConversationLoop() {
         promptedAttempts.value += 1
         if (lastAiReplyEn.value) {
           conversation.setMode('aiSpeaking')
-          await tts.speak(lastAiReplyEn.value, { rate: 0.8 })
+          const opts = buildTtsOptions()
+          await tts.speak(lastAiReplyEn.value, {
+            rate: 0.8,
+            pitch: opts.pitch,
+            voiceName: opts.voiceName,
+            voicePreference: opts.voicePreference,
+          })
         }
       } else {
         if (lastAiReplyEn.value) {
           conversation.setMode('aiSpeaking')
-          await tts.speak("Let's move on. 次に進みましょう。")
+          const opts = buildTtsOptions()
+          await tts.speak("Let's move on. 次に進みましょう。", {
+            pitch: opts.pitch,
+            voiceName: opts.voiceName,
+            voicePreference: opts.voicePreference,
+          })
         }
         promptedAttempts.value = 0
       }
@@ -261,6 +308,7 @@ export function useConversationLoop() {
     consecutiveSilent.value += 1
     if (consecutiveSilent.value >= MAX_SILENT_BEFORE_HINT) {
       conversation.setMode('aiSpeaking')
+      // 日本語ヒントは英語 voice 設定の影響を受けないよう、voice 指定を渡さない。
       await tts.speak('もしかして分からない?英語が分からなければ日本語で話してくれてもいいよ。', {
         lang: 'ja-JP',
         rate: 0.95,
@@ -270,7 +318,10 @@ export function useConversationLoop() {
   }
 
   function speakRateForLevel(): number {
-    if (!settings.settings.ttsRateConnectedToLevel) return 1.0
+    // 連動 OFF: ユーザー設定の ttsRate をそのまま使う
+    if (!settings.settings.ttsRateConnectedToLevel) {
+      return settings.settings.ttsRate
+    }
     switch (conversation.level) {
       case 'beginner':
         return 0.85

@@ -4,10 +4,8 @@ import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
 import BaseInput from '../components/BaseInput.vue'
 import { useProfileStore } from '../stores/profile'
-import { useSettingsStore } from '../stores/settings'
 
 const profile = useProfileStore()
-const settings = useSettingsStore()
 
 onMounted(() => profile.load())
 
@@ -42,35 +40,6 @@ async function saveFact() {
     await profile.updateFact(editingFactId.value, factEditInput.value.trim())
   }
   editingFactId.value = null
-}
-
-const aiNameInput = ref('')
-const editingAiName = ref(false)
-
-function startEditAiName() {
-  aiNameInput.value = settings.settings.aiCharacter.name
-  editingAiName.value = true
-}
-
-function saveAiName() {
-  if (aiNameInput.value.trim()) {
-    settings.update({
-      aiCharacter: {
-        name: aiNameInput.value.trim(),
-        gender: settings.settings.aiCharacter.gender,
-      },
-    })
-  }
-  editingAiName.value = false
-}
-
-function setGender(g: 'female' | 'male') {
-  settings.update({
-    aiCharacter: {
-      name: settings.settings.aiCharacter.name,
-      gender: g,
-    },
-  })
 }
 
 function formatDate(d: Date): string {
@@ -155,52 +124,6 @@ function formatDate(d: Date): string {
         <p v-else class="mt-3 text-sm text-text-muted">
           まだ学習された情報はありません。会話を続けると自動的に蓄積されます。
         </p>
-      </div>
-    </BaseCard>
-
-    <BaseCard class="mt-6">
-      <div class="text-sm font-semibold">AIキャラクター</div>
-      <div class="mt-4 space-y-4">
-        <div>
-          <div v-if="!editingAiName" class="flex items-center justify-between">
-            <div>
-              <div class="text-xs text-text-muted">名前</div>
-              <div class="text-base">
-                {{ settings.settings.aiCharacter.name }}
-              </div>
-            </div>
-            <BaseButton variant="ghost" size="sm" @click="startEditAiName"> 編集 </BaseButton>
-          </div>
-          <div v-else class="flex items-end gap-2">
-            <div class="flex-1">
-              <BaseInput v-model="aiNameInput" label="名前" />
-            </div>
-            <BaseButton size="sm" @click="saveAiName">保存</BaseButton>
-            <BaseButton variant="ghost" size="sm" @click="editingAiName = false">
-              キャンセル
-            </BaseButton>
-          </div>
-        </div>
-
-        <div>
-          <div class="text-xs text-text-muted">性別 / 声</div>
-          <div class="mt-2 flex gap-2">
-            <BaseButton
-              :variant="settings.settings.aiCharacter.gender === 'female' ? 'primary' : 'secondary'"
-              size="sm"
-              @click="setGender('female')"
-            >
-              女性 (Samantha)
-            </BaseButton>
-            <BaseButton
-              :variant="settings.settings.aiCharacter.gender === 'male' ? 'primary' : 'secondary'"
-              size="sm"
-              @click="setGender('male')"
-            >
-              男性 (Daniel)
-            </BaseButton>
-          </div>
-        </div>
       </div>
     </BaseCard>
   </div>

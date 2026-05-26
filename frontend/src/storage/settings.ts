@@ -1,4 +1,4 @@
-import type { Gender, Level } from '../db/types'
+import type { Gender, Level, PersonalityPreset } from '../db/types'
 
 const STORAGE_KEY = 'speaky:settings'
 
@@ -33,30 +33,75 @@ const VALID_WHISPER_MODELS = new Set<WhisperModel>([
 
 export type DarkModePref = 'system' | 'light' | 'dark'
 
+/**
+ * TTS rate / pitch の許容範囲(UI のスライダー範囲と一致させる)。
+ * 範囲外の値が localStorage に保存されていた場合は clamp する。
+ */
+export const TTS_RATE_MIN = 0.5
+export const TTS_RATE_MAX = 1.5
+export const TTS_PITCH_MIN = 0.7
+export const TTS_PITCH_MAX = 1.4
+
 export interface AppSettings {
   aiCharacter: {
     name: string
     gender: Gender
+    /**
+     * Web Speech API の voice.name(例: "Samantha", "Daniel")。
+     * null の場合は gender ベースのフォールバック(下位互換)を使う。
+     */
+    voiceName: string | null
+    /** AI の性格プリセット。デフォルト 'friendly' は従来挙動を踏襲。 */
+    personality: PersonalityPreset
   }
   silenceDurationMs: number
   llmModel: string
   whisperModel: WhisperModel
   darkMode: DarkModePref
   ttsRateConnectedToLevel: boolean
+  /**
+   * ttsRateConnectedToLevel=false のときに使うユーザー指定の話速。
+   * 連動時は無視され、speakRateForLevel() の結果が使われる。
+   */
+  ttsRate: number
+  /** TTS の声の高さ。常にユーザー指定値を使う(連動オプション無し)。 */
+  ttsPitch: number
   lastCleanupAt: number | null
   defaultLevel: Level
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  aiCharacter: { name: 'Emma', gender: 'female' },
+  aiCharacter: {
+    name: 'Emma',
+    gender: 'female',
+    voiceName: null,
+    personality: 'friendly',
+  },
   // 1.5秒: 体感のラリー速度と誤切れのバランス点。設定画面で 1-5 秒に調整可能。
   silenceDurationMs: 1500,
   llmModel: 'llama3.2:3b',
   whisperModel: 'medium',
   darkMode: 'system',
   ttsRateConnectedToLevel: true,
+  ttsRate: 1.0,
+  ttsPitch: 1.0,
   lastCleanupAt: null,
   defaultLevel: 'intermediate',
+}
+
+const VALID_PERSONALITIES = new Set<PersonalityPreset>([
+  'friendly',
+  'teacher',
+  'cool',
+  'kohai',
+  'colleague',
+])
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  if (value < min) return min
+  if (value > max) return max
+  return value
 }
 
 function isStorageAvailable(): boolean {
@@ -85,6 +130,25 @@ export function loadSettings(): AppSettings {
       )
       merged.whisperModel = DEFAULT_SETTINGS.whisperModel
     }
+    // 旧バージョンに無かったフィールドのマイグレーション。
+    // voiceName / personality は aiCharacter の中で欠落しているケースを補完する。
+    if (typeof merged.aiCharacter.voiceName === 'undefined') {
+      merged.aiCharacter.voiceName = null
+    }
+    if (!VALID_PERSONALITIES.has(merged.aiCharacter.personality)) {
+      merged.aiCharacter.personality = DEFAULT_SETTINGS.aiCharacter.personality
+    }
+    // ttsRate / ttsPitch は範囲外のときデフォルトに戻す(clamp で防御)
+    merged.ttsRate = clamp(
+      typeof merged.ttsRate === 'number' ? merged.ttsRate : DEFAULT_SETTINGS.ttsRate,
+      TTS_RATE_MIN,
+      TTS_RATE_MAX,
+    )
+    merged.ttsPitch = clamp(
+      typeof merged.ttsPitch === 'number' ? merged.ttsPitch : DEFAULT_SETTINGS.ttsPitch,
+      TTS_PITCH_MIN,
+      TTS_PITCH_MAX,
+    )
     return merged
   } catch {
     return { ...DEFAULT_SETTINGS }

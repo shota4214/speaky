@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeMount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import AiMascot from '../components/AiMascot.vue'
 import BaseButton from '../components/BaseButton.vue'
 import LevelBadge from '../components/LevelBadge.vue'
 import TopicChip from '../components/TopicChip.vue'
@@ -9,12 +10,21 @@ import { conversationsRepo } from '../db/repos/conversations'
 import { vocabularyRepo } from '../db/repos/vocabulary'
 import type { Message, VocabItem } from '../db/types'
 import { useConversationStore } from '../stores/conversation'
+import { useSettingsStore } from '../stores/settings'
 import { useVocabularyStore } from '../stores/vocabulary'
 
 const router = useRouter()
 const conversation = useConversationStore()
+const settings = useSettingsStore()
 const vocabStore = useVocabularyStore()
 const loop = useConversationLoop()
+
+const aiName = computed(() => settings.settings.aiCharacter.name)
+const aiGender = computed(() => settings.settings.aiCharacter.gender)
+// AI が喋っている間は talking、それ以外は idle
+const mascotMood = computed<'idle' | 'talking'>(() =>
+  conversation.mode === 'aiSpeaking' ? 'talking' : 'idle',
+)
 
 const lastSummary = ref<string | null>(null)
 const vocabFocusWords = ref<string[]>([])
@@ -194,15 +204,18 @@ function isVocabSaved(message: Message, word: string): boolean {
 </script>
 
 <template>
-  <div class="flex h-screen flex-col bg-bg text-text">
+  <div class="flex h-screen flex-col text-text">
     <header class="border-b border-border px-6 py-3">
       <div class="mx-auto flex max-w-4xl items-center justify-between">
-        <div>
-          <h1 class="text-lg font-semibold">会話中</h1>
-          <div class="mt-1 flex items-center gap-2 text-xs">
-            <LevelBadge :level="conversation.level" size="sm" />
-            <TopicChip :label="conversation.topic" size="sm" />
-            <span v-if="conversation.isPaused" class="text-amber-500"> ⏸ 一時停止中 </span>
+        <div class="flex items-center gap-3">
+          <AiMascot :size="44" :mood="mascotMood" :gender="aiGender" />
+          <div>
+            <h1 class="text-lg font-semibold">{{ aiName }} と会話中</h1>
+            <div class="mt-1 flex items-center gap-2 text-xs">
+              <LevelBadge :level="conversation.level" size="sm" />
+              <TopicChip :label="conversation.topic" size="sm" />
+              <span v-if="conversation.isPaused" class="text-amber-500"> ⏸ 一時停止中 </span>
+            </div>
           </div>
         </div>
         <BaseButton variant="danger" size="sm" :disabled="ending" @click="handleEnd">
@@ -230,7 +243,7 @@ function isVocabSaved(message: Message, word: string): boolean {
         <div v-for="m in conversation.messages" :key="m.id">
           <div v-if="m.role === 'user'" class="flex justify-end">
             <div
-              class="max-w-[75%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-white shadow-sm"
+              class="max-w-[75%] rounded-3xl rounded-br-lg bg-primary px-4 py-3 text-white shadow-glow-sm"
             >
               <div class="text-sm">{{ m.userText }}</div>
               <div class="mt-1 text-[10px] opacity-80">
@@ -243,7 +256,7 @@ function isVocabSaved(message: Message, word: string): boolean {
           <div v-else class="flex flex-col items-start space-y-2">
             <div class="flex w-full justify-start">
               <div
-                class="max-w-[75%] rounded-2xl rounded-bl-md bg-surface px-4 py-3 shadow-sm ring-1 ring-border"
+                class="max-w-[75%] rounded-3xl rounded-bl-lg bg-surface px-4 py-3 shadow-glow-sm ring-1 ring-border"
               >
                 <div class="text-sm">{{ m.replyEn }}</div>
                 <div class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>

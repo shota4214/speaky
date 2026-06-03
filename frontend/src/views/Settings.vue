@@ -103,12 +103,22 @@ async function previewVoice() {
   }
 }
 
-const personalityPresets: { value: PersonalityPreset; label: string; desc: string }[] = [
-  { value: 'friendly', label: 'friendly', desc: '親友のように暖かく(デフォルト)' },
-  { value: 'teacher', label: 'teacher', desc: '丁寧な先生 — 小さな成功を褒めて理由を簡潔に解説' },
-  { value: 'cool', label: 'cool', desc: '落ち着いた皮肉屋 — 短くドライなユーモア' },
-  { value: 'kohai', label: 'kohai', desc: 'テンション高めの後輩 — リアクション大きめ' },
-  { value: 'colleague', label: 'colleague', desc: '礼儀正しい同僚 — 大人同士の会話' },
+const personalityPresets: {
+  value: PersonalityPreset
+  label: string
+  desc: string
+  icon: string
+}[] = [
+  { value: 'friendly', label: 'friendly', desc: '親友のように暖かく(デフォルト)', icon: '😊' },
+  {
+    value: 'teacher',
+    label: 'teacher',
+    desc: '丁寧な先生 — 小さな成功を褒めて理由を簡潔に解説',
+    icon: '👩‍🏫',
+  },
+  { value: 'cool', label: 'cool', desc: '落ち着いた皮肉屋 — 短くドライなユーモア', icon: '😎' },
+  { value: 'kohai', label: 'kohai', desc: 'テンション高めの後輩 — リアクション大きめ', icon: '🐣' },
+  { value: 'colleague', label: 'colleague', desc: '礼儀正しい同僚 — 大人同士の会話', icon: '💼' },
 ]
 
 function updatePersonality(e: Event) {
@@ -194,9 +204,9 @@ const llmPullStatus = ref('')
 const llmPullError = ref('')
 
 const llmPresets = [
-  { value: 'llama3.2:3b', label: 'Llama 3.2 3B (~2GB)' },
-  { value: 'gemma2:9b', label: 'Gemma 2 9B (~5.5GB)' },
-  { value: 'qwen2.5:14b', label: 'Qwen 2.5 14B (~9GB)' },
+  { value: 'llama3.2:3b', label: '⚡ Llama 3.2 3B (~2GB)' },
+  { value: 'gemma2:9b', label: '⚖️ Gemma 2 9B (~5.5GB)' },
+  { value: 'qwen2.5:14b', label: '💎 Qwen 2.5 14B (~9GB)' },
 ]
 
 async function handlePullLlm() {
@@ -229,13 +239,44 @@ const whisperStatus = ref('')
 const whisperError = ref('')
 
 const whisperPresets = [
-  { value: 'tiny', label: 'tiny (~75MB)' },
-  { value: 'base', label: 'base (~142MB)' },
-  { value: 'small', label: 'small (~466MB)' },
-  { value: 'medium', label: 'medium (~1.5GB)' },
-  { value: 'large-v1', label: 'large-v1 (~2.9GB)' },
-  { value: 'large-v3-turbo', label: 'large-v3-turbo (~1.5GB)' },
+  { value: 'tiny', label: '⚡⚡ tiny (~75MB)' },
+  { value: 'base', label: '⚡ base (~142MB)' },
+  { value: 'small', label: '⚡ small (~466MB)' },
+  { value: 'medium', label: '⚖️ medium (~1.5GB)' },
+  { value: 'large-v1', label: '🎯 large-v1 (~2.9GB)' },
+  { value: 'large-v3-turbo', label: '🎯 large-v3-turbo (~1.5GB)' },
 ]
+
+// インストール済みリストで「どれを選べばいいか」が分かるよう、
+// モデル名から特徴(アイコン + 一言説明)を返す。前方一致で判定する。
+function describeLlm(name: string): { icon: string; note: string } {
+  const n = name.toLowerCase()
+  if (n.startsWith('llama3.2:3b')) return { icon: '⚡', note: '軽量・高速 / 精度は控えめ' }
+  if (n.startsWith('gemma2:9b')) return { icon: '⚖️', note: 'バランス型 / 標準おすすめ' }
+  if (n.startsWith('qwen2.5:14b')) return { icon: '💎', note: '高品質 / 重め・低速' }
+  if (n.includes(':1b') || n.includes(':0.5b'))
+    return { icon: '⚡⚡', note: '超軽量 / 最速・精度低' }
+  if (n.includes('14b') || n.includes('13b') || n.includes('32b') || n.includes('70b'))
+    return { icon: '💎', note: '高品質 / 重め' }
+  if (n.includes('7b') || n.includes('8b') || n.includes('9b'))
+    return { icon: '⚖️', note: 'バランス型' }
+  if (n.includes('1b') || n.includes('3b')) return { icon: '⚡', note: '軽量・高速' }
+  return { icon: '🤖', note: 'LLM モデル' }
+}
+
+function describeWhisper(name: string): { icon: string; note: string } {
+  // 例: "ggml-medium.bin" → "medium"
+  const base = name
+    .replace(/^ggml-/, '')
+    .replace(/\.bin$/, '')
+    .toLowerCase()
+  if (base.startsWith('tiny')) return { icon: '⚡⚡', note: '超高速 / 精度低' }
+  if (base.startsWith('base')) return { icon: '⚡', note: '高速 / 精度ふつう' }
+  if (base.startsWith('small')) return { icon: '⚡', note: '高速・実用精度' }
+  if (base.startsWith('medium')) return { icon: '⚖️', note: 'バランス / おすすめ' }
+  if (base.startsWith('large')) return { icon: '🎯', note: '高精度 / 低速・重め' }
+  return { icon: '🎙', note: 'Whisper モデル' }
+}
 
 async function handleDownloadWhisper() {
   if (whisperDownloading.value) return
@@ -536,7 +577,7 @@ async function handleDeleteAll() {
             @change="updatePersonality"
           >
             <option v-for="p in personalityPresets" :key="p.value" :value="p.value">
-              {{ p.label }} — {{ p.desc }}
+              {{ p.icon }} {{ p.label }} — {{ p.desc }}
             </option>
           </select>
           <p class="mt-1 text-xs text-text-muted">
@@ -559,7 +600,7 @@ async function handleDeleteAll() {
             <option value="tiny">⚡⚡ tiny (~75MB / 超高速・精度低)</option>
             <option value="base">⚡ base (~142MB / 高速)</option>
             <option value="small">⚡ small (~466MB / 高速・実用精度)</option>
-            <option value="medium">⚖ medium (~1.5GB / バランス・推奨)</option>
+            <option value="medium">⚖️ medium (~1.5GB / バランス・推奨)</option>
             <option value="large-v1">🎯 large-v1 (~2.9GB / 高精度・低速)</option>
             <option value="large-v3-turbo">🎯 large-v3-turbo (~1.5GB / 高精度・最新)</option>
           </select>
@@ -576,9 +617,9 @@ async function handleDeleteAll() {
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateLlm"
           >
-            <option value="llama3.2:3b">軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
-            <option value="gemma2:9b">標準 (Gemma 2 9B / ~5.5GB)</option>
-            <option value="qwen2.5:14b">高品質 (Qwen 2.5 14B / ~9GB)</option>
+            <option value="llama3.2:3b">⚡ 軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
+            <option value="gemma2:9b">⚖️ 標準 (Gemma 2 9B / ~5.5GB)</option>
+            <option value="qwen2.5:14b">💎 高品質 (Qwen 2.5 14B / ~9GB)</option>
           </select>
           <p class="mt-1 text-xs text-text-muted">
             速度の目安(M4/M5):
@@ -608,7 +649,7 @@ async function handleDeleteAll() {
             <option value="dark">ダーク</option>
           </select>
           <p class="mt-1 text-xs text-text-muted">
-            ※ 現状はシステム連動のみ実装。明示切替は Phase 3 残作業
+            OS の設定に関わらずアプリの表示を固定できます(システム連動を選ぶと OS に追従)
           </p>
         </div>
         <div>
@@ -664,16 +705,22 @@ async function handleDeleteAll() {
               :key="m.name"
               class="flex items-center justify-between rounded-lg bg-bg px-3 py-2 text-sm ring-1 ring-border"
             >
-              <div class="flex items-center gap-2">
-                <span class="font-mono">{{ m.name }}</span>
-                <span
-                  v-if="m.name === ollamaDefault"
-                  class="rounded-full bg-primary px-2 py-0.5 text-[10px] text-white"
-                >
-                  使用中
-                </span>
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="shrink-0">{{ describeLlm(m.name).icon }}</span>
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono">{{ m.name }}</span>
+                    <span
+                      v-if="m.name === ollamaDefault"
+                      class="rounded-full bg-primary px-2 py-0.5 text-[10px] text-white"
+                    >
+                      使用中
+                    </span>
+                  </div>
+                  <div class="text-[10px] text-text-muted">{{ describeLlm(m.name).note }}</div>
+                </div>
               </div>
-              <div class="flex items-center gap-3 text-xs">
+              <div class="flex shrink-0 items-center gap-3 text-xs">
                 <span class="text-text-muted">{{ formatSize(m.sizeMB) }}</span>
                 <button
                   class="text-rose-500 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
@@ -743,8 +790,14 @@ async function handleDeleteAll() {
               :key="m.name"
               class="flex items-center justify-between rounded-lg bg-bg px-3 py-2 text-sm ring-1 ring-border"
             >
-              <span class="font-mono">{{ m.name }}</span>
-              <div class="flex items-center gap-3 text-xs">
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="shrink-0">{{ describeWhisper(m.name).icon }}</span>
+                <div class="min-w-0">
+                  <span class="font-mono">{{ m.name }}</span>
+                  <div class="text-[10px] text-text-muted">{{ describeWhisper(m.name).note }}</div>
+                </div>
+              </div>
+              <div class="flex shrink-0 items-center gap-3 text-xs">
                 <span class="text-text-muted">{{ formatSize(m.sizeMB) }}</span>
                 <button class="text-rose-500 hover:underline" @click="handleDeleteWhisper(m.name)">
                   削除

@@ -3,7 +3,7 @@ import AppSidebar from './AppSidebar.vue'
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-bg text-text">
+  <div class="flex min-h-screen text-text">
     <AppSidebar />
     <main class="flex-1 overflow-x-hidden">
       <slot />

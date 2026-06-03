@@ -67,6 +67,7 @@
         "dmg"
       ],
       "category": "public.app-category.education",
+      "icon": "build/icon.png",
       "hardenedRuntime": false,
       "identity": null,
       "entitlements": null

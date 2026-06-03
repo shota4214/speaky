@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import AiMascot from '../components/AiMascot.vue'
 import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
 import LevelBadge from '../components/LevelBadge.vue'
@@ -17,6 +18,7 @@ const conversation = useConversationStore()
 const vocabStore = useVocabularyStore()
 
 const aiName = computed(() => settings.settings.aiCharacter.name)
+const aiGender = computed(() => settings.settings.aiCharacter.gender)
 
 const level = ref<Level>('intermediate')
 
@@ -65,8 +67,11 @@ async function startConversation() {
 
 <template>
   <div class="mx-auto max-w-3xl px-6 py-8">
-    <h1 class="text-3xl font-bold">English Conversation with {{ aiName }}</h1>
-    <p class="mt-2 text-sm text-text-muted">レベルとトピックを選んで会話を始めましょう</p>
+    <div class="flex flex-col items-center text-center">
+      <AiMascot :size="120" mood="happy" :gender="aiGender" />
+      <h1 class="mt-4 text-3xl font-bold">{{ aiName }} とおしゃべりしよう</h1>
+      <p class="mt-2 text-sm text-text-muted">レベルとトピックを選んで会話を始めましょう</p>
+    </div>
 
     <BaseCard class="mt-8">
       <div class="text-sm font-semibold">今日のレベル</div>

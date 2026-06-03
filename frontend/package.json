@@ -11,6 +11,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@fontsource/m-plus-rounded-1c": "^5.2.10",
+    "@fontsource/quicksand": "^5.2.10",
     "dexie": "^4.4.2",
     "pinia": "^3.0.4",
     "vue": "^3.5.34",

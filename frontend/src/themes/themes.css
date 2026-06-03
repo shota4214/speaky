@@ -1,92 +1,106 @@
 /* ============================================
    THEME TOKENS (RGB triplets for Tailwind alpha)
+   ふんわりパステル (たまごっち系) リデザイン
    ============================================ */
 
-/* Default + Mint Garden */
+/* Default + Mint Garden — 明るく楽しげなフレッシュミント */
 :root,
 [data-theme='mint'] {
-  --color-primary: 16 185 129; /* #10b981 emerald-500 */
-  --color-primary-light: 209 250 229; /* #d1fae5 emerald-100 */
-  --color-primary-dark: 4 120 87; /* #047857 emerald-700 */
-  --color-accent: 14 165 233; /* #0ea5e9 sky-500    */
-  --color-bg: 240 253 244; /* #f0fdf4            */
-  --color-surface: 255 255 255; /* #ffffff            */
-  --color-text: 15 23 42; /* #0f172a slate-900  */
-  --color-text-muted: 100 116 139; /* #64748b slate-500  */
-  --color-border: 226 232 240; /* #e2e8f0 slate-200  */
+  --color-primary: 80 220 188; /* 明るく弾けるフレッシュミント */
+  --color-primary-light: 219 250 240; /* エアリーなミントライト */
+  --color-primary-dark: 14 150 116; /* 文字に使える濃いめミント */
+  --color-accent: 130 210 240; /* 楽しげなスカイブルー */
+  --color-bg: 233 252 244; /* 明るいミントクリーム背景 */
+  --color-surface: 255 255 255; /* 純白サーフェス */
+  --color-text: 41 53 62; /* 柔らかいダークグレー */
+  --color-text-muted: 120 134 144;
+  --color-border: 208 242 230; /* primary 寄りの淡いボーダー */
 }
 
+/* Lavender — 明るく可愛いラベンダーパステル (ライト時) */
 [data-theme='lavender'] {
-  --color-primary: 167 139 250; /* violet-400 */
-  --color-primary-light: 237 233 254; /* violet-100 */
-  --color-primary-dark: 124 58 237; /* violet-600 */
-  --color-accent: 244 114 182; /* pink-400   */
-  --color-bg: 250 245 255;
-  --color-surface: 255 255 255;
-  --color-text: 15 23 42;
-  --color-text-muted: 100 116 139;
-  --color-border: 226 232 240;
+  --color-primary: 168 148 248; /* 柔らかく明るいラベンダー */
+  --color-primary-light: 238 232 254; /* エアリーなラベンダーライト */
+  --color-primary-dark: 124 92 222; /* 文字に使える濃いめバイオレット */
+  --color-accent: 247 168 206; /* やさしいピンク */
+  --color-bg: 248 245 255; /* 明るいラベンダークリーム背景 */
+  --color-surface: 255 255 255; /* 純白サーフェス */
+  --color-text: 47 41 61; /* 柔らかいダークグレー */
+  --color-text-muted: 130 122 144;
+  --color-border: 233 226 250; /* primary 寄りの淡いボーダー */
 }
 
+/* Peach — 甘く可愛いピンクピーチ */
 [data-theme='peach'] {
-  --color-primary: 251 146 60; /* orange-400 */
-  --color-primary-light: 255 237 213; /* orange-100 */
-  --color-primary-dark: 234 88 12; /* orange-600 */
-  --color-accent: 244 114 182; /* pink-400   */
-  --color-bg: 255 251 245;
-  --color-surface: 255 255 255;
-  --color-text: 15 23 42;
-  --color-text-muted: 100 116 139;
-  --color-border: 226 232 240;
+  --color-primary: 252 158 158; /* 甘いピンクピーチ (ピンク寄りで可愛く) */
+  --color-primary-light: 255 232 232; /* ふんわりピンクライト */
+  --color-primary-dark: 226 104 104; /* 文字に使えるローズコーラル */
+  --color-accent: 250 168 208; /* スイートピンク */
+  --color-bg: 255 245 246; /* ほんのりピンクのクリーム背景 */
+  --color-surface: 255 253 253;
+  --color-text: 61 45 47;
+  --color-text-muted: 150 128 130;
+  --color-border: 253 226 228;
 }
 
 /* ============================================
    DARK MODE OVERRIDES (per-theme)
-   prefers-color-scheme: dark に追従
+   「暗いけど可愛い」: 真っ黒でなく深いパステル
+   アプリ内のダークモード設定で html.dark クラスが付いたときに適用。
+   OS の prefers-color-scheme には直接追従せず、JS 側 (stores/theme)
+   が system/light/dark を判定して html.dark を付け外しする。
    ============================================ */
-@media (prefers-color-scheme: dark) {
-  :root,
-  [data-theme='mint'] {
-    --color-primary: 52 211 153; /* emerald-400 */
-    --color-primary-light: 6 78 59; /* emerald-900 */
-    --color-primary-dark: 167 243 208; /* emerald-200 */
-    --color-accent: 56 189 248; /* sky-400     */
-    --color-bg: 7 23 16;
-    --color-surface: 17 39 30;
-    --color-text: 243 244 246;
-    --color-text-muted: 148 163 184;
-    --color-border: 30 41 59;
-  }
 
-  [data-theme='lavender'] {
-    --color-primary: 196 181 253;
-    --color-primary-light: 76 29 149;
-    --color-primary-dark: 221 214 254;
-    --color-accent: 251 207 232;
-    --color-bg: 22 12 38;
-    --color-surface: 36 24 56;
-    --color-text: 243 244 246;
-    --color-text-muted: 148 163 184;
-    --color-border: 51 41 73;
-  }
+/* mint をデフォルト扱い (data-theme 未指定でも mint ダーク) */
+html.dark:root,
+html.dark[data-theme='mint'] {
+  --color-primary: 86 222 178; /* 明るく可愛いミント */
+  --color-primary-light: 22 71 56; /* 深いミントグリーン (面塗り用) */
+  --color-primary-dark: 168 240 215; /* 明るいテキスト用 */
+  --color-accent: 130 205 238;
+  --color-bg: 22 40 35; /* 深いボトルグリーンを少し軽く */
+  --color-surface: 32 54 47; /* やわらかい暗緑のサーフェス */
+  --color-text: 234 243 239;
+  --color-text-muted: 150 170 161;
+  --color-border: 46 70 62;
+}
 
-  [data-theme='peach'] {
-    --color-primary: 251 191 36;
-    --color-primary-light: 124 45 18;
-    --color-primary-dark: 254 215 170;
-    --color-accent: 251 207 232;
-    --color-bg: 30 18 12;
-    --color-surface: 50 32 24;
-    --color-text: 243 244 246;
-    --color-text-muted: 148 163 184;
-    --color-border: 60 42 30;
-  }
+/* lavender はライト/ダーク問わず常時ダーク基調 (設計どおり)。
+   html.dark のときだけわずかに深めて一貫性を出す。 */
+html.dark[data-theme='lavender'] {
+  --color-primary: 176 153 250;
+  --color-primary-light: 54 43 88;
+  --color-primary-dark: 218 208 253;
+  --color-accent: 248 176 210;
+  --color-bg: 26 21 40; /* さらに深いトワイライト */
+  --color-surface: 40 33 58;
+  --color-text: 238 233 247;
+  --color-text-muted: 168 160 188;
+  --color-border: 56 46 80;
+}
+
+/* peach ダーク: 重いココアをやめ、赤紫寄りの可愛いダークに */
+html.dark[data-theme='peach'] {
+  --color-primary: 252 174 162; /* やわらかいローズピーチ */
+  --color-primary-light: 74 40 50; /* 面塗り用の深い赤紫 */
+  --color-primary-dark: 255 210 206;
+  --color-accent: 249 176 212; /* スイートピンク寄り */
+  --color-bg: 40 26 34; /* 赤紫寄りの軽やかなダーク */
+  --color-surface: 54 36 46; /* ほんのりローズのサーフェス */
+  --color-text: 247 238 240;
+  --color-text-muted: 184 158 166;
+  --color-border: 70 48 58;
 }
 
 /* ============================================
    Apply background and text by default
+   背景はやわらかいグラデーション (bg → ほんのり primary-light)
    ============================================ */
 body {
   background-color: rgb(var(--color-bg));
   color: rgb(var(--color-text));
+  background-image:
+    radial-gradient(circle at 15% 0%, rgb(var(--color-primary-light) / 0.55), transparent 45%),
+    radial-gradient(circle at 100% 100%, rgb(var(--color-accent) / 0.18), transparent 50%);
+  background-attachment: fixed;
 }

@@ -6,6 +6,9 @@ dist/
 dist-bundle/
 dist-app/
 build/
+# ただし electron-builder のアイコン等のソース資産は追跡する
+!electron/build/
+!electron/build/**
 *.tsbuildinfo
 
 # Isolated vendor install for distribution packaging

@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { useSettingsStore } from './settings'
+import type { DarkModePref } from '../storage/settings'
 
 export type ThemeId = 'mint' | 'lavender' | 'peach'
 
@@ -24,10 +26,20 @@ function loadInitial(): ThemeId {
   return 'mint'
 }
 
+/** OS のダーク設定を購読するための MediaQueryList(存在すれば) */
+function getDarkMediaQuery(): MediaQueryList | null {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return null
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)')
+}
+
 export const useThemeStore = defineStore('theme', () => {
   const current = ref<ThemeId>(loadInitial())
   const themes = ref<ThemeInfo[]>(THEMES)
+  const settings = useSettingsStore()
 
+  // data-theme 属性 + localStorage 永続化
   watch(
     current,
     (id) => {
@@ -39,6 +51,47 @@ export const useThemeStore = defineStore('theme', () => {
       } catch {
         // localStorage not available
       }
+    },
+    { immediate: true },
+  )
+
+  // ----- ダークモード適用ロジック -----
+  // html.dark クラスを付け外しする。themes.css / tailwind(darkMode:'class')
+  // の両方がこのクラスに追従する。
+  function applyDarkClass(enabled: boolean) {
+    if (typeof document === 'undefined') return
+    document.documentElement.classList.toggle('dark', enabled)
+  }
+
+  const mql = getDarkMediaQuery()
+
+  /** settings.darkMode の値に応じて html.dark を反映する */
+  function applyDarkMode(pref: DarkModePref) {
+    if (pref === 'light') {
+      applyDarkClass(false)
+    } else if (pref === 'dark') {
+      applyDarkClass(true)
+    } else {
+      // 'system': OS 設定に従う
+      applyDarkClass(mql?.matches ?? false)
+    }
+  }
+
+  // OS 設定変更時のハンドラ。'system' のときだけ追従させる。
+  function handleOsChange(e: MediaQueryListEvent) {
+    if (settings.settings.darkMode === 'system') {
+      applyDarkClass(e.matches)
+    }
+  }
+  if (mql) {
+    mql.addEventListener('change', handleOsChange)
+  }
+
+  // settings.darkMode が変わったら即反映(ドロップダウン操作・リロード復元の両方をカバー)
+  watch(
+    () => settings.settings.darkMode,
+    (pref) => {
+      applyDarkMode(pref)
     },
     { immediate: true },
   )

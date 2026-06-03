@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import AiMascot from '../components/AiMascot.vue'
 import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
 import {
@@ -96,12 +97,17 @@ const aiName = ref(settings.settings.aiCharacter.name)
 const aiGender = ref<'female' | 'male'>(settings.settings.aiCharacter.gender)
 const aiPersonality = ref<PersonalityPreset>(settings.settings.aiCharacter.personality)
 
-const personalityPresets: { value: PersonalityPreset; label: string; desc: string }[] = [
-  { value: 'friendly', label: 'friendly', desc: '親友のように暖かく(デフォルト)' },
-  { value: 'teacher', label: 'teacher', desc: '丁寧な先生 — 解説を交える' },
-  { value: 'cool', label: 'cool', desc: '落ち着いた皮肉屋' },
-  { value: 'kohai', label: 'kohai', desc: 'テンション高めの後輩' },
-  { value: 'colleague', label: 'colleague', desc: '礼儀正しい同僚' },
+const personalityPresets: {
+  value: PersonalityPreset
+  label: string
+  desc: string
+  icon: string
+}[] = [
+  { value: 'friendly', label: 'friendly', desc: '親友のように暖かく(デフォルト)', icon: '😊' },
+  { value: 'teacher', label: 'teacher', desc: '丁寧な先生 — 解説を交える', icon: '👩‍🏫' },
+  { value: 'cool', label: 'cool', desc: '落ち着いた皮肉屋', icon: '😎' },
+  { value: 'kohai', label: 'kohai', desc: 'テンション高めの後輩', icon: '🐣' },
+  { value: 'colleague', label: 'colleague', desc: '礼儀正しい同僚', icon: '💼' },
 ]
 
 // Step 4: download state
@@ -230,7 +236,7 @@ function complete() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-bg text-text">
+  <div class="min-h-screen text-text">
     <div class="mx-auto flex min-h-screen max-w-3xl flex-col px-6 py-10">
       <header class="mb-8">
         <div class="text-2xl font-bold text-primary">speaky</div>
@@ -249,7 +255,10 @@ function complete() {
 
       <BaseCard class="flex-1">
         <div v-if="step === 1" class="space-y-4">
-          <h2 class="text-xl font-semibold">英会話練習アプリ speaky へようこそ</h2>
+          <div class="flex justify-center">
+            <AiMascot :size="140" mood="happy" :gender="aiGender" />
+          </div>
+          <h2 class="text-center text-xl font-semibold">英会話練習アプリ speaky へようこそ</h2>
           <p>
             このアプリは <strong>完全ローカル動作</strong> の英会話練習アプリです。
             Whisper(音声認識)・Ollama(LLM)・Web Speech API(音声合成) を組み合わせ、外部API課金ゼロで
@@ -304,9 +313,9 @@ function complete() {
               v-model="llmModel"
               class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             >
-              <option value="llama3.2:3b">軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
-              <option value="gemma2:9b">標準 (Gemma 2 9B / ~5.5GB)</option>
-              <option value="qwen2.5:14b">高品質 (Qwen 2.5 14B / ~9GB)</option>
+              <option value="llama3.2:3b">⚡ 軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
+              <option value="gemma2:9b">⚖️ 標準 (Gemma 2 9B / ~5.5GB)</option>
+              <option value="qwen2.5:14b">💎 高品質 (Qwen 2.5 14B / ~9GB)</option>
             </select>
           </div>
           <div>
@@ -315,12 +324,12 @@ function complete() {
               v-model="whisperModel"
               class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             >
-              <option value="tiny">tiny (~75MB)</option>
-              <option value="base">base (~142MB)</option>
-              <option value="small">small (~466MB)</option>
-              <option value="medium">medium (~1.5GB)</option>
-              <option value="large-v1">large-v1 (~2.9GB)</option>
-              <option value="large-v3-turbo">large-v3-turbo (~1.5GB)</option>
+              <option value="tiny">⚡⚡ tiny (~75MB)</option>
+              <option value="base">⚡ base (~142MB)</option>
+              <option value="small">⚡ small (~466MB)</option>
+              <option value="medium">⚖️ medium (~1.5GB)</option>
+              <option value="large-v1">🎯 large-v1 (~2.9GB)</option>
+              <option value="large-v3-turbo">🎯 large-v3-turbo (~1.5GB)</option>
             </select>
           </div>
         </div>
@@ -492,7 +501,7 @@ function complete() {
               class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             >
               <option v-for="p in personalityPresets" :key="p.value" :value="p.value">
-                {{ p.label }} — {{ p.desc }}
+                {{ p.icon }} {{ p.label }} — {{ p.desc }}
               </option>
             </select>
           </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeMount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import AiMascot from '../components/AiMascot.vue'
 import BaseButton from '../components/BaseButton.vue'
 import LevelBadge from '../components/LevelBadge.vue'
@@ -24,6 +24,13 @@ const aiGender = computed(() => settings.settings.aiCharacter.gender)
 // AI が喋っている間は talking、それ以外は idle
 const mascotMood = computed<'idle' | 'talking'>(() =>
   conversation.mode === 'aiSpeaking' ? 'talking' : 'idle',
+)
+
+// メッセージがまだ無い空状態でも、会話開始直後は AI が最初の挨拶を
+// 生成・再生中。この間に「話しかけてください」を出すと実際の動き
+// (AI から話す)と矛盾するため、AI 準備中かどうかで文言を出し分ける。
+const emptyStateWaitingForAi = computed(() =>
+  ['thinking', 'aiSpeaking', 'processing'].includes(conversation.mode),
 )
 
 const lastSummary = ref<string | null>(null)
@@ -169,6 +176,27 @@ async function handleEnd() {
   }
 }
 
+// 画面離脱(サイドメニュー・ブラウザバック等)時に会話を確実に終了する。
+// 「会話を終わる」ボタン(handleEnd)経由の離脱は既に loop.stop + conversation.end
+// 済みなのでスキップ。それ以外の離脱では:
+//  - マイク/TTS を即停止(loop.stop は同期)
+//  - 会話データを同期キャプチャしてから保存をバックグラウンド実行
+//    (要約 API は数秒かかるため、待つとナビゲーションが固まる)
+//  - 会話状態をクリアして即ナビゲーションを許可
+onBeforeRouteLeave(() => {
+  if (!conversation.id || ending.value) return true
+  loop.stop()
+  // endAndPersist は呼び出し時点で会話データを同期キャプチャするので、
+  // 直後に conversation.end() しても保存内容は失われない。
+  const persistPromise = loop.endAndPersist()
+  conversation.end()
+  vocabStore.clear()
+  void persistPromise.catch((e) => {
+    console.warn('[chat] 離脱時の会話保存に失敗(続行):', e)
+  })
+  return true
+})
+
 async function saveVocabItem(message: Message, item: VocabItem) {
   await vocabularyRepo.create({
     word: item.word,
@@ -236,8 +264,14 @@ function isVocabSaved(message: Message, word: string): boolean {
           v-if="conversation.messages.length === 0"
           class="flex h-64 flex-col items-center justify-center text-center text-text-muted"
         >
-          <div class="text-5xl">🎤</div>
-          <p class="mt-3 text-sm">話しかけてください...</p>
+          <template v-if="emptyStateWaitingForAi">
+            <AiMascot :size="96" mood="talking" :gender="aiGender" />
+            <p class="mt-3 text-sm">{{ aiName }} が話しかける準備をしています...</p>
+          </template>
+          <template v-else>
+            <div class="text-5xl">🎤</div>
+            <p class="mt-3 text-sm">話しかけてください...</p>
+          </template>
         </div>
 
         <div v-for="m in conversation.messages" :key="m.id">

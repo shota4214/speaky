@@ -2,7 +2,7 @@
   "name": "speaky",
   "private": true,
   "type": "module",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "ローカル英会話学習アプリ(Local English conversation practice with Whisper + Ollama)",
   "workspaces": [
     "frontend",

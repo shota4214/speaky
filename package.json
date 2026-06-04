@@ -15,7 +15,7 @@
     "dev:backend": "npm run dev -w backend",
     "dev:electron": "npm run dev -w electron",
     "build": "npm run build -w frontend && npm run build -w backend",
-    "dist": "npm run build -w frontend && npm run build:bundle -w backend && npm run prep:vendor -w backend && npm run prep:vendor:whisper-cli -w backend && npm run prep:vendor:whisper-model -w backend && npm run prep:vendor:llama-model -w electron && npm run verify:arm64 -w backend && npm run build -w electron && npm run dist -w electron",
+    "dist": "npm run build -w frontend && npm run build:bundle -w backend && npm run prep:vendor -w backend && npm run prep:vendor:whisper-cli -w backend && npm run prep:vendor:whisper-model -w backend && npm run prep:vendor:llama-model -w electron && npm run prep:vendor:ollama-binary -w electron && npm run verify:arm64 -w backend && npm run build -w electron && npm run dist -w electron",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,vue,js,json,md,css}\"",

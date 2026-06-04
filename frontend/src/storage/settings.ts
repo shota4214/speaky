@@ -18,7 +18,7 @@ export type WhisperModel =
   | 'large-v1'
   | 'large-v3-turbo'
 
-const VALID_WHISPER_MODELS = new Set<WhisperModel>([
+export const VALID_WHISPER_MODELS = new Set<WhisperModel>([
   'tiny',
   'tiny.en',
   'base',
@@ -29,6 +29,21 @@ const VALID_WHISPER_MODELS = new Set<WhisperModel>([
   'medium.en',
   'large-v1',
   'large-v3-turbo',
+])
+
+/**
+ * バックエンドが会話に使える LLM の allowlist(backend/src/services/ollama.ts の
+ * ALLOWED_LLM_MODELS とミラー)。allowlist 外を指定すると backend が default に
+ * フォールバックするため、設定画面の選択肢はこの集合に絞る。
+ * ※ backend と手動同期が必要。片方だけ変更しないこと。
+ */
+export const ALLOWED_LLM_MODELS = new Set<string>([
+  'llama3.2:3b',
+  'llama3.1:8b',
+  'gemma2:9b',
+  'gemma2:2b',
+  'qwen2.5:7b',
+  'qwen2.5:14b',
 ])
 
 export type DarkModePref = 'system' | 'light' | 'dark'
@@ -66,9 +81,15 @@ export interface AppSettings {
   ttsRate: number
   /** TTS の声の高さ。常にユーザー指定値を使う(連動オプション無し)。 */
   ttsPitch: number
+  /** AI 返答に日本語訳を表示するか。true(表示)がデフォルト。 */
+  showJapanese: boolean
   lastCleanupAt: number | null
   defaultLevel: Level
 }
+
+/** 無音自動送信の間隔(ミリ秒)の許容範囲。UI のスライダー範囲と一致させる。 */
+export const SILENCE_MS_MIN = 1000
+export const SILENCE_MS_MAX = 15000
 
 export const DEFAULT_SETTINGS: AppSettings = {
   aiCharacter: {
@@ -77,14 +98,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
     voiceName: null,
     personality: 'friendly',
   },
-  // 1.5秒: 体感のラリー速度と誤切れのバランス点。設定画面で 1-5 秒に調整可能。
-  silenceDurationMs: 1500,
+  // 5秒: 話し終わってから送信されるまでの猶予。設定画面で 1-15 秒に調整可能。
+  silenceDurationMs: 5000,
   llmModel: 'llama3.2:3b',
   whisperModel: 'medium',
   darkMode: 'system',
   ttsRateConnectedToLevel: true,
   ttsRate: 1.0,
   ttsPitch: 1.0,
+  showJapanese: true,
   lastCleanupAt: null,
   defaultLevel: 'intermediate',
 }
@@ -148,6 +170,18 @@ export function loadSettings(): AppSettings {
       typeof merged.ttsPitch === 'number' ? merged.ttsPitch : DEFAULT_SETTINGS.ttsPitch,
       TTS_PITCH_MIN,
       TTS_PITCH_MAX,
+    )
+    // showJapanese は旧バージョンに無いので欠落時はデフォルト(表示)に
+    if (typeof merged.showJapanese !== 'boolean') {
+      merged.showJapanese = DEFAULT_SETTINGS.showJapanese
+    }
+    // silenceDurationMs を許容範囲に clamp
+    merged.silenceDurationMs = clamp(
+      typeof merged.silenceDurationMs === 'number'
+        ? merged.silenceDurationMs
+        : DEFAULT_SETTINGS.silenceDurationMs,
+      SILENCE_MS_MIN,
+      SILENCE_MS_MAX,
     )
     return merged
   } catch {

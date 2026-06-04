@@ -293,7 +293,12 @@ function isVocabSaved(message: Message, word: string): boolean {
                 class="max-w-[75%] rounded-3xl rounded-bl-lg bg-surface px-4 py-3 shadow-glow-sm ring-1 ring-border"
               >
                 <div class="text-sm">{{ m.replyEn }}</div>
-                <div class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
+                <div
+                  v-if="settings.settings.showJapanese && m.replyJa"
+                  class="mt-1 text-xs text-text-muted"
+                >
+                  {{ m.replyJa }}
+                </div>
                 <div class="mt-2 flex items-center gap-2">
                   <button
                     class="text-[10px] text-text-muted hover:text-text"

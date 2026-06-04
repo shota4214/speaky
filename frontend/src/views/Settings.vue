@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
@@ -20,7 +20,7 @@ import {
   pullOllamaModel,
   type InstalledModel,
 } from '../services/api'
-import type { WhisperModel } from '../storage/settings'
+import { ALLOWED_LLM_MODELS, VALID_WHISPER_MODELS, type WhisperModel } from '../storage/settings'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore } from '../stores/theme'
 import {
@@ -160,6 +160,8 @@ const deleting = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const ollamaModels = ref<InstalledModel[]>([])
+// backend のデフォルト LLM(OLLAMA_MODEL)。backend の delete endpoint は
+// このモデルの削除を拒否するため、UI の削除可否判定にも使う。
 const ollamaDefault = ref<string>('')
 const ollamaLoadError = ref<string>('')
 const whisperModels = ref<InstalledModel[]>([])
@@ -204,9 +206,9 @@ const llmPullStatus = ref('')
 const llmPullError = ref('')
 
 const llmPresets = [
-  { value: 'llama3.2:3b', label: '⚡ Llama 3.2 3B (~2GB)' },
-  { value: 'gemma2:9b', label: '⚖️ Gemma 2 9B (~5.5GB)' },
-  { value: 'qwen2.5:14b', label: '💎 Qwen 2.5 14B (~9GB)' },
+  { value: 'llama3.2:3b', label: '⚡ Llama 3.2 3B — 軽量・高速(~2GB)' },
+  { value: 'gemma2:9b', label: '⚖️ Gemma 2 9B — バランス・標準おすすめ(~5.5GB)' },
+  { value: 'qwen2.5:14b', label: '💎 Qwen 2.5 14B — 高品質・低速(~9GB)' },
 ]
 
 async function handlePullLlm() {
@@ -239,12 +241,12 @@ const whisperStatus = ref('')
 const whisperError = ref('')
 
 const whisperPresets = [
-  { value: 'tiny', label: '⚡⚡ tiny (~75MB)' },
-  { value: 'base', label: '⚡ base (~142MB)' },
-  { value: 'small', label: '⚡ small (~466MB)' },
-  { value: 'medium', label: '⚖️ medium (~1.5GB)' },
-  { value: 'large-v1', label: '🎯 large-v1 (~2.9GB)' },
-  { value: 'large-v3-turbo', label: '🎯 large-v3-turbo (~1.5GB)' },
+  { value: 'tiny', label: '⚡⚡ tiny — 超高速・精度低(~75MB)' },
+  { value: 'base', label: '⚡ base — 高速・精度ふつう(~142MB)' },
+  { value: 'small', label: '⚡ small — 高速・実用精度(~466MB)' },
+  { value: 'medium', label: '⚖️ medium — バランス・おすすめ(~1.5GB)' },
+  { value: 'large-v1', label: '🎯 large-v1 — 高精度・低速(~2.9GB)' },
+  { value: 'large-v3-turbo', label: '🎯 large-v3-turbo — 高精度・最新(~1.5GB)' },
 ]
 
 // インストール済みリストで「どれを選べばいいか」が分かるよう、
@@ -369,6 +371,46 @@ function updateTtsRateLink(e: Event) {
     ttsRateConnectedToLevel: (e.target as HTMLInputElement).checked,
   })
 }
+function updateShowJapanese(e: Event) {
+  settings.update({ showJapanese: (e.target as HTMLInputElement).checked })
+}
+
+// アプリが実際に使う Whisper モデルのファイル名(例: medium → ggml-medium.bin)。
+// インストール済み一覧の「使用中」バッジ・削除保護の判定に使う。
+const activeWhisperFile = computed(() => `ggml-${settings.settings.whisperModel}.bin`)
+
+// LLM の削除不可判定。backend が拒否する条件と揃える:
+//  - settings.llmModel(アプリが今使うモデル)
+//  - ollamaDefault(backend の OLLAMA_MODEL。backend が削除拒否する)
+function isLlmDeleteDisabled(name: string): boolean {
+  return name === settings.settings.llmModel || name === ollamaDefault.value
+}
+
+// 🧠 モデルセクションの選択肢は「インストール済みのもの」だけに絞る。
+// 未取得モデルを選ばせると、会話開始時に存在しないモデルを使おうとして失敗するため。
+// インストール済み AND backend allowlist 内のものだけを選択肢にする。
+// allowlist 外(例: mistral, llama3.2:1b)を選ばせても backend が default に
+// フォールバックして「選んだのに使われない」状態になるため。
+const installedLlmOptions = computed(() =>
+  ollamaModels.value
+    .filter((m) => ALLOWED_LLM_MODELS.has(m.name))
+    .map((m) => {
+      const d = describeLlm(m.name)
+      return { value: m.name, label: `${d.icon} ${m.name} — ${d.note}` }
+    }),
+)
+
+// Whisper はインストール名が "ggml-medium.bin"。設定値は短縮名 "medium" なので変換する。
+// transcribe 側の allowlist と同期した VALID_WHISPER_MODELS で絞る。
+const installedWhisperOptions = computed(() =>
+  whisperModels.value
+    .map((m) => {
+      const short = m.name.replace(/^ggml-/, '').replace(/\.bin$/, '')
+      const d = describeWhisper(m.name)
+      return { value: short, label: `${d.icon} ${short} — ${d.note}` }
+    })
+    .filter((o) => VALID_WHISPER_MODELS.has(o.value as WhisperModel)),
+)
 function updateWhisper(e: Event) {
   settings.update({
     whisperModel: (e.target as HTMLSelectElement).value as WhisperModel,
@@ -456,12 +498,25 @@ async function handleDeleteAll() {
             :value="settings.settings.silenceDurationMs"
             type="range"
             min="1000"
-            max="5000"
-            step="100"
+            max="15000"
+            step="500"
             class="mt-2 w-full accent-primary"
             @input="updateSilence"
           />
+          <div class="mt-1 flex justify-between text-[10px] text-text-muted">
+            <span>1秒</span>
+            <span>15秒</span>
+          </div>
         </div>
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            class="h-4 w-4 rounded accent-primary"
+            :checked="settings.settings.showJapanese"
+            @change="updateShowJapanese"
+          />
+          AI返答に日本語訳を表示する
+        </label>
         <label class="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -593,42 +648,54 @@ async function handleDeleteAll() {
         <div>
           <label class="block text-sm">Whisper</label>
           <select
+            v-if="installedWhisperOptions.length > 0"
             :value="settings.settings.whisperModel"
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateWhisper"
           >
-            <option value="tiny">⚡⚡ tiny (~75MB / 超高速・精度低)</option>
-            <option value="base">⚡ base (~142MB / 高速)</option>
-            <option value="small">⚡ small (~466MB / 高速・実用精度)</option>
-            <option value="medium">⚖️ medium (~1.5GB / バランス・推奨)</option>
-            <option value="large-v1">🎯 large-v1 (~2.9GB / 高精度・低速)</option>
-            <option value="large-v3-turbo">🎯 large-v3-turbo (~1.5GB / 高精度・最新)</option>
+            <option v-for="o in installedWhisperOptions" :key="o.value" :value="o.value">
+              {{ o.label }}
+            </option>
           </select>
+          <p
+            v-else
+            class="mt-1 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            インストール済みの Whisper
+            モデルがありません。下の「インストール済みモデル」から取得してください。
+          </p>
           <p class="mt-1 text-xs text-text-muted">
-            英会話学習なら
-            <strong class="text-text">small または medium</strong> がスピードと精度のバランス良。
-            会話のラリーを優先したいなら small へ。
+            選べるのはインストール済みのモデルだけです。英会話学習なら
+            <strong class="text-text">small または medium</strong> がバランス良。
           </p>
         </div>
         <div>
           <label class="block text-sm">LLM</label>
           <select
+            v-if="installedLlmOptions.length > 0"
             :value="settings.settings.llmModel"
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateLlm"
           >
-            <option value="llama3.2:3b">⚡ 軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
-            <option value="gemma2:9b">⚖️ 標準 (Gemma 2 9B / ~5.5GB)</option>
-            <option value="qwen2.5:14b">💎 高品質 (Qwen 2.5 14B / ~9GB)</option>
+            <option v-for="o in installedLlmOptions" :key="o.value" :value="o.value">
+              {{ o.label }}
+            </option>
           </select>
+          <p
+            v-else
+            class="mt-1 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            インストール済みの LLM
+            がありません。下の「インストール済みモデル」から取得してください。
+          </p>
           <p class="mt-1 text-xs text-text-muted">
-            速度の目安(M4/M5):
+            選べるのはインストール済みのモデルだけです。速度の目安(M4/M5):
             <strong class="text-text">Llama 3B ≈ 1-2秒</strong> /
             <strong class="text-text">Gemma 9B ≈ 3-5秒</strong> /
             <strong class="text-text">Qwen 14B ≈ 5-10秒</strong> per turn
           </p>
           <p class="mt-1 text-xs text-text-muted">
-            ※ 未取得モデルは「インストール済みモデル」セクションの「+ 取得」ボタンで先に DL
+            ※ 未取得モデルは下の「インストール済みモデル」セクションの「+ 取得」ボタンで先に DL
           </p>
         </div>
       </div>
@@ -711,7 +778,7 @@ async function handleDeleteAll() {
                   <div class="flex items-center gap-2">
                     <span class="font-mono">{{ m.name }}</span>
                     <span
-                      v-if="m.name === ollamaDefault"
+                      v-if="m.name === settings.settings.llmModel"
                       class="rounded-full bg-primary px-2 py-0.5 text-[10px] text-white"
                     >
                       使用中
@@ -724,7 +791,7 @@ async function handleDeleteAll() {
                 <span class="text-text-muted">{{ formatSize(m.sizeMB) }}</span>
                 <button
                   class="text-rose-500 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
-                  :disabled="m.name === ollamaDefault"
+                  :disabled="isLlmDeleteDisabled(m.name)"
                   @click="handleDeleteOllama(m.name)"
                 >
                   削除
@@ -793,13 +860,25 @@ async function handleDeleteAll() {
               <div class="flex min-w-0 items-center gap-2">
                 <span class="shrink-0">{{ describeWhisper(m.name).icon }}</span>
                 <div class="min-w-0">
-                  <span class="font-mono">{{ m.name }}</span>
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono">{{ m.name }}</span>
+                    <span
+                      v-if="m.name === activeWhisperFile"
+                      class="rounded-full bg-primary px-2 py-0.5 text-[10px] text-white"
+                    >
+                      使用中
+                    </span>
+                  </div>
                   <div class="text-[10px] text-text-muted">{{ describeWhisper(m.name).note }}</div>
                 </div>
               </div>
               <div class="flex shrink-0 items-center gap-3 text-xs">
                 <span class="text-text-muted">{{ formatSize(m.sizeMB) }}</span>
-                <button class="text-rose-500 hover:underline" @click="handleDeleteWhisper(m.name)">
+                <button
+                  class="text-rose-500 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                  :disabled="m.name === activeWhisperFile"
+                  @click="handleDeleteWhisper(m.name)"
+                >
                   削除
                 </button>
               </div>

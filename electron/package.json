@@ -10,7 +10,8 @@
     "dev": "npm run build && electron dist/main.js",
     "dev:packaged": "npm run build && SPEAKY_LOAD_BUILD=1 electron dist/main.js",
     "dist": "electron-builder --mac --arm64",
-    "prep:vendor:llama-model": "node ../scripts/prep-llama-model.mjs"
+    "prep:vendor:llama-model": "node ../scripts/prep-llama-model.mjs",
+    "prep:vendor:ollama-binary": "node ../scripts/prep-ollama-binary.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.16.0",
@@ -60,6 +61,10 @@
       {
         "from": "build-resources/ollama-data",
         "to": "backend-template/ollama-data"
+      },
+      {
+        "from": "build-resources/ollama-bin",
+        "to": "backend-template/ollama-bin"
       }
     ],
     "mac": {

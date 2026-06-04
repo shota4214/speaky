@@ -24,6 +24,17 @@ const BACKEND_ORIGIN = `http://${BACKEND_HOST}:${BACKEND_PORT}`
 // 初回 DL 込み + 起動余裕として 120 秒を確保する。
 const OLLAMA_SERVE_TIMEOUT_SEC = 120
 
+// 同梱する Ollama ランタイムのバージョン(GitHub tag そのまま "vX.Y.Z" 形式)。
+// scripts/prep-ollama-binary.mjs の OLLAMA_VERSION と必ず一致させること。
+// electron-ollama は getBinPath(version) = basePath/electron-ollama/<version>/<os>/<arch>
+// でバイナリを解決し、isDownloaded(version)=true なら GitHub API も DL も呼ばずに serve する。
+// 'latest' をやめて特定 tag を pin することで、初回起動でネットを一切叩かないようにする。
+const OLLAMA_VERSION = 'v0.30.4'
+
+// electron-ollama が basePath 配下に作るルートディレクトリ名(ライブラリのデフォルト)。
+// 同梱バイナリの userData への同期先・vendor 元のレイアウトでこの名前を使う。
+const ELECTRON_OLLAMA_DIR = 'electron-ollama'
+
 // アプリ終了時の Ollama サーバ stop() に許す最大待ち時間(ミリ秒)。
 // stop() がハングしてもアプリが終了不能にならないよう打ち切る。
 const OLLAMA_STOP_TIMEOUT_MS = 5_000
@@ -72,6 +83,10 @@ interface RuntimePlan {
     runtimeDir: string
     ollamaTemplateDir: string
     ollamaModelsDir: string
+    /** 同梱した Ollama ランタイムバイナリ一式(electron-ollama レイアウト)の vendor 元 */
+    ollamaBinTemplateDir: string
+    /** バイナリをコピーする userData 側のルート(electron-ollama の basePath 直下) */
+    ollamaBinTargetDir: string
     versionFile: string
     currentVersion: string
   } | null
@@ -114,6 +129,13 @@ function planRuntime(): RuntimePlan {
   const ollamaModelsDir = path.join(userData, 'ollama-data', 'models')
   const ollamaTemplateDir = path.join(templateDir, 'ollama-data')
 
+  // 同梱した Ollama ランタイムバイナリ。
+  //   vendor 元: <resources>/backend-template/ollama-bin/electron-ollama/<ver>/darwin/arm64/...
+  //   コピー先: <userData>/electron-ollama/<ver>/darwin/arm64/...
+  // electron-ollama({ basePath: userData }) の getBinPath(<ver>) がこのパスを指す。
+  const ollamaBinTemplateDir = path.join(templateDir, 'ollama-bin', ELECTRON_OLLAMA_DIR)
+  const ollamaBinTargetDir = path.join(userData, ELECTRON_OLLAMA_DIR)
+
   if (!existsSync(templateDir)) {
     throw new Error(`backend-template not found at ${templateDir}. Bundle is broken.`)
   }
@@ -152,6 +174,8 @@ function planRuntime(): RuntimePlan {
       runtimeDir,
       ollamaTemplateDir,
       ollamaModelsDir,
+      ollamaBinTemplateDir,
+      ollamaBinTargetDir,
       versionFile,
       currentVersion,
     },
@@ -169,6 +193,7 @@ function runRuntimeSync(sync: NonNullable<RuntimePlan['sync']>): void {
   )
   syncRuntime(sync.templateDir, sync.runtimeDir)
   syncOllamaModels(sync.ollamaTemplateDir, sync.ollamaModelsDir)
+  syncOllamaBinary(sync.ollamaBinTemplateDir, sync.ollamaBinTargetDir)
   writeFileSync(sync.versionFile, JSON.stringify({ version: sync.currentVersion }, null, 2))
   console.log(`[electron] runtime synced to ${sync.currentVersion}`)
 }
@@ -243,6 +268,36 @@ function syncOllamaModels(templateOllamaDir: string, targetModelsDir: string): v
   }
 
   console.log(`[electron] ollama models synced to ${targetModelsDir}`)
+}
+
+/**
+ * 同梱した Ollama ランタイムバイナリ一式を userData の electron-ollama 期待パスにコピーする。
+ *
+ * 目的:
+ *   electron-ollama の serve(version) は isDownloaded(version)=true なら GitHub API も DL も
+ *   呼ばず、ローカルバイナリを spawn するだけで起動する。ここで vendor 済みバイナリを
+ *   userData/electron-ollama/<ver>/<os>/<arch>/ に置いておけば、初回起動でもネット不要になる。
+ *
+ * 設計:
+ *   - template 側(<resources>/backend-template/ollama-bin/electron-ollama/<ver>/...)を
+ *     userData/electron-ollama/<ver>/... へ force コピーする。
+ *   - electron-ollama が DL すると executable に +x が付くが、cpSync はパーミッションを
+ *     保持するので vendor 時の +x がそのまま残る(prep スクリプトの cpSync も同様)。
+ *   - template 側に ollama-bin が無いケース(将来同梱を外す等)は no-op。
+ *     その場合は startOllama がフォールバックでネット DL に落ちる。
+ */
+function syncOllamaBinary(templateBinDir: string, targetBinDir: string): void {
+  if (!existsSync(templateBinDir)) {
+    console.log('[electron] no bundled ollama binary in template; skipping ollama-bin sync')
+    return
+  }
+  mkdirSync(targetBinDir, { recursive: true })
+  // <ver>/<os>/<arch>/... の構造を丸ごと反映。force で版更新時も上書きする。
+  // 注意: この同期は app version(version.json)で gate される。OLLAMA_VERSION だけを
+  // 上げて app version を据え置くと新バイナリが再同期されず、isDownloaded=false →
+  // serve() がネット DL フォールバックになる。リリースのたびに app version も上げること。
+  cpSync(templateBinDir, targetBinDir, { recursive: true, force: true, errorOnExist: false })
+  console.log(`[electron] ollama binary synced to ${targetBinDir}`)
 }
 
 /**
@@ -333,9 +388,23 @@ async function startOllama(ollamaModelsDir: string | null): Promise<void> {
     return
   }
 
-  const metadata = await ollamaManager.getMetadata('latest')
-  console.log(`[ollama] starting bundled Ollama ${metadata.version}`)
-  await ollamaManager.serve(metadata.version, {
+  // pin した OLLAMA_VERSION でローカルバイナリの有無を確認する。
+  // getMetadata('latest')(GitHub API = ネット必須)を避けるのがオフライン化の肝。
+  // 同梱バイナリの userData コピーが効いていれば isDownloaded=true になり、
+  // serve() は getMetadata も DL も呼ばずにローカルバイナリを spawn するだけになる。
+  const downloaded = await ollamaManager.isDownloaded(OLLAMA_VERSION)
+  if (downloaded) {
+    console.log(`[ollama] starting bundled Ollama ${OLLAMA_VERSION} (offline, no network)`)
+  } else {
+    // フォールバック: 同梱コピーが無い/壊れている想定外ケース。
+    // serve() が内部で getMetadata + download に落ちる(オフラインなら失敗するが、
+    // それは同梱バイナリが欠落している異常時のみ)。
+    console.warn(
+      `[ollama] bundled binary for ${OLLAMA_VERSION} not found; ` +
+        `serve() will fall back to network download (requires internet)`,
+    )
+  }
+  await ollamaManager.serve(OLLAMA_VERSION, {
     timeoutSec: OLLAMA_SERVE_TIMEOUT_SEC,
     serverLog: (msg) => process.stdout.write(`[ollama] ${msg}`),
     downloadLog: (percent, msg) => {

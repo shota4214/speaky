@@ -697,6 +697,13 @@ async function handleDeleteAll() {
           <p class="mt-1 text-xs text-text-muted">
             ※ 未取得モデルは下の「インストール済みモデル」セクションの「+ 取得」ボタンで先に DL
           </p>
+          <p
+            class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            💡 精度重視なら <strong>Gemma 9B</strong> または <strong>Qwen 14B</strong> がおすすめ。
+            <strong>Llama 3.2 3B</strong>
+            は軽量・高速ですが、英文の添削や日本語→英語の翻訳が不正確になることがあり、誤った添削・誤訳が表示される場合があります。
+          </p>
         </div>
       </div>
     </BaseCard>

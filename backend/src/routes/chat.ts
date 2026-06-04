@@ -73,6 +73,22 @@ function isFeedback(x: unknown): x is Feedback {
   )
 }
 
+// ひらがな / カタカナ / 漢字。explanation は設計上日本語なので判定対象に含めない。
+const JP_CHAR_REGEX = /[぀-ゟ゠-ヿ一-龯]/
+
+/**
+ * normal モード(英語入力)の添削が妥当かを判定する。
+ * 小型モデル(Llama 3.2 3B 等)は英語入力なのに「私の名前はショータです →
+ * 私の名前はShotaです」のような日本語の添削を幻覚することがある。
+ * 添削対象の英文(corrected)に日本語が混ざっていたらデタラメ添削とみなして破棄する。
+ * (explanation は日本語が正常なので見ない。user_said も補助的にチェックする)
+ */
+function isValidEnglishFeedback(fb: Feedback): boolean {
+  if (JP_CHAR_REGEX.test(fb.corrected)) return false
+  if (JP_CHAR_REGEX.test(fb.user_said)) return false
+  return true
+}
+
 function isVocabItem(x: unknown): x is VocabItem {
   if (typeof x !== 'object' || x === null) return false
   const r = x as Record<string, unknown>
@@ -89,7 +105,15 @@ function parseChatReply(content: string, fallbackMode: Mode): ChatReply | null {
     }
     const replyJa = typeof parsed.reply_ja === 'string' ? parsed.reply_ja : ''
 
-    const feedback = isFeedback(parsed.feedback) ? parsed.feedback : null
+    let feedback = isFeedback(parsed.feedback) ? parsed.feedback : null
+    // 英語入力なのに日本語の添削が返ってきたら(小型モデルの幻覚)破棄する。
+    if (feedback && !isValidEnglishFeedback(feedback)) {
+      console.warn('[chat] dropping feedback with Japanese in corrected/user_said:', {
+        user_said: feedback.user_said,
+        corrected: feedback.corrected,
+      })
+      feedback = null
+    }
     const vocabulary: VocabItem[] = Array.isArray(parsed.vocabulary)
       ? parsed.vocabulary
           .filter(isVocabItem)

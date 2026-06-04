@@ -340,7 +340,15 @@ function syncRuntime(templateDir: string, runtimeDir: string): void {
     rmSync(runtimeDir, { recursive: true, force: true })
   }
   mkdirSync(runtimeDir, { recursive: true })
-  cpSync(templateDir, runtimeDir, { recursive: true, force: false })
+  // ollama-bin(同梱 Ollama ランタイム ~450MB)は backend-runtime には不要。
+  // syncOllamaBinary が userData/electron-ollama に別途コピーするので、ここで
+  // backend-runtime にも複製するとディスクと起動時間が無駄になる。除外する。
+  const ollamaBinPath = path.join(templateDir, 'ollama-bin')
+  cpSync(templateDir, runtimeDir, {
+    recursive: true,
+    force: false,
+    filter: (src) => src !== ollamaBinPath && !src.startsWith(ollamaBinPath + path.sep),
+  })
 
   // モデルを復元
   if (hasBackup) {
@@ -386,6 +394,25 @@ async function startOllama(ollamaModelsDir: string | null): Promise<void> {
   if (await ollamaManager.isRunning()) {
     console.log('[ollama] existing instance detected; reusing it')
     return
+  }
+
+  // packaged: 同梱バイナリが userData にコピーされているか version gate と独立に保証する。
+  // runRuntimeSync は app version 一致時(needsSync=false)に走らないため、既存 userData に
+  // 同 version の runtime があると syncOllamaBinary がスキップされ、新規同梱した Ollama が
+  // userData に来ずネット DL フォールバックに落ちてしまう。ここでターゲットの有無を直接見て、
+  // 無ければ同梱物からコピーする(オフライン初回起動の保証を version gate から切り離す)。
+  if (isPackaged) {
+    const targetBinDir = path.join(app.getPath('userData'), ELECTRON_OLLAMA_DIR)
+    const templateBinDir = path.join(
+      process.resourcesPath,
+      'backend-template',
+      'ollama-bin',
+      ELECTRON_OLLAMA_DIR,
+    )
+    if (!(await ollamaManager.isDownloaded(OLLAMA_VERSION)) && existsSync(templateBinDir)) {
+      console.log('[ollama] bundled binary missing in userData; syncing from template')
+      syncOllamaBinary(templateBinDir, targetBinDir)
+    }
   }
 
   // pin した OLLAMA_VERSION でローカルバイナリの有無を確認する。

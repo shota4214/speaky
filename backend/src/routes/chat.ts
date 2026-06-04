@@ -82,9 +82,12 @@ function isVocabItem(x: unknown): x is VocabItem {
 function parseChatReply(content: string, fallbackMode: Mode): ChatReply | null {
   try {
     const parsed = JSON.parse(content) as Record<string, unknown>
-    if (typeof parsed.reply_en !== 'string' || typeof parsed.reply_ja !== 'string') {
+    // reply_en は必須。reply_ja は欠落/非文字列でも parse 失敗にせず空文字に正規化する。
+    // (小型モデルが reply_ja を省略するケースを救い、後段の en→ja 補完に回すため)
+    if (typeof parsed.reply_en !== 'string') {
       return null
     }
+    const replyJa = typeof parsed.reply_ja === 'string' ? parsed.reply_ja : ''
 
     const feedback = isFeedback(parsed.feedback) ? parsed.feedback : null
     const vocabulary: VocabItem[] = Array.isArray(parsed.vocabulary)
@@ -105,7 +108,7 @@ function parseChatReply(content: string, fallbackMode: Mode): ChatReply | null {
 
     return {
       reply_en: parsed.reply_en,
-      reply_ja: parsed.reply_ja,
+      reply_ja: replyJa,
       feedback,
       vocabulary,
       mode,
@@ -278,6 +281,40 @@ async function translateToNaturalEnglish(
   return lastTranslated
 }
 
+/**
+ * 英文を自然な日本語に翻訳する。会話 LLM が reply_ja を省略した場合の補完用。
+ * 「日本語訳を必ず表示」設定を保証するため、空のときだけ呼ぶ。
+ */
+const EN_TO_JA_SYSTEM_PROMPT = `You are a translator. Translate the given English sentence into natural, conversational Japanese.
+
+Rules:
+- Output ONLY the Japanese translation. No quotes, no preamble, no explanation, no romaji.
+- Keep it natural and friendly, matching spoken Japanese.`
+
+async function translateEnglishToJapanese(
+  englishText: string,
+  options: { model?: string },
+): Promise<string> {
+  const messages: OllamaChatMessage[] = [
+    { role: 'system', content: EN_TO_JA_SYSTEM_PROMPT },
+    { role: 'user', content: englishText },
+  ]
+  try {
+    const ollamaRes = await chatWithOllama(messages, {
+      model: options.model,
+      timeoutMs: 60_000,
+      temperature: 0.3,
+      topP: 0.9,
+      numPredict: 300,
+      jsonFormat: false,
+    })
+    return stripTranslationPreamble(ollamaRes.message?.content ?? '')
+  } catch (e) {
+    console.warn('[chat] en→ja fallback translation failed:', e)
+    return ''
+  }
+}
+
 export const chatRouter = Router()
 
 chatRouter.post('/chat', async (req: Request, res: Response) => {
@@ -363,6 +400,14 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       lastRawContent = ollamaRes.message?.content ?? ''
       const reply = parseChatReply(lastRawContent, mode)
       if (reply) {
+        // 会話 LLM が reply_ja を省略することがある(特に 3B)。
+        // フロントの「日本語訳を必ず表示」を保証するため、reply_en があるのに
+        // reply_ja が空なら en→ja で補完する。
+        if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
+          reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {
+            model: context.model,
+          })
+        }
         return res.json(reply)
       }
       console.warn(
@@ -437,7 +482,14 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
       })
       lastRawContent = ollamaRes.message?.content ?? ''
       const reply = parseChatReply(lastRawContent, mode)
-      if (reply) return res.json(reply)
+      if (reply) {
+        if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
+          reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {
+            model: context.model,
+          })
+        }
+        return res.json(reply)
+      }
       console.warn(
         `[chat/opening] JSON parse failed (attempt ${attempt}/${MAX_RETRIES}, numPredict=${numPredict}). raw=`,
         lastRawContent.slice(0, 200),

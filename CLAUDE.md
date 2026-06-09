@@ -70,7 +70,26 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 
 - **未署名のため macOS Sequoia で「壊れている」エラー**が出る（AirDrop/USB でも回避不可）。
   回避: 受け取り手が `xattr -cr /Applications/Speaky.app` を実行、または **Apple Developer Program($99/年)で署名・公証**。
-- ユーザーは Apple Developer 加入を検討中だが手続き未完。
+- **Apple Developer Program 個人登録済み (Team ID: `DQ7HKL3WWX`)**。`feat/codesign-notarize` で署名・公証フロー実装。実機ビルドでの検証が次の必須タスク。
+
+## 署名・公証（Developer ID）の構成
+
+- **署名 ID**: `Developer ID Application: SHOTA SUZUKI (DQ7HKL3WWX)` (login keychain)
+- **公証認証**: keychain profile 名 `speaky-notarize` に保存済み (notarytool store-credentials)
+- **build hooks** (`electron/scripts/`):
+  - `afterPack-sign-binaries.cjs` … `backend-template/` 配下の同梱 Mach-O を個別署名 (chmod +x 復活 + 既知の実行ファイル名 fallback あり)
+  - `afterSign-notarize.cjs` … `.app` を zip→notarytool submit→stapler staple。失敗時は notarytool log を自動取得
+  - `afterAllArtifactBuild-staple-dmg.cjs` … DMG も notarize→staple (オフライン環境での Gatekeeper 対策)
+- **entitlements** (`electron/build/entitlements.mac.plist`): audio-input / allow-jit / allow-unsigned-executable-memory / allow-dyld-environment-variables / disable-library-validation。同梱の llama.cpp / whisper.cpp / ollama 系を hardened runtime 下で動かすために必要。
+- **環境変数で挙動を上書き可**:
+  - `SPEAKY_SKIP_NOTARIZE=1` … 署名はするが公証をスキップ (ローカル動作確認用。初回起動時 Gatekeeper で弾かれる)
+  - `SPEAKY_NOTARY_PROFILE=xxx` … keychain profile 名を上書き
+- **完全未署名 DMG** (旧来挙動) でビルドしたい場合は:
+  ```bash
+  npm run dist -w electron -- --config.mac.identity=null \
+    --config.mac.hardenedRuntime=false --config.mac.entitlements=null
+  ```
+- **ビルド時間の目安**: 通常の `npm run dist` (5〜10分) に加え、公証申請が `.app` と `.dmg` で **各 5〜15 分** 走るため、**合計で 15〜40 分程度**かかる。「ビルドが固まった？」ではなく公証待ち。`afterSign-notarize.cjs` / `afterAllArtifactBuild-staple-dmg.cjs` のログを見れば進行状況がわかる。
 
 ## アーキテクチャの要点（ハマりどころ）
 
@@ -99,6 +118,7 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 
 ## バックログ（任意・未着手）
 
-- Apple Developer ID 署名・公証（Gatekeeper 問題の恒久解決）
+- 署名・公証ビルドの**実機検証**（`feat/codesign-notarize` ブランチ）: `npm run dist` で署名・公証付き DMG が生成され、別 Mac で `xattr -cr` 無しで起動できることを確認
+- **同梱 dylib/.so の Developer ID 再署名 → `disable-library-validation` を外す**（entitlements 緩和の解消。今は llama.cpp/whisper.cpp/ollama 由来の他チーム署名 dylib があるため許容）
 - 応答速度の高速化（ストリーミング TTS 等。検討のみ）
 - Web アプリ化（検討したが完全ローカルの売りが消えるため見送り）

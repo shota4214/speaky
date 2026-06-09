@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Speaky: Electron アプリ本体の entitlements。
+    同梱ネイティブバイナリ (whisper-cli / ollama / llama-server / ffmpeg) が
+    hardened runtime 下で動くために、JIT・unsigned memory・library validation 無効化を許可する。
+    マイク入力は録音機能で使用。
+  -->
+
+  <!-- マイク入力(録音機能で使用) -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!-- JIT 許可 (V8 / 一部のネイティブ依存) -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- 未署名の実行メモリを許可 (whisper.cpp / llama.cpp 系で必要なケースあり) -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- 同梱バイナリの dyld 環境変数を許可 (ollama-bin の DYLD_LIBRARY_PATH 等) -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <!--
+    ライブラリ署名検証を無効化。
+    同梱した複数の .dylib / .so を Electron 本体から読み込むために必要。
+    将来全 dylib を Developer ID で署名し直しても、別 Team の dylib を読む場合はこれが必要。
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

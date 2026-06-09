@@ -67,15 +67,23 @@
         "to": "backend-template/ollama-bin"
       }
     ],
+    "afterPack": "scripts/afterPack-sign-binaries.cjs",
+    "afterSign": "scripts/afterSign-notarize.cjs",
+    "afterAllArtifactBuild": "scripts/afterAllArtifactBuild-staple-dmg.cjs",
     "mac": {
       "target": [
         "dmg"
       ],
       "category": "public.app-category.education",
       "icon": "build/icon.png",
-      "hardenedRuntime": false,
-      "identity": null,
-      "entitlements": null
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "identity": "Developer ID Application: SHOTA SUZUKI (DQ7HKL3WWX)",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "発音や会話の練習のために、マイクで音声を録音します。録音はすべてMac内で処理され、外部に送信されません。"
+      }
     },
     "dmg": {
       "writeUpdateInfo": false

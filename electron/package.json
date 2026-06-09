@@ -78,7 +78,7 @@
       "icon": "build/icon.png",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "identity": "Developer ID Application: SHOTA SUZUKI (DQ7HKL3WWX)",
+      "identity": "SHOTA SUZUKI (DQ7HKL3WWX)",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {

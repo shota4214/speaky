@@ -100,11 +100,17 @@ async function afterPack(context) {
     return;
   }
 
-  // 署名 ID は package.json の build.mac.identity を真実とする (二重管理を避ける)
-  const identity = macConfig.identity;
-  if (!identity || typeof identity !== 'string') {
-    throw new Error(`[afterPack] mac.identity が文字列で設定されていません: ${identity}`);
+  // 署名 ID は package.json の build.mac.identity を真実とする (二重管理を避ける)。
+  // electron-builder の規約: identity は "Developer ID Application:" プレフィクスを付けない名前のみ
+  // (electron-builder 側で自動付与してキーチェーン検索する)。
+  // 一方 codesign コマンドはフルネームを推奨するため、無ければここで付与する。
+  const identityRaw = macConfig.identity;
+  if (!identityRaw || typeof identityRaw !== 'string') {
+    throw new Error(`[afterPack] mac.identity が文字列で設定されていません: ${identityRaw}`);
   }
+  const identity = identityRaw.startsWith('Developer ID')
+    ? identityRaw
+    : `Developer ID Application: ${identityRaw}`;
 
   const appOutDir = context.appOutDir; // 例: .../dist-app/mac-arm64
   const appName = `${context.packager.appInfo.productFilename}.app`;

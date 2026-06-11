@@ -44,5 +44,5 @@ onMounted(async () => {
     <router-view />
   </AppShell>
   <router-view v-else />
-  <UpdateNotification v-if="!isMinimal" />
+  <UpdateNotification v-show="!isMinimal" />
 </template>

@@ -2,7 +2,10 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   checkForUpdate,
+  getDismissedVersion,
   getSkippedVersion,
+  isForceCheckRequested,
+  setDismissedVersion,
   setSkippedVersion,
   type UpdateInfo,
 } from '../services/update-checker'
@@ -20,7 +23,9 @@ onMounted(() => {
       const result = await checkForUpdate({
         currentVersion: __APP_VERSION__,
         skippedVersion: getSkippedVersion(),
+        dismissedVersion: getDismissedVersion(),
         signal: controller.signal,
+        force: isForceCheckRequested(),
       })
       if (result) info.value = result
     } catch (e) {
@@ -48,6 +53,9 @@ function openReleaseNotes() {
 }
 
 function dismiss() {
+  if (!info.value) return
+  // 同セッション中の再表示を防ぐ。次回アプリ起動時にはまた通知される。
+  setDismissedVersion(info.value.version)
   info.value = null
 }
 
@@ -79,6 +87,9 @@ function skip() {
           <div class="text-sm font-semibold text-text">
             新バージョン {{ info.version }} が利用可能です
           </div>
+          <p v-if="info.releasedAt" class="mt-0.5 text-[10px] text-text-muted">
+            {{ info.releasedAt }} リリース
+          </p>
           <p v-if="info.summary" class="mt-1 line-clamp-3 text-xs text-text-muted">
             {{ info.summary }}
           </p>

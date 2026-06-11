@@ -175,6 +175,32 @@ describe('checkForUpdate', () => {
     })
     expect(result?.version).toBe('0.0.8')
   })
+
+  it('force=true does NOT advance the throttle (so a subsequent normal launch still checks)', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(VALID_PAYLOAD),
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    await checkForUpdate({
+      currentVersion: '0.0.7',
+      skippedVersion: null,
+      now: 1_000_000,
+      force: true,
+    })
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    // throttle が更新されていないので、すぐ後の通常起動でもフェッチが走る
+    expect(localStorage.getItem('speaky:update:lastCheckedAt')).toBeNull()
+
+    await checkForUpdate({
+      currentVersion: '0.0.7',
+      skippedVersion: null,
+      now: 1_000_001,
+    })
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('skip / dismiss persistence', () => {

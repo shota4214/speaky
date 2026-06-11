@@ -102,7 +102,9 @@ export async function checkForUpdate(options: {
 
   // shape 検証まで通過した時点で「直近チェック済み」扱いにする。
   // (HTTP 失敗 / JSON 破損 / shape 不一致は throttle を更新せず、次回起動で再試行する)
-  setLastCheckedAt(now)
+  // force モードでは throttle を進めない: dev で表示確認した直後の通常起動が
+  // 24h 黙ってしまう副作用を避けるため。
+  if (!options.force) setLastCheckedAt(now)
 
   if (options.force) return payload
 

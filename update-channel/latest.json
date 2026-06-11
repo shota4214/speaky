@@ -1,7 +1,7 @@
 {
-  "version": "0.0.7",
-  "releasedAt": "2026-06-11",
-  "downloadUrl": "https://github.com/shota4214/speaky",
-  "releaseNotesUrl": "https://github.com/shota4214/speaky/releases",
-  "summary": "アプリ内バージョン通知の初期リリース。新版リリース時はこのファイルを更新してください。"
+  "version": "0.0.8",
+  "releasedAt": "2026-06-12",
+  "downloadUrl": "https://drive.google.com/file/d/1WsBLc6_fRqJM_lSM4KSeygxgFh0g6qGl/view",
+  "releaseNotesUrl": "https://github.com/shota4214/speaky/releases/tag/v0.0.8",
+  "summary": "Whisper の韓国語誤認識を修正、アプリ内バージョン通知を追加"
 }

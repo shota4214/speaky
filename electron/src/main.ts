@@ -561,9 +561,19 @@ function createMainWindow(): BrowserWindow {
     },
   })
 
-  // 外部リンクは OS の既定ブラウザで開く
+  // 外部リンクは OS の既定ブラウザで開く。
+  // https のみ許可(多層防御): javascript: / file: / custom-scheme 等で意図せず
+  // 任意ハンドラに渡らないようにする。
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    try {
+      if (new URL(url).protocol === 'https:') {
+        void shell.openExternal(url)
+      } else {
+        console.warn('[electron] blocked non-https external open:', url)
+      }
+    } catch {
+      console.warn('[electron] blocked invalid external URL:', url)
+    }
     return { action: 'deny' }
   })
 

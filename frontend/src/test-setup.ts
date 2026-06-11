@@ -1,9 +1,8 @@
 import 'fake-indexeddb/auto'
 
-// Minimal in-memory localStorage shim for Node test environment
-if (typeof globalThis.localStorage === 'undefined') {
+function createMemoryStorage(): Storage {
   const store = new Map<string, string>()
-  globalThis.localStorage = {
+  return {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => {
       store.set(key, String(value))
@@ -19,4 +18,12 @@ if (typeof globalThis.localStorage === 'undefined') {
     },
     key: (i: number) => Array.from(store.keys())[i] ?? null,
   } as Storage
+}
+
+// Minimal in-memory localStorage / sessionStorage shim for Node test environment
+if (typeof globalThis.localStorage === 'undefined') {
+  globalThis.localStorage = createMemoryStorage()
+}
+if (typeof globalThis.sessionStorage === 'undefined') {
+  globalThis.sessionStorage = createMemoryStorage()
 }

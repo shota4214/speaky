@@ -13,7 +13,12 @@ import {
 import { useConversationStore } from '../stores/conversation'
 import { useProfileStore } from '../stores/profile'
 import { useSettingsStore } from '../stores/settings'
-import { detectInputMode, isTooShort, looksLikeHallucination } from '../utils/language-detection'
+import {
+  detectInputMode,
+  isTooShort,
+  looksLikeHallucination,
+  looksLikeWrongLanguage,
+} from '../utils/language-detection'
 import { useAudioRecorder } from './useAudioRecorder'
 import { getDefaultVoicePreference, useTextToSpeech } from './useTextToSpeech'
 
@@ -188,8 +193,12 @@ export function useConversationLoop() {
         }
 
         if (stopRequested.value) break
-        if (isTooShort(trans.text) || looksLikeHallucination(trans.text)) {
-          console.debug('[loop] dropped (short/hallucination):', trans.text)
+        if (
+          isTooShort(trans.text) ||
+          looksLikeHallucination(trans.text) ||
+          looksLikeWrongLanguage(trans.text)
+        ) {
+          console.debug('[loop] dropped (short/hallucination/wrong-lang):', trans.text)
           continue
         }
 

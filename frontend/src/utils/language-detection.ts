@@ -32,3 +32,11 @@ export function looksLikeHallucination(text: string): boolean {
 export function isTooShort(text: string, minChars = 3): boolean {
   return text.trim().length < minChars
 }
+
+// ハングル(韓国語)文字。アプリは日英のみ扱うので、混入していたら誤認識として
+// LLM に流さない。backend 側で言語強制リトライ済みだが、ここはその最終保険。
+const KOREAN_REGEX = /[가-힯ᄀ-ᇿ㄰-㆏]/
+
+export function looksLikeWrongLanguage(text: string): boolean {
+  return KOREAN_REGEX.test(text)
+}

@@ -140,6 +140,39 @@ function detectLanguage(text: string): Language {
   return 'unknown'
 }
 
+// ハングル(韓国語)文字。日本語音声を Whisper が韓国語と誤判定すると出る。
+// アプリの対象は日本語・英語のみなので、ハングルが混入していれば誤認識とみなす。
+// - Hangul Syllables: U+AC00–U+D7AF
+// - Hangul Jamo: U+1100–U+11FF
+// - Hangul Compatibility Jamo: U+3130–U+318F
+const KOREAN_REGEX = /[가-힯ᄀ-ᇿ㄰-㆏]/
+
+function hasKorean(text: string): boolean {
+  return KOREAN_REGEX.test(text)
+}
+
+async function runWhisper(
+  wavPath: string,
+  modelName: WhisperModelName,
+  language: 'auto' | 'ja' | 'en',
+): Promise<string> {
+  const result = await nodewhisper(wavPath, {
+    modelName,
+    autoDownloadModelName: modelName,
+    removeWavFileAfterTranscription: false,
+    whisperOptions: {
+      language,
+      outputInJson: false,
+      outputInText: false,
+      outputInVtt: false,
+      outputInSrt: false,
+      translateToEnglish: false,
+      wordTimestamps: false,
+    } as never,
+  })
+  return extractText(result)
+}
+
 function extractText(raw: unknown): string {
   if (typeof raw !== 'string') return ''
   return raw
@@ -187,27 +220,43 @@ transcribeRouter.post(
       // ffmpeg を介さず元ファイルを渡しても良いが、不正な .wav ヘッダだけ守るため
       // 拡張子に関わらず変換する。
       wavPath = await convertAudioToWav(filePath)
-      const result = await nodewhisper(wavPath, {
-        modelName,
-        autoDownloadModelName: modelName,
-        removeWavFileAfterTranscription: false,
-        whisperOptions: {
-          language: 'auto',
-          outputInJson: false,
-          outputInText: false,
-          outputInVtt: false,
-          outputInSrt: false,
-          translateToEnglish: false,
-          wordTimestamps: false,
-        } as never,
-      })
 
-      const text = extractText(result)
+      // 1パス目: 言語自動判定。日本語と韓国語は音素が近く、短い発話や雑音時に
+      // ハングルとして返ってくることがある。アプリは日英のみ扱うので、その場合は
+      // 言語を強制した再認識で救済する。
+      let text = await runWhisper(wavPath, modelName, 'auto')
+      let usedLanguage: 'auto' | 'ja' | 'en' = 'auto'
+
+      if (hasKorean(text)) {
+        console.warn(
+          `[transcribe] Korean chars in auto pass; retrying with language=ja. text="${text.slice(0, 80)}"`,
+        )
+        const jaText = await runWhisper(wavPath, modelName, 'ja')
+        if (!hasKorean(jaText) && jaText.trim().length > 0) {
+          text = jaText
+          usedLanguage = 'ja'
+        } else {
+          console.warn(
+            `[transcribe] ja pass still bad; retrying with language=en. ja="${jaText.slice(0, 80)}"`,
+          )
+          const enText = await runWhisper(wavPath, modelName, 'en')
+          if (!hasKorean(enText) && enText.trim().length > 0) {
+            text = enText
+            usedLanguage = 'en'
+          } else {
+            console.warn(
+              `[transcribe] all passes produced Korean / empty; dropping result. en="${enText.slice(0, 80)}"`,
+            )
+            text = ''
+          }
+        }
+      }
+
       const language = detectLanguage(text)
       const durationMs = Date.now() - startedAt
 
       console.log(
-        `[transcribe] model=${modelName} ${durationMs}ms lang=${language} text="${text.slice(0, 80)}"`,
+        `[transcribe] model=${modelName} ${durationMs}ms lang=${language} forced=${usedLanguage} text="${text.slice(0, 80)}"`,
       )
 
       return res.json({ text, language, durationMs, model: modelName })

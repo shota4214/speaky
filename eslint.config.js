@@ -34,7 +34,8 @@ export default tseslint.config(
   {
     files: ['frontend/**/*.{ts,vue}'],
     languageOptions: {
-      globals: { ...globals.browser },
+      // __APP_VERSION__ は vite.config.ts の define で注入される compile-time 定数。
+      globals: { ...globals.browser, __APP_VERSION__: 'readonly' },
     },
   },
   {

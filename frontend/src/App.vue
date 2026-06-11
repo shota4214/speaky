@@ -2,6 +2,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from './components/AppShell.vue'
+import UpdateNotification from './components/UpdateNotification.vue'
 import { conversationsRepo } from './db/repos/conversations'
 import { useSettingsStore } from './stores/settings'
 
@@ -43,4 +44,5 @@ onMounted(async () => {
     <router-view />
   </AppShell>
   <router-view v-else />
+  <UpdateNotification v-if="!isMinimal" />
 </template>

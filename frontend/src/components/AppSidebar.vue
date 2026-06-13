@@ -14,6 +14,9 @@ const mainItems: NavItem[] = [
   { to: '/profile', icon: '👤', label: 'プロフィール' },
   { to: '/settings', icon: '⚙️', label: '設定' },
 ]
+
+// vite.config.ts の define で root package.json から注入される。
+const appVersion = __APP_VERSION__
 </script>
 
 <template>
@@ -34,5 +37,7 @@ const mainItems: NavItem[] = [
         <span>{{ item.label }}</span>
       </RouterLink>
     </nav>
+
+    <div class="mt-auto pt-4 text-center text-xs text-text-muted">Speaky v{{ appVersion }}</div>
   </aside>
 </template>

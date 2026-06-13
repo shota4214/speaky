@@ -86,7 +86,8 @@
       }
     },
     "dmg": {
-      "writeUpdateInfo": false
+      "writeUpdateInfo": false,
+      "artifactName": "${productName}-v${version}.${ext}"
     }
   },
   "dependencies": {

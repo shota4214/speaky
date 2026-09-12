@@ -47,6 +47,22 @@ class FakeSourceNode {
   }
 }
 
+/**
+ * getUserMedia / AudioContext.resume を「テストが開けるまで待たせる」ためのゲート。
+ * null なら即座に解決する(通常のテスト)。
+ */
+let gumGate: Promise<void> | null = null
+let resumeGate: Promise<void> | null = null
+
+/** ゲートとその開錠関数を作る。 */
+function makeGate(): { gate: Promise<void>; open: () => void } {
+  let open: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { gate, open }
+}
+
 class FakeAudioContext {
   static instances: FakeAudioContext[] = []
   state: 'running' | 'suspended' | 'closed' = 'running'
@@ -64,6 +80,7 @@ class FakeAudioContext {
     return s
   }
   async resume() {
+    if (resumeGate) await resumeGate
     this.state = 'running'
   }
   async close() {
@@ -103,6 +120,8 @@ beforeEach(() => {
   currentAmplitude = 0
   getUserMediaCalls = 0
   lastStream = null
+  gumGate = null
+  resumeGate = null
   FakeAudioContext.instances = []
   FakeMediaRecorder.instances = []
 
@@ -112,6 +131,7 @@ beforeEach(() => {
     mediaDevices: {
       getUserMedia: async () => {
         getUserMediaCalls++
+        if (gumGate) await gumGate
         lastStream = new FakeMediaStream()
         return lastStream
       },
@@ -343,6 +363,120 @@ describe('useAudioRecorder', () => {
     await advance(1_000)
     await second
     rec.release()
+  })
+
+  it('getUserMedia の解決待ち中に release すると、後から来た stream も解放される', async () => {
+    // 権限シート表示中 / 起動直後の 100-400ms に画面を離れた状況。
+    const { gate, open } = makeGate()
+    gumGate = gate
+
+    const rec = useAudioRecorder({ silenceDurationMs: 300, minRecordingMs: 100 })
+    const started = rec.start()
+    // 未処理の rejection にならないよう、ここで先にハンドラを付けておく
+    let settled = 'pending'
+    void started.then(
+      () => {
+        settled = 'resolved'
+      },
+      (e: Error) => {
+        settled = e.name
+      },
+    )
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(rec.state.value).toBe('requestingPermission')
+    expect(getUserMediaCalls).toBe(1)
+
+    // 会話終了 / アンマウント。この時点では stream がまだ無いので
+    // release からは何も止められない。
+    rec.release()
+
+    // ここで getUserMedia が解決する
+    open()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(settled).toBe('AbortError')
+    // 遅れて届いたトラックが止まっていること(= マイクが点きっぱなしにならない)
+    expect(lastStream).not.toBeNull()
+    expect(lastStream!.getAudioTracks().every((t) => t.readyState === 'ended')).toBe(true)
+    // 録音は始まっていない(MediaRecorder も監視タイマーも作られない)
+    expect(FakeMediaRecorder.instances).toHaveLength(0)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(rec.state.value).toBe('idle')
+    // 「マイクの権限取得に失敗」ではない(中断であってエラーではない)
+    expect(rec.error.value).toBeNull()
+  })
+
+  it('resume の解決待ち中に release しても TypeError にならない', async () => {
+    const rec = useAudioRecorder({ silenceDurationMs: 300, minRecordingMs: 100 })
+    const first = rec.start()
+    await vi.advanceTimersByTimeAsync(0)
+    await advance(1_000)
+    await first
+
+    // macOS でよくある「2 ターン目に suspended へ落ちている」状況を再現し、
+    // resume の解決を待たせる。
+    const ctx = FakeAudioContext.instances[0]!
+    ctx.state = 'suspended'
+    const { gate, open } = makeGate()
+    resumeGate = gate
+
+    const second = rec.start()
+    let settled = 'pending'
+    void second.then(
+      () => {
+        settled = 'resolved'
+      },
+      (e: Error) => {
+        settled = e.name
+      },
+    )
+    await vi.advanceTimersByTimeAsync(0)
+
+    rec.release()
+    open()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // audioContext を await 越しに触っていたら 'TypeError' になる
+    expect(settled).toBe('AbortError')
+    expect(rec.state.value).toBe('idle')
+    expect(rec.error.value).toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('録音中に release すると待機中の Promise が中断として決着する', async () => {
+    const rec = useAudioRecorder({
+      silenceDurationMs: 60_000,
+      minRecordingMs: 100,
+      maxRecordingMs: 60_000,
+    })
+    const promise = rec.start()
+    let settled = 'pending'
+    void promise.then(
+      () => {
+        settled = 'resolved'
+      },
+      (e: Error) => {
+        settled = e.name
+      },
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    expect(rec.state.value).toBe('recording')
+
+    // stop() を挟まずにいきなり解放する(会話終了 / アンマウントの最短経路)
+    rec.release()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(settled).toBe('AbortError')
+    expect(rec.state.value).toBe('idle')
+    expect(vi.getTimerCount()).toBe(0)
+    expect(lastStream!.getAudioTracks()[0]!.readyState).toBe('ended')
+    // 遅れて onstop が発火して state を 'stopped' に書き戻さないよう、
+    // ハンドラが外れていること
+    expect(FakeMediaRecorder.instances[0]!.onstop).toBeNull()
+
+    await advance(1_000)
+    expect(rec.state.value).toBe('idle')
   })
 
   it('release は冪等で、録音していないときでも安全', () => {

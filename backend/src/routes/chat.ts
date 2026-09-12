@@ -68,9 +68,16 @@ const OPENING_ATTEMPTS: AttemptSampling[] = [
 
 /**
  * 会話経路の first-token 予算。
- * 会話 2 ターン目以降はモデルが keep_alive でロード済みなので 60 秒で十分。
+ *
+ * 注意: 非ストリーミング経路では応答が一括で返るため、この予算は
+ * 「最初のトークンまで」ではなく「生成完了まで」に効く。
+ * 640 トークンの生成は低速機で 40〜60 秒かかり、keep_alive 失効後や
+ * メモリ逼迫でモデルが evict されているとコールドロードが上乗せされる。
+ * よって v1.1.0 と同じ 90 秒を維持する。
+ * ストリーミング導入後は first-token と全体が分離するため、
+ * ここを 60 秒へ下げ、stall 予算側で停止を検出する。
  */
-const CHAT_FIRST_TOKEN_TIMEOUT_MS = 60_000
+const CHAT_FIRST_TOKEN_TIMEOUT_MS = 90_000
 
 /**
  * opening だけは別枠で長め。セッション最初の LLM 呼び出しであり、

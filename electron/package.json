@@ -48,7 +48,7 @@
           "!nodejs-whisper/cpp/whisper.cpp/tests/**",
           "!nodejs-whisper/cpp/whisper.cpp/samples/**",
           "!nodejs-whisper/cpp/whisper.cpp/models/ggml-*.bin",
-          "nodejs-whisper/cpp/whisper.cpp/models/ggml-medium.bin",
+          "nodejs-whisper/cpp/whisper.cpp/models/ggml-small.bin",
           "!nodejs-whisper/cpp/whisper.cpp/models/*.gguf",
           "!nodejs-whisper/cpp/whisper.cpp/models/*.mlmodelc/**",
           "!nodejs-whisper/cpp/whisper.cpp/build/**",

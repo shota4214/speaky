@@ -326,8 +326,8 @@ function complete() {
             >
               <option value="tiny">⚡⚡ tiny (~75MB)</option>
               <option value="base">⚡ base (~142MB)</option>
-              <option value="small">⚡ small (~466MB)</option>
-              <option value="medium">⚖️ medium (~1.5GB)</option>
+              <option value="small">⚡ small (~466MB / 同梱・おすすめ)</option>
+              <option value="medium">⚖️ medium (~1.5GB / 16GB以上向け)</option>
               <option value="large-v1">🎯 large-v1 (~2.9GB)</option>
               <option value="large-v3-turbo">🎯 large-v3-turbo (~1.5GB)</option>
             </select>

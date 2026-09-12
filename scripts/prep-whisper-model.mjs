@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 配布用 Whisper モデル(ggml-medium.bin)を取得して
+ * 配布用 Whisper モデル(ggml-small.bin)を取得して
  * backend/vendor/node_modules/nodejs-whisper/cpp/whisper.cpp/models/ に配置する。
  *
  * - 既にファイルが存在し、サイズが妥当なら何もしない(冪等)
@@ -24,10 +24,14 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
-const MODEL_NAME = 'ggml-medium.bin'
+// 同梱モデルは small(多言語)。medium(1.53GB)は 8GB Mac で RAM を食い潰すため変更した。
+// 日本語音声入力を扱うので `.en`(英語専用)モデルは選ばないこと。
+// ※ electron/package.json の extraResources filter と
+//    backend/src/routes/transcribe.ts の BUNDLED_WHISPER_MODEL も合わせること。
+const MODEL_NAME = 'ggml-small.bin'
 const MODEL_URL = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${MODEL_NAME}`
-// HF 上の medium は 1.5GB 程度。極端に小さいと壊れていると見なす。
-const MIN_BYTES = 1_000_000_000 // 1GB
+// HF 上の small は 488MB 程度。極端に小さいと壊れていると見なす。
+const MIN_BYTES = 400_000_000 // 400MB
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
@@ -119,7 +123,7 @@ async function main() {
       )
       unlinkSync(modelPath)
     } else {
-      // サイズが OK でも 1GB 超の破損ファイルがあり得るので sha256 を照合する。
+      // サイズが OK でも破損ファイルがあり得るので sha256 を照合する。
       // HEAD で期待値が取れた場合のみ厳密チェック。取れなければ size-only で skip(冪等性維持)。
       const expectedSha = await fetchExpectedSha256(MODEL_URL)
       if (expectedSha === null) {

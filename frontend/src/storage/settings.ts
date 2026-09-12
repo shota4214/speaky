@@ -101,7 +101,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // 5秒: 話し終わってから送信されるまでの猶予。設定画面で 1-15 秒に調整可能。
   silenceDurationMs: 5000,
   llmModel: 'llama3.2:3b',
-  whisperModel: 'medium',
+  // small(多言語・約488MB): 8GB Mac でも現実的な速度/RAM。日本語入力を扱うので `.en` は不可。
+  whisperModel: 'small',
   darkMode: 'system',
   ttsRateConnectedToLevel: true,
   ttsRate: 1.0,

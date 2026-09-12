@@ -62,7 +62,7 @@ prep は実行済み（`electron/build-resources/ollama-bin/` に vendor 済み�
 DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべて同梱**（初回 DL 不要）:
 
 - LLM: Llama 3.2 3B（`ollama-data/blobs/` + manifest）
-- Whisper medium（`ggml-medium.bin` 1.4GB）
+- Whisper small（`ggml-small.bin` 約488MB。低スペック機対策で medium から変更）
 - whisper-cli / ffmpeg-static
 - **Ollama ランタイム本体**（`ollama-bin/electron-ollama/v0.30.4/darwin/arm64/`）← feat/bundle-ollama-binary で追加
 
@@ -107,7 +107,7 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 `npm run dist`（root）のチェーンで以下が走る（すべて冪等）:
 
 - `prep:vendor` / `prep:vendor:whisper-cli`（backend）= node_modules / whisper-cli
-- `prep:vendor:whisper-model`（backend）= ggml-medium.bin を HF から DL
+- `prep:vendor:whisper-model`（backend）= ggml-small.bin を HF から DL
 - `prep:vendor:llama-model`（electron）= Llama 3.2 3B を ollama pull して vendor
 - `prep:vendor:ollama-binary`（electron）= Ollama v0.30.4 バイナリを vendor（symlink 実ファイル化込み）
 - `verify:arm64`（backend）= arm64 バイナリ検証

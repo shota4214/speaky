@@ -408,7 +408,7 @@ function isVocabSaved(message: Message, word: string): boolean {
         </div>
         <div
           v-if="loop.errorMessage.value"
-          class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/30 dark:text-rose-300"
+          class="mt-3 whitespace-pre-wrap rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/30 dark:text-rose-300"
         >
           {{ loop.errorMessage.value }}
         </div>

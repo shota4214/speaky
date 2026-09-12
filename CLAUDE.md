@@ -22,40 +22,57 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test -w frontend
    ```
-   （現在テストは frontend 96 件）
+   （現在テストは frontend 102 件）
 4. **main へ直接コミット禁止**。必ずブランチ → PR → マージ。コミットは日本語 `[add]/[fix]/[chore]` プレフィクス。
 
 ## 🔴 次にやるべき最優先タスク（このセッションからの引き継ぎ）
 
-### 1. ブランチ `feat/bundle-ollama-binary` を PR マージ
+現在地: **v1.1.0（低スペック機向けパフォーマンス対応）をブランチ `perf/low-spec-tier1` で作業中**。
+v1.0.0 は一般公開済み（DMG 配布済み・Ollama バイナリ同梱も v0.0.6 でマージ完了）。
 
-- 内容: **Ollama ランタイムバイナリ (~150MB) を DMG 同梱し、完全オフライン初回起動を実現**
-- 2 コミット: `[add] Ollama ランタイムバイナリを同梱…` + `[fix] Ollama 同梱のオフライン保証を強化(P2/P3)`
-- レビュー済み（ブロッカーなし、指摘 P2/P3 も解消済み）。push 済み・未マージ。
-- PR: https://github.com/shota4214/speaky/pull/new/feat/bundle-ollama-binary
+v1.1.0 の中身（Tier1）:
 
-### 2. v0.0.6 リリースビルド + 実機オフライン検証（**未完了の核心**）
+- Whisper デフォルト `medium` → `small`（多言語のまま。日本語入力があるので `.en` 不可）
+- 無音検出 5000ms → 1500ms（設定スキーマ v1 → v2 で一度だけ移行、保存も即時）
+- whisper.cpp を `-DGGML_NATIVE=OFF` でビルド（M1/M2 での SIGILL 回避）
+- Ollama の `keep_alive` / `num_ctx` 調整、プロフィール事実の送信上限
+- `verify:arm64` を拡張して i8mm/bf16/SME 命令混入を検出（`scripts/verify-arm64.mjs`）
 
-コードは完成しているが **実際にオフラインで起動するかの実機検証が未実施**。マージ後:
+### 1. whisper-cli の再ビルド（**verify:arm64 が現状 FAIL する**）
+
+vendor 済みの `whisper-cli` は M5 上で native ビルドされた古い成果物で、
+**M1 に存在しない `smmla`（i8mm）命令を 108 個含む** = M1 実機で SIGILL。
+`npm run dist` はこの検証で止まるので、先に作り直すこと（数分かかる）:
 
 ```bash
 . ~/.nvm/nvm.sh && nvm use 22
-# electron/package.json と root package.json の version を 0.0.6 に bump
-#   ※ リリースごとに app version を上げないと runtime sync が走らない（重要）
-npm run dist   # Ollama 込みで DMG ~3.45GB、5〜10分
+npm run prep:vendor:whisper-cli -w backend   # -DGGML_NATIVE=OFF 付きで build/ を作り直す
+npm run verify:arm64 -w backend              # ここが OK になってから dist
 ```
 
-検証（最重要）:
+### 2. v1.1.0 リリースビルド + **非 M5 実機での検証**（未完了の核心）
+
+```bash
+. ~/.nvm/nvm.sh && nvm use 22
+# version は既に 1.1.0 に bump 済み（root / electron/package.json）
+#   ※ リリースごとに app version を上げないと runtime sync が走らない（重要）
+npm run dist   # DMG ~2.7GB（Whisper small 化で約 1GB 減）、5〜10分 + 公証
+```
+
+検証（最重要・**M1/M2 など古い Apple Silicon の実機で**）:
 
 ```bash
 # Speaky を Cmd+Q → userData 削除で初回起動を再現
 rm -rf "$HOME/Library/Application Support/electron"
 # Wi-Fi を切る（機内モード）→ /Applications/Speaky.app を起動
-# → ネット無しで Ollama 起動 → 会話開始まで到達するか確認
 ```
 
-確認点: `isDownloaded('v0.30.4')=true` で serve がネットを叩かず起動 / Ollama 11434 が立つ / 会話できる。
-prep は実行済み（`electron/build-resources/ollama-bin/` に vendor 済み、symlink 実ファイル化・AppleDouble 除去済み）。
+確認点:
+
+- whisper-cli が SIGILL せずに転写できる（← Tier1 の一番の目的。M5 では絶対に再現しない）
+- 8GB 機で会話が成立する速度か（Whisper small + Llama 3.2 3B + num_ctx 4096）
+- 無音 1.5 秒の自動送信が早すぎないか（既存ユーザーは v1→v2 移行で 1500 に変わる）
+- ネット無しで Ollama 起動 → 会話開始まで到達する（`isDownloaded('v0.30.4')=true`）
 
 ## 同梱物の事実（実機ビルドで確認済み）
 
@@ -100,7 +117,11 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 - **OLLAMA_VERSION pin** = `v0.30.4`（main.ts と scripts/prep-ollama-binary.mjs の両方。必ず一致させる）。`getMetadata('latest')` は使わない（ネット回避）。
 - **会話の翻訳ロジック**（backend/src/routes/chat.ts）: 日本語/英日混在は専用翻訳経路に分離。日本語訳が空なら en→ja 補完（「日本語訳を必ず表示」設定の保証）。
 - **Whisper モデルは実行前に存在チェック**（`backend/src/services/whisper-paths.ts`）。
-  無ければ同梱の `small` にフォールバックし、それも無ければ 503。
+  フォールバック順は「リクエスト値 → 同梱 `small` → インストール済みの**多言語**モデル（小さい順）→ 503」。
+  `.en` 系には絶対に落とさない（日本語入力が壊れる）。
+  `whisper-paths.ts` は **モジュールロード時の cwd を固定**して解決する。
+  nodejs-whisper が転写中だけ `shelljs.cd()` でプロセスの cwd を変えるため、
+  実行時に `process.cwd()` を読むと並行リクエストが誤判定して 503 になる。
   `autoDownloadModelName` は**渡さない**（渡すと HTTP リクエスト内で HF DL + cmake ビルドが走り固まる）。
   明示 DL は `POST /api/models/whisper/download` のみ。
 - **Ollama のチューニング**は 2 箇所: `electron/src/main.ts` startOllama の env
@@ -127,7 +148,11 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 - `prep:vendor:whisper-model`（backend）= ggml-small.bin を HF から DL
 - `prep:vendor:llama-model`（electron）= Llama 3.2 3B を ollama pull して vendor
 - `prep:vendor:ollama-binary`（electron）= Ollama v0.30.4 バイナリを vendor（symlink 実ファイル化込み）
-- `verify:arm64`（backend）= arm64 バイナリ検証
+- `verify:arm64`（backend / 実体は `scripts/verify-arm64.mjs`）= 同梱バイナリ検証
+  - arm64 Mach-O であること（`file`）に加え、**whisper-cli に i8mm / bf16 / SME 命令が
+    含まれないこと**を `otool -tV` で検証する（M1 で SIGILL するビルドの唯一の防波堤。
+    署名・公証・staple は素通りするので実機まで誰も気づけない）。
+    FAIL したら `npm run prep:vendor:whisper-cli -w backend` で作り直す。
 
 ## 完了済みの主な機能（〜v0.0.5）
 

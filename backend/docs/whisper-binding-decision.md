@@ -20,7 +20,9 @@
 1. 2026 年も継続更新されている唯一のバインディング
 2. ffmpeg 内蔵で **mp3 / m4a / wav** をそのまま投入可能 — Phase 1 で MediaRecorder の出力(webm/opus)を変換する手間が減る
 3. `language: 'auto'` で英語/日本語/混在の判定を whisper.cpp 側に委譲
-4. `autoDownloadModelName: 'medium'` で初回呼び出し時にモデル自動取得
+4. ~~`autoDownloadModelName: 'medium'` で初回呼び出し時にモデル自動取得~~ → **撤回(2026-09-12)**。
+   HTTP リクエストの中で HuggingFace DL + cmake ビルドが走って固まるため `autoDownloadModelName` は渡さない。
+   モデルの有無は `backend/src/services/whisper-paths.ts` で事前チェックし、明示 DL は `POST /api/models/whisper/download` のみ。
 5. Apple Silicon ARM CPU 最適化済み、M5 で動作期待値高
 
 ## リスクとフォールバック
@@ -30,8 +32,16 @@
 
 ## モデル
 
-- デフォルト: **medium**(約 1.5 GB)
-- 設定で `small`(500MB) / `large-v3`(3GB)を選択可能にする(Phase 3 の設定画面で)
+> ⚠ **2026-09-12 更新(v1.1.0 / 低スペック機対応)**: 下記の「デフォルト medium」は撤回済み。
+
+- デフォルト: **small**(多言語・約 488MB)。同梱モデルもこれ。
+  - medium(約 1.5GB)は 8GB Mac で毎リクエスト RAM に載せると swap して実用にならないため降格した。
+  - 日本語音声入力を扱うので `.en`(英語専用)モデルは選ばないこと。
+- 設定画面でインストール済みの他モデル(medium 等)へ切り替え可能。
+  実体が無いモデルを指定された場合は backend が「同梱 small → インストール済みの多言語モデル(小さい順)」
+  の順でフォールバックする(`backend/src/routes/transcribe.ts` の `ensureWhisperModel`)。
+- 旧記述: ~~デフォルト medium(約 1.5GB) / 設定で small・large-v3 を選択可能~~
+  (`large-v3` は nodejs-whisper の MODELS_LIST に無く指定できない)
 
 ## 実装時に判明した前提
 

@@ -149,6 +149,49 @@ describe('useSpeechQueue', () => {
     expect(q.lastError.value).toBeInstanceOf(Error)
   })
 
+  /**
+   * ストリーミング経路では生成が読み上げより遅いと、文と文の間でキューが
+   * 一度空になり、次の文で新しい drain が始まる。drain のたびに lastError を
+   * 消していると、その前に起きた発話失敗がターン終了時には残っておらず、
+   * ユーザーに「読み上げに失敗しました」を出せない。
+   */
+  it('キューが一度空になっても、前の drain の失敗を忘れない', async () => {
+    const backend = new FakeBackend()
+    backend.failOn = 'broken sentence'
+    const q = useSpeechQueue(backend)
+
+    q.enqueue('broken sentence')
+    await q.drained()
+    expect(q.lastError.value).toBeInstanceOf(Error)
+
+    // 生成が追いついて次の文が届いた = 新しい drain が始まる
+    q.enqueue('the next sentence arrives later')
+    await q.drained()
+
+    expect(backend.finished).toEqual(['the next sentence arrives later'])
+    expect(q.lastError.value).toBeInstanceOf(Error)
+  })
+
+  it('resetError でだけ失敗状態を消す(cancelAll では消さない)', async () => {
+    const backend = new FakeBackend()
+    backend.failOn = 'broken sentence'
+    const q = useSpeechQueue(backend)
+
+    q.enqueue('broken sentence')
+    await q.drained()
+    expect(q.lastError.value).toBeInstanceOf(Error)
+
+    q.resetError()
+    expect(q.lastError.value).toBeNull()
+
+    q.enqueue('broken sentence')
+    await q.drained()
+    expect(q.lastError.value).toBeInstanceOf(Error)
+    // stop() は cancelAll を呼ぶ。ここで消すと最後のターンの失敗を通知できない。
+    q.cancelAll()
+    expect(q.lastError.value).toBeInstanceOf(Error)
+  })
+
   it('遅れて解決する発話があっても後続は止まらない', async () => {
     const backend = new FakeBackend()
     backend.manual = true

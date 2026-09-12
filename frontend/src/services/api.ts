@@ -232,19 +232,89 @@ async function assertEventStream(res: Response): Promise<void> {
   }
 }
 
+/**
+ * ストリームの締め切り(クライアント側)。
+ *
+ * backend の予算(first-token 60〜90 秒 / ストール 15 秒)は **backend が生きていれば**
+ * 効く。効かないのは「ソケットが半開きのまま死んだ」場合 — スリープ復帰が典型で、
+ * TCP は切れたことに気づかず read が永遠に返らない。そのときターンは
+ * 「done も error も来ない」まま止まり、UI は生成中・マイクは閉じたままになる。
+ *
+ * 予算は 2 段階に分ける。**ヘッダーが返るまでは backend が何も書けない** ためで、
+ * 具体的には
+ *   - 会話 / 挨拶: Ollama の fetch が解決するまで(= 最大 90 秒の first-token 予算)
+ *   - japanese_help / mixed: 翻訳を丸ごと生成してから SSE を開く(最大 2 回 × 60 秒)
+ * という区間があり、ここを 45 秒で切ると **正常な生成を殺す**。
+ * ヘッダーが返った後は backend が keepalive コメントを 10 秒間隔で流すので、
+ * 無通信が 45 秒続いたら回線が死んでいると判断してよい(keepalive 4 回ぶんの空振り)。
+ *
+ * 判定は SSE イベントではなく **ソケットの受信** で行う。keepalive コメントは
+ * parseSSE がイベントとして出さないため、イベント基準では正常な待ちを殺してしまう。
+ */
+const STREAM_HEADER_TIMEOUT_MS = 180_000
+const STREAM_IDLE_TIMEOUT_MS = 45_000
+
 async function openChatStream(
   url: string,
   body: unknown,
   options: ChatStreamOptions,
 ): Promise<ChatStreamHandle> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: options.signal,
-  })
+  // 呼び出し側の signal に加えて、こちらからも中断できるようにする
+  // (無通信タイムアウト時に reader を起こすため)。
+  const ctrl = new AbortController()
+  const abortFromCaller = (): void => ctrl.abort(options.signal?.reason)
+  if (options.signal?.aborted) ctrl.abort(options.signal.reason)
+  else options.signal?.addEventListener('abort', abortFromCaller, { once: true })
+
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  let idleTimedOut = false
+  function clearIdleTimer(): void {
+    if (idleTimer !== null) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+  }
+  function armTimer(ms: number): void {
+    clearIdleTimer()
+    idleTimer = setTimeout(() => {
+      idleTimedOut = true
+      console.warn(`[chat-stream] ${ms}ms 無通信のため打ち切り`)
+      ctrl.abort(new Error('stream idle timeout'))
+    }, ms)
+  }
+  /** 受信のたびに巻き直す(ヘッダー後の無通信監視)。 */
+  function armIdleTimer(): void {
+    armTimer(STREAM_IDLE_TIMEOUT_MS)
+  }
+
+  function cleanup(): void {
+    clearIdleTimer()
+    options.signal?.removeEventListener('abort', abortFromCaller)
+  }
+
+  let res: Response
+  try {
+    // ヘッダーが返るまでは backend が何も書けない区間。長めの予算で見る。
+    armTimer(STREAM_HEADER_TIMEOUT_MS)
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+  } catch (e) {
+    cleanup()
+    throw e
+  }
   // ここで投げる = まだ 1 文字も読み上げていない。呼び出し側は非ストリーミングに落とせる。
-  await assertEventStream(res)
+  try {
+    await assertEventStream(res)
+  } catch (e) {
+    cleanup()
+    throw e
+  }
+  // ヘッダーが返った = ここから先は keepalive が流れる。短い締め切りに切り替える。
+  armIdleTimer()
 
   let settleDone: (value: ChatStreamDone | null) => void = () => undefined
   const done = new Promise<ChatStreamDone | null>((resolve) => {
@@ -275,7 +345,9 @@ async function openChatStream(
     }
 
     try {
-      for await (const event of parseSSE(res)) {
+      // onActivity = 受信のたび。無通信タイマーはここで巻き直す
+      // (keepalive コメントはイベントにならないが、受信としては数える)。
+      for await (const event of parseSSE(res, armIdleTimer)) {
         const result = reduceChatStreamEvent(state, event)
         state = result.state
         apply(result.effects)
@@ -285,12 +357,30 @@ async function openChatStream(
       if (!options.signal?.aborted) {
         console.warn('[chat-stream] stream read failed:', e)
       }
+    } finally {
+      cleanup()
     }
 
     if (options.signal?.aborted) {
       settleOnce(null)
       return state
     }
+
+    // 無通信で打ち切った = 回線が死んでいる。TIMEOUT として畳む。
+    // TRUNCATED にすると呼び出し側が「変な出力をした」と解釈して
+    // **締め切りの無い非ストリーミング経路** でやり直し、また固まってしまう。
+    if (idleTimedOut) {
+      const timedOut = reduceChatStreamEvent(state, {
+        type: 'error',
+        code: 'TIMEOUT',
+        error: '応答が途切れました。通信が切れている可能性があります。',
+      })
+      state = timedOut.state
+      apply(timedOut.effects)
+      settleOnce(null)
+      return state
+    }
+
     const final = finalizeChatStream(state)
     state = final.state
     apply(final.effects)
@@ -467,7 +557,11 @@ export async function deleteWhisperModel(filename: string): Promise<void> {
  * 呼び出し側は必ず `res.ok` と Content-Type が text/event-stream であることを
  * 先に確かめること。そうしないと「空の返答が静かに成功する」ことになる。
  */
-export async function* parseSSE(response: Response): AsyncGenerator<Record<string, unknown>> {
+export async function* parseSSE(
+  response: Response,
+  /** 受信(イベントにならない keepalive コメントを含む)のたびに呼ばれる。 */
+  onActivity?: () => void,
+): AsyncGenerator<Record<string, unknown>> {
   if (!response.body) throw new Error('No response body for SSE')
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -477,6 +571,7 @@ export async function* parseSSE(response: Response): AsyncGenerator<Record<strin
     while (true) {
       const { value, done } = await reader.read()
       if (done) break
+      onActivity?.()
       buffer += decoder.decode(value, { stream: true })
 
       let idx: number

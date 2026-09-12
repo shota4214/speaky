@@ -76,9 +76,80 @@ export interface ChatStreamState {
  */
 export const SCAFFOLD_PROBE_CHARS = 30
 
-/** JSON / コードフェンスで書き始めていないか。 */
-export function looksLikeJsonScaffold(head: string): boolean {
-  return /^\s*(?:```|\{|\[)/.test(head)
+/**
+ * JSON 足場の検出パターン。**先頭だけでなく全体を走査する**。
+ *
+ * 「先頭が `{` か」だけを見ていると、
+ *   Sure, here's my reply!\n\n{"reply_en": "..."}
+ * のように前置き → JSON と続く出力を素通しして、JSON をそのまま読み上げ・保存し、
+ * 次のプロンプトにも食わせてしまう(小型モデルで実際に起こる出力)。
+ *
+ * 誤検出を避けるため、パターンは「自然な英会話の返答には出ない形」に絞ってある:
+ *  - コードフェンス
+ *  - `{` の直後にキー + コロン(引用符は無くてもよい。小型モデルは
+ *    `{reply_en: "..."}` や `{'reply_en': ...}` と書くことがある)
+ *  - `[` の直後にオブジェクト / 文字列の開始
+ *  - 出力契約のキー名そのもの(snake_case なので英文には現れない)
+ * 単なる波括弧 1 個や、引用符で括った語句(He said "hi": ...)では発火しない。
+ */
+const JSON_SCAFFOLD_PATTERNS: RegExp[] = [
+  /```/,
+  // { "key": / {'key': / {key:  — 自然な英文には出ない形
+  /\{\s*["']?[A-Za-z_][A-Za-z0-9_]{1,63}["']?\s*:/,
+  /\[\s*[{"]/,
+  // 出力契約のキー名(引用符付き)
+  /["'](?:reply_en|reply_ja|user_said|vocabulary)["']\s*:/,
+  // 引用符なしのキーは snake_case のものだけ。英単語の "vocabulary:" は
+  // 「New vocabulary: hiking」のように自然な返答にも出るので含めない。
+  /\b(?:reply_en|reply_ja|user_said)\s*:/,
+]
+
+/** 上のパターンのどれかを含むか(先頭が `{` かどうかは見ない)。 */
+function containsJsonScaffoldPattern(text: string): boolean {
+  return JSON_SCAFFOLD_PATTERNS.some((re) => re.test(text))
+}
+
+/** JSON / コードフェンスが混ざっていないか(先頭に限らず走査する)。 */
+export function looksLikeJsonScaffold(text: string): boolean {
+  // 先頭が波括弧なら、キーがまだ届いていなくても JSON と判断する
+  // (30 文字のプローブ窓では `{\n  "reply_en` の途中で切れることがある)。
+  // 角括弧は `[Laughs] Oh really?` のような書き方があり得るので、
+  // 直後がオブジェクト / 文字列のときだけ JSON 配列とみなす。
+  if (/^\s*\{/.test(text)) return true
+  if (/^\s*\[\s*[{"']/.test(text)) return true
+  return containsJsonScaffoldPattern(text)
+}
+
+/**
+ * 「JSON の始まりかもしれない文字」の位置(from 以降の最初の `{` / `[` / バッククォート)。
+ * デルタは 1 トークンずつ届くので、`{` を読み上げに回してから `"reply_en":` が
+ * 完成しても手遅れになる。疑わしい文字が出た時点で **いったん止める** ために使う。
+ */
+export const SCAFFOLD_OPENERS = /[{[`]/
+
+function findScaffoldOpener(text: string, from: number): number {
+  const idx = text.slice(from).search(SCAFFOLD_OPENERS)
+  return idx === -1 ? -1 : from + idx
+}
+
+/**
+ * 「前置きの自然文 → JSON」の出力から、前置きの自然文だけを取り出す。
+ * JSON の reply_en を拾えなかったときの最後の手段。
+ */
+function proseBeforeScaffold(raw: string): string | null {
+  let cut = -1
+  for (const re of JSON_SCAFFOLD_PATTERNS) {
+    const m = re.exec(raw)
+    if (m && (cut === -1 || m.index < cut)) cut = m.index
+  }
+  const brace = raw.search(/[{[]/)
+  if (brace !== -1 && (cut === -1 || brace < cut)) cut = brace
+  if (cut <= 0) return null
+  const prose = raw.slice(0, cut).trim()
+  // 記号だけ / 短すぎる断片は「文」とは呼べないので採用しない。
+  if (prose.length < 12 || !/[A-Za-z]/.test(prose)) return null
+  if (looksLikeJsonScaffold(prose)) return null
+  return prose
 }
 
 /**
@@ -116,7 +187,8 @@ export function salvageReplyText(raw: string): string | null {
     .replace(/\s*```\s*$/, '')
     .trim()
   if (unfenced && !looksLikeJsonScaffold(unfenced)) return unfenced
-  return null
+  // 4) 前置きの自然文 → JSON、の前置きだけを拾う
+  return proseBeforeScaffold(raw)
 }
 
 export function initialChatStreamState(): ChatStreamState {
@@ -212,7 +284,8 @@ export function reduceChatStreamEvent(state: ChatStreamState, event: unknown): R
 
     case 'delta': {
       const text = typeof r.text === 'string' ? r.text : ''
-      if (!text || state.done) return { state, effects: [] }
+      // 終端(done / error)の後に届いた delta は捨てる。
+      if (!text || state.done || state.error) return { state, effects: [] }
       const raw = state.raw + text
       const next: ChatStreamState = { ...state, raw }
 
@@ -231,15 +304,37 @@ export function reduceChatStreamEvent(state: ChatStreamState, event: unknown): R
         }
       }
 
+      // 途中から JSON に化ける出力(前置きの自然文 → JSON)を捕まえる。
+      // `{` を見た時点でいったん止め、その先が JSON なら読み上げに回さない。
+      const opener = findScaffoldOpener(raw, next.released)
+      if (opener !== -1) {
+        const tail = raw.slice(opener)
+        if (containsJsonScaffoldPattern(tail)) {
+          next.suppressed = true
+          return { state: next, effects: [] }
+        }
+        if (tail.length < SCAFFOLD_PROBE_CHARS) {
+          // まだ判断がつかない。疑わしい文字の **手前まで** を読み上げに回す。
+          const head = raw.slice(next.released, opener)
+          next.released = opener
+          return { state: next, effects: head ? [{ type: 'speak', text: head }] : [] }
+        }
+        // 30 文字見ても JSON にならなかった = ただの記号(「{1, 2, 3} は集合」等)。
+      }
+
       const pending = raw.slice(next.released)
       next.released = raw.length
       return { state: next, effects: pending ? [{ type: 'speak', text: pending }] : [] }
     }
 
     case 'done': {
+      // 2 通目の終端イベント(現行バックエンドは出さないが、出ても
+      // 二重に読み上げ・二重に保存しないよう畳む)。
+      if (state.done || state.error) return { state, effects: [] }
       const provided = typeof r.text === 'string' ? r.text : ''
       let finalText = (provided || state.raw).trim()
-      if (state.suppressed || looksLikeJsonScaffold(finalText.slice(0, SCAFFOLD_PROBE_CHARS))) {
+      // 先頭だけでなく **全文** を見る。前置き → JSON の出力はここでしか捕まらない。
+      if (state.suppressed || looksLikeJsonScaffold(finalText)) {
         const salvaged = salvageReplyText(finalText)
         if (!salvaged) {
           const error: ChatStreamError = {
@@ -269,11 +364,16 @@ export function reduceChatStreamEvent(state: ChatStreamState, event: unknown): R
       //
       // done の本文がストリームで受け取った内容と食い違う(= salvage された)場合、
       // 既に読み上げ済みのぶんは取り消せないので、続きが取れるときだけ足す。
-      const releasedText = state.raw.slice(0, state.released)
-      if (state.released === 0) {
+      //
+      // ⚠️ finalText は trim 済みで、raw は先頭に空白 / 改行を含むことがある。
+      // 生の released 長で切ると 1 文字ずれて「残りを喋らない」ことがあるので、
+      // 先頭の空白ぶんを差し引いた「読み上げ済みの本文」で比較する。
+      const leading = state.raw.length - state.raw.trimStart().length
+      const releasedText = state.raw.slice(leading, Math.max(leading, state.released))
+      if (state.released === 0 || !releasedText) {
         effects.push({ type: 'speak', text: finalText })
       } else if (finalText.startsWith(releasedText)) {
-        const rest = finalText.slice(state.released)
+        const rest = finalText.slice(releasedText.length)
         if (rest.trim()) effects.push({ type: 'speak', text: rest })
       }
       effects.push({ type: 'done', text: finalText, replyJa })
@@ -293,6 +393,13 @@ export function reduceChatStreamEvent(state: ChatStreamState, event: unknown): R
 
     case 'enrich': {
       const enrichment = parseEnrichment(r)
+      // 日本語訳が空の enrich は **成功ではない**。ここで通すと呼び出し側が
+      // 「準備中」を解除してしまい、訳も無い・エラーも無い・再取得もできない
+      // 行が残る(DB の replyJa も null のまま)。届かなかったものとして扱う。
+      if (!enrichment.replyJa.trim()) {
+        console.warn('[chat-stream] enrich に日本語訳が無いので失敗として扱う')
+        return { state, effects: [] }
+      }
       return {
         state: { ...state, enrich: enrichment },
         effects: [{ type: 'enrich', enrichment }],
@@ -300,6 +407,8 @@ export function reduceChatStreamEvent(state: ChatStreamState, event: unknown): R
     }
 
     case 'error': {
+      // 成功後に届いたエラーは無視する(既に読み上げ・保存が終わっている)。
+      if (state.done || state.error) return { state, effects: [] }
       const error: ChatStreamError = {
         code: typeof r.code === 'string' ? r.code : null,
         message: typeof r.error === 'string' && r.error ? r.error : 'AI の返答生成に失敗しました。',

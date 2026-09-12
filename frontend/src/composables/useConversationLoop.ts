@@ -66,6 +66,56 @@ const MAX_CHAT_FAILURES = 3
  */
 const MAX_PROFILE_FACTS_IN_PROMPT = 20
 
+/**
+ * 会話終了後の一括 enrich で処理するメッセージ数の上限。
+ * 1 件あたり LLM 呼び出し 1〜2 回なので、長い会話で無制限に回さない。
+ */
+const MAX_BACKFILL_MESSAGES = 30
+
+/**
+ * ターンを中断した理由。**enrich の後始末を分けるために必要**。
+ *
+ * - SUPERSEDED: 次のターンを始めるためにこちらから前のターンを切った。
+ *   前のターンの enrich(同じストリームに乗っている)は永遠に届かないので、
+ *   「取得できませんでした + 再取得」に落とす。これをしないと「日本語訳を準備中」
+ *   のまま一生残り、DB の replyJa も null のままになる。
+ * - STOPPED: ユーザーが会話を終えた。画面はこの後サマリへ移るので UI 上の
+ *   失敗表示に意味は無く、欠けた日本語訳は会話終了後の一括 enrich が埋める。
+ */
+const ABORT_SUPERSEDED = 'superseded-by-next-turn'
+const ABORT_STOPPED = 'conversation-stopped'
+
+/**
+ * 中断理由を **AbortError のまま** 運ぶ。
+ * 文字列を abort() に渡すと fetch は「文字列」で reject するので、
+ * `e.name === 'AbortError'` を見ている isAbortError がすり抜け、
+ * 自分で中断しただけのターンがユーザー向けエラーとして表示されてしまう。
+ */
+function abortReason(kind: string): DOMException {
+  return new DOMException(kind, 'AbortError')
+}
+
+/** signal.reason から理由の識別子を取り出す(文字列で渡された場合も許容)。 */
+function reasonOf(signal: AbortSignal): string | null {
+  const reason: unknown = signal.reason
+  if (typeof reason === 'string') return reason
+  const message = (reason as { message?: unknown } | null)?.message
+  return typeof message === 'string' ? message : null
+}
+
+/**
+ * 実行中の一括 enrich。**モジュールスコープ**なのは、会話画面を出入りすると
+ * composable のインスタンスが作り直されるため。次の会話が始まったら前の会話の
+ * 埋め合わせを止めないと、Ollama の 1 枠を新しい会話の挨拶生成と奪い合う。
+ */
+let activeBackfill: AbortController | null = null
+
+/** 実行中の一括 enrich を止める(次の会話を始めるとき)。 */
+export function cancelEnrichBackfill(): void {
+  activeBackfill?.abort()
+  activeBackfill = null
+}
+
 interface StartLoopInput {
   conversationId: string
   vocabFocusWords: string[]
@@ -120,6 +170,8 @@ export function useConversationLoop() {
   async function speakSegments(text: string, overrides: SpeakOptions = {}): Promise<boolean> {
     const segments = splitIntoSpeechSegments(text)
     if (segments.length === 0) return true
+    // 失敗はこの呼び出しぶんだけを見る(キューは drain ごとには消さない)。
+    speechQueue.resetError()
     for (const segment of segments) {
       speechQueue.enqueue(segment, overrides)
     }
@@ -156,14 +208,20 @@ export function useConversationLoop() {
   let turnController: AbortController | null = null
 
   function beginTurn(): AbortSignal {
-    turnController?.abort()
+    // 前のターンを切る理由は「次のターンを始めるため」。会話終了とは区別する。
+    turnController?.abort(abortReason(ABORT_SUPERSEDED))
     turnController = new AbortController()
     return turnController.signal
   }
 
   function abortTurn(): void {
-    turnController?.abort()
+    turnController?.abort(abortReason(ABORT_STOPPED))
     turnController = null
+  }
+
+  /** 会話終了(ユーザー操作)による中断か。次ターンのための中断は false。 */
+  function abortedByStop(signal: AbortSignal): boolean {
+    return signal.aborted && reasonOf(signal) === ABORT_STOPPED
   }
 
   /** 自分で abort した結果の失敗をユーザー向けエラーとして出さないための判定。 */
@@ -215,7 +273,13 @@ export function useConversationLoop() {
 
   function markEnrichFailed(id: string): void {
     // pending でないもの(= そもそも enrich を待っていない)は触らない。
-    if (!enrichPendingIds.value.has(id)) return
+    // ただし「日本語訳がまだ無いメッセージ」は、pending を経由せずに
+    // 失敗が確定することがある(enrich が永続化より先に届いた場合など)ので
+    // 対象に含める。訳の無い行に再取得ボタンが出ないのが一番まずい。
+    if (!enrichPendingIds.value.has(id)) {
+      const message = conversation.messages.find((m) => m.id === id)
+      if (!message || message.replyJa?.trim()) return
+    }
     const pending = new Set(enrichPendingIds.value)
     pending.delete(id)
     enrichPendingIds.value = pending
@@ -249,6 +313,14 @@ export function useConversationLoop() {
 
   /** enrich の結果を DB とストアへ反映する(保存する形は現行リリースと同一)。 */
   async function applyEnrichment(messageId: string, enrichment: ChatEnrichment): Promise<void> {
+    // 日本語訳が空の enrich は **成功ではない**。ここで pending を解除すると
+    // 「訳も無い・エラーも無い・再取得ボタンも無い」行になり、DB の replyJa も
+    // null のまま残る。取得できなかったものとして再取得できる状態にする。
+    if (!enrichment.replyJa.trim()) {
+      console.warn('[loop] enrich に日本語訳が無いので失敗として扱う:', messageId)
+      markEnrichFailed(messageId)
+      return
+    }
     const updated = await messagesRepo.update(messageId, {
       replyJa: enrichment.replyJa || null,
       feedback: enrichment.feedback
@@ -299,8 +371,11 @@ export function useConversationLoop() {
     | { status: 'aborted' }
     /** 1 文字も読み上げていないので、非ストリーミング経路でやり直してよい。 */
     | { status: 'fallback'; error: unknown }
-    /** 既に読み上げてしまった後の失敗。やり直すと二重に喋るので、このターンは失敗扱い。 */
-    | { status: 'failed'; message: string }
+    /**
+     * 既に読み上げてしまった後の失敗。やり直すと二重に喋るので、このターンは失敗扱い。
+     * partial = 喋ったぶんを保存したメッセージ(保存できたときだけ)。
+     */
+    | { status: 'failed'; message: string; partial?: Message }
 
   interface StreamTurnInput {
     kind: 'chat' | 'opening'
@@ -333,6 +408,8 @@ export function useConversationLoop() {
      */
     const turn = {
       spokeAnything: false,
+      /** 読み上げに回した英文の累積(失敗したときに「聞こえた内容」を保存する)。 */
+      spokenText: '',
       error: null as ChatStreamError | null,
       replyJa: null as string | null,
       persistedId: null as string | null,
@@ -342,6 +419,21 @@ export function useConversationLoop() {
     }
 
     streamingReplyEn.value = ''
+    // 発話失敗はターン単位で見る(キューは drain のたびには消さない)。
+    speechQueue.resetError()
+
+    /**
+     * **読み上げが始まった後に返る経路は全部ここを通す**。
+     *
+     * 読み上げキューが空になるのを待たずに返すと、呼び出し側のループは
+     * そのまま録音モードに入る。キューにはまだ AI の声が残っているので、
+     * マイクが AI 自身の声を拾って Whisper に流し、ユーザーの発話として
+     * 保存され、次のプロンプトの履歴にも入る(失敗ターンほど起きやすい)。
+     */
+    async function finish(outcome: StreamTurnOutcome): Promise<StreamTurnOutcome> {
+      await speechQueue.drained()
+      return outcome
+    }
 
     function enqueueSegments(segments: string[]): void {
       for (const segment of segments) {
@@ -357,6 +449,7 @@ export function useConversationLoop() {
       switch (effect.type) {
         case 'speak':
           streamingReplyEn.value += effect.text
+          turn.spokenText += effect.text
           enqueueSegments(accumulator.push(effect.text))
           break
         case 'done':
@@ -403,9 +496,12 @@ export function useConversationLoop() {
     void handle.finished
       .then(() => {
         turn.streamFinished = true
-        if (turn.persistedId && !turn.enrichApplied && !signal.aborted) {
-          markEnrichFailed(messageId)
-        }
+        if (!turn.persistedId || turn.enrichApplied) return
+        // 会話終了による中断だけは「失敗表示」にしない(画面はサマリへ移る)。
+        // 次のターンを始めるために切った場合は **必ず失敗にする** —
+        // 放っておくと「日本語訳を準備中」が一生消えない。
+        if (abortedByStop(signal)) return
+        markEnrichFailed(messageId)
       })
       .catch(() => undefined)
 
@@ -413,7 +509,7 @@ export function useConversationLoop() {
 
     if (signal.aborted || stopRequested.value) {
       streamingReplyEn.value = ''
-      return { status: 'aborted' }
+      return finish({ status: 'aborted' })
     }
 
     if (!done) {
@@ -427,14 +523,18 @@ export function useConversationLoop() {
       //     MALFORMED / EMPTY / TRUNCATED は「小型モデルが変な出力をした」ケースで、
       //     JSON 経路のリトライ梯子なら通ることがあるのでフォールバックする。
       const shouldFallback = !turn.spokeAnything && turn.error?.code !== 'TIMEOUT'
-      return shouldFallback
-        ? { status: 'fallback', error: turn.error }
-        : { status: 'failed', message }
+      if (shouldFallback) return finish({ status: 'fallback', error: turn.error })
+      // 読み上げてしまったぶんは「ユーザーには聞こえたのにどこにも存在しない発話」
+      // になる(ストアにも DB にも無い = 次のプロンプトの履歴にも入らないので、
+      // モデルは同じことをもう一度言える)。喋った内容をそのまま保存して、
+      // 日本語訳は再取得できる状態にする。
+      const partial = await persistPartialReply(turn.spokenText, inputMode, messageId)
+      return finish({ status: 'failed', message, ...(partial ? { partial } : {}) })
     }
 
     if (!conversation.id) {
       streamingReplyEn.value = ''
-      return { status: 'aborted' }
+      return finish({ status: 'aborted' })
     }
 
     // 永続化は done の 1 回だけ。保存する形は現行リリースと完全に同じで、
@@ -469,8 +569,42 @@ export function useConversationLoop() {
     }
 
     // ターンの終わりは「done」AND「読み上げ終わり」の両方。
-    await speechQueue.drained()
-    return { status: 'done', message: aiMsg }
+    return finish({ status: 'done', message: aiMsg })
+  }
+
+  /**
+   * ストリームが途中で失敗したとき、**既に読み上げた英文**を保存する。
+   * 日本語訳は無いので enrich 失敗(= 再取得ボタンあり)として置く。
+   */
+  async function persistPartialReply(
+    text: string,
+    inputMode: Message['mode'],
+    messageId: string,
+  ): Promise<Message | null> {
+    const trimmed = text.trim()
+    if (!trimmed || !conversation.id) return null
+    try {
+      const msg = await messagesRepo.create({
+        id: messageId,
+        conversationId: conversation.id,
+        timestamp: new Date(),
+        role: 'ai',
+        userText: null,
+        inputLanguage: null,
+        replyEn: trimmed,
+        replyJa: null,
+        feedback: null,
+        vocabulary: [],
+        mode: inputMode,
+      })
+      conversation.appendMessage(msg)
+      markEnrichPending(msg.id)
+      markEnrichFailed(msg.id)
+      return msg
+    } catch (e) {
+      console.warn('[loop] 途中まで読み上げた返答の保存に失敗:', e)
+      return null
+    }
   }
 
   const consecutiveTranscribeFailures = ref(0)
@@ -506,6 +640,9 @@ export function useConversationLoop() {
   }
 
   async function start(input: StartLoopInput) {
+    // 前の会話の一括 enrich が残っていたら止める。Ollama の枠は 1 つしかないので、
+    // 放っておくとこの会話の挨拶生成がその後ろに並ぶ。
+    cancelEnrichBackfill()
     stopRequested.value = false
     consecutiveSilent.value = 0
     promptedAttempts.value = 0
@@ -571,6 +708,8 @@ export function useConversationLoop() {
       }
       if (outcome.status === 'failed') {
         console.warn('[loop] opening stream failed after speaking:', outcome.message)
+        // 途中まで喋ったぶんが保存できていれば「もう一度言って」の対象にする。
+        if (outcome.partial?.replyEn) lastAiReplyEn.value = outcome.partial.replyEn
         return
       }
       console.warn('[loop] opening stream unavailable, falling back:', outcome.error)
@@ -743,6 +882,7 @@ export function useConversationLoop() {
           }
           if (outcome.status === 'failed') {
             // 既に読み上げてしまった後の失敗。やり直すと二重に喋るのでこのターンは諦める。
+            if (outcome.partial?.replyEn) lastAiReplyEn.value = outcome.partial.replyEn
             consecutiveChatFailures.value += 1
             errorMessage.value = outcome.message
             if (consecutiveChatFailures.value >= MAX_CHAT_FAILURES) {
@@ -932,6 +1072,70 @@ export function useConversationLoop() {
     return endInFlight
   }
 
+  /**
+   * 会話終了後に、日本語訳が欠けているメッセージをまとめて埋める。
+   *
+   * なぜ必要か: セッション中の enrich は次のターンを始めるときに打ち切られる
+   * (打ち切らないと Ollama の 1 枠を奪い合って次のターンが遅くなり、
+   * first-token 予算に食い込んでターンごと失われる)。その結果、日本語訳が
+   * 欠けた行がセッション中に残り得る。ここで埋めれば **履歴は必ず揃う**。
+   *
+   * 実行タイミングは要約・事実抽出の **後**。ユーザーはサマリ画面でそれらを
+   * 待っているのに対し、日本語訳を見るのは履歴画面に入ってからなので、
+   * 待っている処理を先に通す。会話行の保存(endedAt/summary)も先に済ませる。
+   *
+   * 途中で終わっても壊れない: 1 件ずつ独立した更新で、次回また対象になるだけ。
+   */
+  async function backfillEnrichment(
+    conversationId: string,
+    context: ChatRequestContext,
+  ): Promise<number> {
+    cancelEnrichBackfill()
+    const ctrl = new AbortController()
+    activeBackfill = ctrl
+    let filled = 0
+    try {
+      const rows = await messagesRepo.listByConversation(conversationId)
+      const targets = rows
+        .filter((m) => m.role === 'ai' && m.replyEn?.trim() && !m.replyJa?.trim())
+        .slice(0, MAX_BACKFILL_MESSAGES)
+      if (targets.length === 0) return 0
+      console.log(`[loop] 会話終了後の一括 enrich: ${targets.length} 件`)
+
+      for (const target of targets) {
+        if (ctrl.signal.aborted) break
+        const idx = rows.findIndex((m) => m.id === target.id)
+        let userText: string | null = null
+        for (let i = idx - 1; i >= 0; i--) {
+          const m = rows[i]!
+          if (m.role === 'user') {
+            userText = m.userText
+            break
+          }
+        }
+        try {
+          const enrichment = await chatEnrich(target.replyEn!, userText, context, {
+            signal: ctrl.signal,
+          })
+          // 保存・ストア反映・pending 解除はセッション中と同じ経路に通す
+          // (日本語訳が空なら applyEnrichment が失敗として扱う)。
+          await applyEnrichment(target.id, enrichment)
+          if (enrichment.replyJa?.trim()) filled += 1
+        } catch (e) {
+          if (ctrl.signal.aborted || isAbortError(e)) break
+          console.warn('[loop] 一括 enrich に失敗(この行は日本語訳なしのまま):', e)
+          markEnrichFailed(target.id)
+        }
+      }
+      return filled
+    } catch (e) {
+      console.warn('[loop] 一括 enrich を実行できませんでした:', e)
+      return filled
+    } finally {
+      if (activeBackfill === ctrl) activeBackfill = null
+    }
+  }
+
   async function doEndAndPersist(): Promise<string | null> {
     // 関数の最初に conversation.id を「キャプチャ」しておく。
     // 以降の await 中に store の id が null に書き換わっても、
@@ -940,6 +1144,15 @@ export function useConversationLoop() {
     if (!conversationId) return null
 
     const topic = conversation.topic
+    // 一括 enrich 用のコンテキストもここで確保する。離脱経路では直後に
+    // conversation.end() が走って store が空になるため。
+    const enrichContext: ChatRequestContext = {
+      aiName: settings.settings.aiCharacter.name,
+      level: conversation.level,
+      topic: conversation.topic,
+      model: settings.settings.llmModel,
+    }
+    const canBackfill = canRetryEnrich()
     const transcriptItems: ChatHistoryItem[] = buildHistory()
 
     // AI からの opening だけで終わった(ユーザー発話無し)場合は
@@ -994,6 +1207,15 @@ export function useConversationLoop() {
       summary: summaryText || null,
     })
 
+    // 日本語訳の埋め合わせは **待たない**。ここで待つとサマリ画面への遷移が
+    // 日本語訳の生成回数ぶん遅れる(会話が長いほど遅い)。要約・事実抽出が
+    // 終わった後なので、LLM を待たせている処理はもう無い。
+    if (canBackfill) {
+      void backfillEnrichment(conversationId, enrichContext).catch((e) => {
+        console.warn('[loop] 一括 enrich が異常終了:', e)
+      })
+    }
+
     return conversationId
   }
 
@@ -1008,6 +1230,7 @@ export function useConversationLoop() {
     enrichFailedIds,
     canRetryEnrich,
     retryEnrich,
+    backfillEnrichment,
     consecutiveTranscribeFailures,
     consecutiveChatFailures,
     consecutiveSilent,

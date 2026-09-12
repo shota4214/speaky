@@ -50,24 +50,35 @@ export const messagesRepo = {
   async update(id: string, patch: Partial<Omit<Message, 'id'>>): Promise<Message | undefined> {
     const existing = await db.messages.get(id)
     if (!existing) return undefined
+
+    /**
+     * patch にキーが無い(= 触らない)と null(= 消す)を区別する。
+     * `patch.x ?? existing.x` にすると null を渡しても既存値に戻ってしまい、
+     * **フィールドを消せない**(誤った添削を消す、といった操作ができない)。
+     */
+    const has = (key: keyof Omit<Message, 'id'>): boolean =>
+      key in patch && patch[key] !== undefined
+
     const merged: Message = {
       ...existing,
       ...patch,
       id: existing.id,
-      feedback: patch.feedback
-        ? {
-            userSaid: patch.feedback.userSaid,
-            corrected: patch.feedback.corrected,
-            explanation: patch.feedback.explanation,
-          }
-        : (patch.feedback ?? existing.feedback),
-      vocabulary: patch.vocabulary
-        ? patch.vocabulary.map((v) => ({
+      feedback: has('feedback')
+        ? patch.feedback
+          ? {
+              userSaid: patch.feedback.userSaid,
+              corrected: patch.feedback.corrected,
+              explanation: patch.feedback.explanation,
+            }
+          : null
+        : existing.feedback,
+      vocabulary: has('vocabulary')
+        ? (patch.vocabulary?.map((v) => ({
             word: v.word,
             meaning: v.meaning,
             example: v.example,
-          }))
-        : (patch.vocabulary ?? existing.vocabulary),
+          })) ?? null)
+        : existing.vocabulary,
     }
     await db.messages.put(merged)
     return merged

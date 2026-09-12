@@ -136,3 +136,71 @@ function scanJsonStringArray(raw: string, start: number): JsonStringArrayMatch {
 
   return { items, closed }
 }
+
+/**
+ * JSON 足場の検出パターン。**先頭だけでなく全体を走査する**。
+ *
+ * 「先頭が `{` か」だけを見ると、
+ *   Sure, here's my reply!\n\n{"reply_en": "..."}
+ * のように前置きの後に JSON を書く出力(小型モデルで実際に起こる)を素通しし、
+ * JSON をそのまま読み上げ・保存し、次のプロンプトにも食わせてしまう。
+ *
+ * 誤検出を避けるため、パターンは「自然な英会話の返答には出ない形」に絞る:
+ * コードフェンス / `{` 直後のキー + コロン(引用符は無くてもよい。小型モデルは
+ * `{reply_en: "..."}` と書くことがある)/ `[` 直後のオブジェクト・文字列 /
+ * 出力契約の snake_case キー。波括弧 1 個や引用符付きの語句では発火しない。
+ * **フロント側(utils/chat-stream-reducer.ts)と同じ判定を保つこと。**
+ */
+const JSON_SCAFFOLD_PATTERNS: RegExp[] = [
+  /```/,
+  // { "key": / {'key': / {key:  — 自然な英文には出ない形
+  /\{\s*["']?[A-Za-z_][A-Za-z0-9_]{1,63}["']?\s*:/,
+  /\[\s*[{"]/,
+  // 出力契約のキー名(引用符付き)
+  /["'](?:reply_en|reply_ja|user_said|vocabulary)["']\s*:/,
+  // 引用符なしのキーは snake_case のものだけ。英単語の "vocabulary:" は
+  // 「New vocabulary: hiking」のように自然な返答にも出るので含めない。
+  /\b(?:reply_en|reply_ja|user_said)\s*:/,
+]
+
+/** 上のパターンのどれかを含むか(先頭が `{` かどうかは見ない)。 */
+export function containsJsonScaffoldPattern(text: string): boolean {
+  return JSON_SCAFFOLD_PATTERNS.some((re) => re.test(text))
+}
+
+/** JSON / コードフェンスが混ざっていないか(先頭に限らず走査する)。 */
+export function looksLikeJsonScaffold(text: string): boolean {
+  // 先頭が波括弧なら、キーがまだ届いていなくても JSON と判断する
+  // (30 文字のプローブ窓では `{\n  "reply_en` の途中で切れることがある)。
+  // 角括弧は `[Laughs] Oh really?` のような書き方があり得るので、
+  // 直後がオブジェクト / 文字列のときだけ JSON 配列とみなす。
+  if (/^\s*\{/.test(text)) return true
+  if (/^\s*\[\s*[{"']/.test(text)) return true
+  return containsJsonScaffoldPattern(text)
+}
+
+/**
+ * 「JSON の始まりかもしれない文字」の位置(from 以降の最初の `{` / `[` / バッククォート)。
+ * チャンクは細切れに届くので、`{` を delta として送ってから `"reply_en":` が
+ * 完成しても手遅れになる。疑わしい文字が出た時点で **いったん止める** ために使う。
+ */
+export function findScaffoldOpener(text: string, from: number): number {
+  const idx = text.slice(from).search(/[{[`]/)
+  return idx === -1 ? -1 : from + idx
+}
+
+/** 「前置きの自然文 → JSON」の出力から、前置きの自然文だけを取り出す。 */
+export function proseBeforeScaffold(raw: string): string | null {
+  let cut = -1
+  for (const re of JSON_SCAFFOLD_PATTERNS) {
+    const m = re.exec(raw)
+    if (m && (cut === -1 || m.index < cut)) cut = m.index
+  }
+  const brace = raw.search(/[{[]/)
+  if (brace !== -1 && (cut === -1 || brace < cut)) cut = brace
+  if (cut <= 0) return null
+  const prose = raw.slice(0, cut).trim()
+  if (prose.length < 12 || !/[A-Za-z]/.test(prose)) return null
+  if (looksLikeJsonScaffold(prose)) return null
+  return prose
+}

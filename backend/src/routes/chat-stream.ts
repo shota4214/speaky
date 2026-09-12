@@ -13,7 +13,14 @@ import {
   type VocabItem,
 } from '../services/chat-reply.js'
 import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
-import { extractJsonObjectSlice, matchJsonStringField } from '../services/json-salvage.js'
+import {
+  containsJsonScaffoldPattern,
+  extractJsonObjectSlice,
+  findScaffoldOpener,
+  looksLikeJsonScaffold,
+  matchJsonStringField,
+  proseBeforeScaffold,
+} from '../services/json-salvage.js'
 import {
   chatWithOllama,
   OllamaError,
@@ -70,8 +77,18 @@ const OPENING_STREAM_FIRST_TOKEN_TIMEOUT_MS = 90_000
  */
 const STREAM_NUM_PREDICT = 320
 
-/** enrich(日本語訳 + 添削 + 単語)の生成上限。JSON エンベロープぶんが必要。 */
-const ENRICH_NUM_PREDICT = 480
+/**
+ * enrich(日本語訳 + 添削 + 単語)の生成上限。
+ *
+ * enrich は **次のターンと同じ 1 枠を奪い合う**(NUM_PARALLEL=1 / 1 モデル)。
+ * 次ターンが始まればクライアントが切るので最長でも「ユーザーが話し終えるまで」だが、
+ * その間 Ollama を占有するぶんは短いほどよい。
+ * 内訳の見積り: 日本語訳 150〜200 / 添削 90 / 単語 2 件 80 / 記号 30。
+ * 480 → 360 に下げ、単語も 3 件 → 2 件にした。JSON のキー順は reply_ja が先頭なので、
+ * 予算を使い切って切断されても日本語訳は parseEnrichment の salvage で必ず残る
+ * (落ちるのは添削・単語だけ)。
+ */
+const ENRICH_NUM_PREDICT = 360
 const ENRICH_FIRST_TOKEN_TIMEOUT_MS = 60_000
 
 /** 最初のトークンを待つ間に流す keepalive コメントの間隔。 */
@@ -86,14 +103,10 @@ const KEEPALIVE_INTERVAL_MS = 10_000
  */
 const SCAFFOLD_PROBE_CHARS = 30
 
-/** JSON / コードフェンスで書き始めていないか。 */
-function looksLikeJsonScaffold(head: string): boolean {
-  return /^\s*(?:```|\{|\[)/.test(head)
-}
-
 /**
  * プレーンテキストを期待したのに JSON / コードフェンスで返ってきた出力から
- * 英文を救い出す。Stage 0 の salvage を先に試し、ダメならフェンスだけ剥がす。
+ * 英文を救い出す。Stage 0 の salvage を先に試し、ダメならフェンスだけ剥がし、
+ * それでもダメなら「JSON の手前に書かれた自然文」を拾う。
  */
 export function salvagePlainReply(raw: string): string | null {
   const salvaged = salvageChatReply(raw, 'normal')
@@ -105,7 +118,7 @@ export function salvagePlainReply(raw: string): string | null {
     .replace(/\s*```\s*$/, '')
     .trim()
   if (unfenced && !looksLikeJsonScaffold(unfenced)) return unfenced
-  return null
+  return proseBeforeScaffold(raw)
 }
 
 export interface EnrichmentResult {
@@ -120,13 +133,13 @@ Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
 {
   "reply_ja": "string - natural Japanese translation of the AI reply",
   "feedback": null OR { "user_said": "...", "corrected": "...", "explanation": "..." },
-  "vocabulary": [] OR up to 3 items: { "word": "...", "meaning": "...", "example": "..." }
+  "vocabulary": [] OR up to 2 items: { "word": "...", "meaning": "...", "example": "..." }
 }
 
 # Rules
 - reply_ja is always required. Translate the AI reply into natural, conversational Japanese.
 - feedback: only if the learner made a real English mistake. Otherwise null. "user_said" and "corrected" must be English; "explanation" must be in Japanese.
-- vocabulary: only 1-3 genuinely useful words/phrases from the AI reply, with Japanese meanings. Skip trivial words. Empty array is fine.
+- vocabulary: only 1-2 genuinely useful words/phrases from the AI reply, with Japanese meanings. Skip trivial words. Empty array is fine.
 - Never invent a mistake the learner did not make.`
 
 /** enrich の JSON を検証して取り出す(壊れていたら拾える範囲だけ拾う)。 */
@@ -456,44 +469,83 @@ async function streamConversationTurn(
   setupSSE(res)
   safeSend(res, { type: 'meta', mode: 'normal', model: stream.model, speakDeltas: true })
 
-  // 最初のトークンまでは無通信になるので、dev プロキシ対策に keepalive コメントを流す。
+  // 無通信になる区間では keepalive コメントを流す。dev プロキシ対策であると同時に、
+  // **クライアントの無通信タイムアウト(STREAM_IDLE_TIMEOUT_MS)に巻き込まれない**
+  // ための命綱でもある。無通信になるのは 3 区間:
+  //   1) 最初のトークンまで
+  //   2) JSON を抑止している間(delta を 1 つも送らないまま生成が続く)
+  //   3) done の後の enrich 生成中
   // parseSSE は `data:` 行しか読まないのでクライアントには観測されない。
-  let keepalive: ReturnType<typeof setInterval> | null = setInterval(() => {
-    if (canWrite(res)) sseComment(res)
-  }, KEEPALIVE_INTERVAL_MS)
+  let keepalive: ReturnType<typeof setInterval> | null = null
+  function startKeepalive(): void {
+    if (keepalive !== null) return
+    keepalive = setInterval(() => {
+      if (canWrite(res)) sseComment(res)
+    }, KEEPALIVE_INTERVAL_MS)
+  }
   function stopKeepalive(): void {
     if (keepalive !== null) {
       clearInterval(keepalive)
       keepalive = null
     }
   }
+  startKeepalive()
 
   let full = ''
-  let held = ''
+  /** delta として送出済みの文字数(full の先頭からの長さ)。 */
+  let sent = 0
   let probed = false
   let suppressed = false
   let streamError: OllamaError | null = null
 
   try {
     for await (const chunk of stream.chunks()) {
-      stopKeepalive()
       full += chunk
       if (!probed) {
-        held += chunk
-        if (held.length < SCAFFOLD_PROBE_CHARS) continue
+        if (full.length < SCAFFOLD_PROBE_CHARS) continue
         probed = true
-        if (looksLikeJsonScaffold(held)) {
+        if (looksLikeJsonScaffold(full.slice(0, SCAFFOLD_PROBE_CHARS))) {
           // JSON を書き始めている。1 文字も読み上げさせず、終了後に救済する。
+          // ここから done まで delta を 1 つも送らないので keepalive を再開する。
           console.warn(`${tag} model emitted JSON scaffolding; suppressing deltas`)
           suppressed = true
-        } else {
-          safeSend(res, { type: 'delta', text: held })
+          startKeepalive()
+          continue
         }
-        held = ''
-        continue
       }
       if (suppressed) continue
-      safeSend(res, { type: 'delta', text: chunk })
+
+      // 途中から JSON に化ける出力(前置きの自然文 → JSON)を捕まえる。
+      // `{` を見た時点でいったん止める。送ってしまってから `"reply_en":` が
+      // 完成しても、その `{` はもうクライアントの読み上げキューに入っている。
+      const opener = findScaffoldOpener(full, sent)
+      if (opener !== -1) {
+        const tail = full.slice(opener)
+        if (containsJsonScaffoldPattern(tail)) {
+          console.warn(`${tag} model switched to JSON mid-reply; suppressing further deltas`)
+          suppressed = true
+          startKeepalive()
+          continue
+        }
+        if (tail.length < SCAFFOLD_PROBE_CHARS) {
+          // まだ判断がつかない。疑わしい文字の **手前まで** を送る。
+          const head = full.slice(sent, opener)
+          if (head) {
+            // delta を送る = 通信があるので keepalive は不要。
+            stopKeepalive()
+            safeSend(res, { type: 'delta', text: head })
+            sent = opener
+          }
+          continue
+        }
+        // 30 文字見ても JSON にならなかった = ただの記号。普通に送る。
+      }
+
+      const pending = full.slice(sent)
+      if (!pending) continue
+      sent = full.length
+      stopKeepalive()
+      safeSend(res, { type: 'delta', text: pending })
     }
   } catch (e) {
     streamError = e instanceof OllamaError ? e : new OllamaError('UNKNOWN', (e as Error).message, e)
@@ -535,6 +587,9 @@ async function streamConversationTurn(
 
   // ここから先は「マイクが待っていない」時間。失敗してもターンは成立しているので
   // エラーイベントにはしない(フロントは日本語訳の再取得ボタンを出す)。
+  // enrich の生成中もソケットは無通信になるので keepalive を流す
+  // (クライアント側の無通信タイムアウトに巻き込まれないため)。
+  startKeepalive()
   try {
     const enrichment = await buildEnrichment({
       replyEn: finalText,
@@ -543,18 +598,28 @@ async function streamConversationTurn(
       signal,
     })
     if (!signal.aborted) {
-      safeSend(res, {
-        type: 'enrich',
-        replyJa: enrichment.replyJa,
-        feedback: enrichment.feedback,
-        vocabulary: enrichment.vocabulary,
-      })
+      // 日本語訳が空の enrich は **送らない**。送るとクライアントは
+      // 「準備中」を解除してしまい、訳も無い・エラーも無い・再取得ボタンも無い
+      // 行になる(DB の replyJa も null のまま)。届かなかったことにして
+      // フロントに「取得できませんでした + 再取得」を出させる。
+      if (enrichment.replyJa.trim()) {
+        safeSend(res, {
+          type: 'enrich',
+          replyJa: enrichment.replyJa,
+          feedback: enrichment.feedback,
+          vocabulary: enrichment.vocabulary,
+        })
+      } else {
+        console.warn(`${tag} enrichment had no Japanese translation; not sending enrich event`)
+      }
     }
   } catch (e) {
     // 中断は失敗ではない(ユーザーが会話を終えただけ)。ログを汚さない。
     if (!isAbortedError(e)) {
       console.warn(`${tag} enrichment failed (stream ends without enrich):`, e)
     }
+  } finally {
+    stopKeepalive()
   }
 
   return res.end()

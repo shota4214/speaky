@@ -65,7 +65,11 @@ export function useSpeechQueue(backend: SpeechBackend) {
 
   async function runDrain(): Promise<void> {
     speaking.value = true
-    lastError.value = null
+    // ⚠️ ここで lastError を消してはいけない。ストリーミング経路では
+    // 生成が読み上げより遅いとキューが文と文の間で一度空になり、次の文で
+    // 新しい drain が始まる。drain 開始時に消すと、その前に起きた発話失敗が
+    // ターン終了時には残っておらず、ユーザーに通知できない。
+    // 消す責任は呼び出し側(ターンの開始 = resetError)だけが持つ。
     try {
       while (queue.length > 0) {
         const item = queue.shift()!
@@ -86,7 +90,17 @@ export function useSpeechQueue(backend: SpeechBackend) {
     }
   }
 
-  /** 待機中を破棄し、再生中も即停止する。 */
+  /** 直近の発話失敗を忘れる(ターンの開始時に呼ぶ)。 */
+  function resetError(): void {
+    lastError.value = null
+  }
+
+  /**
+   * 待機中を破棄し、再生中も即停止する。
+   * ⚠️ lastError はここでも消さない。stop() は cancelAll を呼ぶので、
+   * ここで消すと「最後のターンの読み上げ失敗」が通知される前に消えてしまう。
+   * 消す責任はターンの開始(resetError)だけが持つ。
+   */
   function cancelAll(): void {
     queue.length = 0
     cancelEpoch += 1
@@ -119,7 +133,7 @@ export function useSpeechQueue(backend: SpeechBackend) {
     }
   }
 
-  return { speaking, lastError, enqueue, speakNow, cancelAll, drained, pendingCount }
+  return { speaking, lastError, resetError, enqueue, speakNow, cancelAll, drained, pendingCount }
 }
 
 export type SpeechQueue = ReturnType<typeof useSpeechQueue>

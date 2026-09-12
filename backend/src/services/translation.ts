@@ -5,6 +5,7 @@
  * services へ切り出した。**中身は routes/chat.ts にあった時点から変えていない。**
  */
 import type { Level } from './conversation-prompt.js'
+import { looksLikeJsonScaffold, matchJsonStringField } from './json-salvage.js'
 import { chatWithOllama, OllamaError, RETRY_SEED, type OllamaChatMessage } from './ollama.js'
 
 /**
@@ -189,6 +190,24 @@ Rules:
 - Output ONLY the Japanese translation. No quotes, no preamble, no explanation, no romaji.
 - Keep it natural and friendly, matching spoken Japanese.`
 
+/**
+ * 日本語訳として使ってよい文字列か確かめる。
+ *
+ * このプロンプトはプレーンテキストを求めているが、小型モデルは JSON
+ * エンベロープ(`{"reply_ja": "..."}`)で返すことがある。そのまま通すと
+ * **その JSON が日本語訳として画面に出て DB にも保存される**。
+ * 中の reply_ja を拾えれば拾い、拾えなければ空にする(空 = 取得失敗として
+ * 扱われ、UI に再取得ボタンが出る。JSON を見せるよりはるかにまし)。
+ */
+export function sanitizeJapaneseTranslation(raw: string): string {
+  const stripped = stripTranslationPreamble(raw)
+  if (!looksLikeJsonScaffold(stripped)) return stripped
+  const inner = matchJsonStringField(stripped, 'reply_ja')
+  if (inner?.trim()) return inner.trim()
+  console.warn('[chat] en→ja 翻訳が JSON で返ってきたので破棄した')
+  return ''
+}
+
 export async function translateEnglishToJapanese(
   englishText: string,
   options: { model?: string; signal?: AbortSignal },
@@ -207,7 +226,7 @@ export async function translateEnglishToJapanese(
       jsonFormat: false,
       signal: options.signal,
     })
-    return stripTranslationPreamble(ollamaRes.message?.content ?? '')
+    return sanitizeJapaneseTranslation(ollamaRes.message?.content ?? '')
   } catch (e) {
     // 中断は「失敗」ではない。空文字を返して先へ進むと、切れたソケットへ
     // レスポンスを組み立てる無駄な処理が続くので、呼び出し元へ投げ返す。

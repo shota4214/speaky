@@ -20,8 +20,10 @@ import {
   looksLikeHallucination,
   looksLikeWrongLanguage,
 } from '../utils/language-detection'
+import { splitIntoSpeechSegments } from '../utils/sentence-stream'
 import { useAudioRecorder } from './useAudioRecorder'
-import { getDefaultVoicePreference, useTextToSpeech } from './useTextToSpeech'
+import { useSpeechQueue } from './useSpeechQueue'
+import { getDefaultVoicePreference, useTextToSpeech, type SpeakOptions } from './useTextToSpeech'
 
 const MAX_SILENT_BEFORE_HINT = 3
 const MAX_PROMPTED_ATTEMPTS = 3
@@ -31,6 +33,12 @@ const MAX_PROMPTED_ATTEMPTS = 3
  * ユーザーには「録音中のまま何も起きない」ようにしか見えない。
  */
 const MAX_TRANSCRIBE_FAILURES = 3
+/**
+ * 連続で AI 返答(/api/chat)に失敗したらループを止める閾値。
+ * 1 回の失敗で会話ごと終わらせると、メモリ逼迫で一時的に詰まっただけの
+ * ケースでもセッションが飛んでしまうので、文字起こしと同じく数回は粘る。
+ */
+const MAX_CHAT_FAILURES = 3
 /**
  * system prompt に載せるユーザープロフィール事実の上限(新しいものから)。
  * 事実は会話のたびに増える一方なので、上限が無いと num_ctx(4096)を圧迫し、
@@ -58,6 +66,12 @@ export function useConversationLoop() {
     maxRecordingMs: 30_000,
   })
   const tts = useTextToSpeech({ rate: 1.0 })
+  /**
+   * 文単位の発話キュー。返答は必ず「文へ分割 → キューへ投入 → 読み終わりを待つ」
+   * という 1 本の経路を通す。後段でトークンストリーミングを足すときに、
+   * 「まとめて push」を「届いたぶんだけ push」に変えるだけで済むようにするため。
+   */
+  const speechQueue = useSpeechQueue(tts)
 
   /**
    * 各 tts.speak 呼び出しに渡す共通のオプションを設定から組み立てる。
@@ -79,8 +93,47 @@ export function useConversationLoop() {
     }
   }
 
+  /**
+   * テキストを文へ分割してキューに流し、読み終わるまで待つ。
+   * 戻り値 = 最後まで問題なく読めたか(false なら呼び出し側がユーザーに知らせる)。
+   * 1 文が失敗してもキューは残りを読み続けるので、ここで throw はしない。
+   */
+  async function speakSegments(text: string, overrides: SpeakOptions = {}): Promise<boolean> {
+    const segments = splitIntoSpeechSegments(text)
+    if (segments.length === 0) return true
+    for (const segment of segments) {
+      speechQueue.enqueue(segment, overrides)
+    }
+    await speechQueue.drained()
+    return speechQueue.lastError.value === null
+  }
+
+  /**
+   * ターンごとの AbortController。
+   * 会話を終わっても LLM の生成が走り続けると、8GB マシンではそのまま
+   * 次の操作(要約・履歴表示)まで重くなるので、停止時に必ず中断させる。
+   */
+  let turnController: AbortController | null = null
+
+  function beginTurn(): AbortSignal {
+    turnController?.abort()
+    turnController = new AbortController()
+    return turnController.signal
+  }
+
+  function abortTurn(): void {
+    turnController?.abort()
+    turnController = null
+  }
+
+  /** 自分で abort した結果の失敗をユーザー向けエラーとして出さないための判定。 */
+  function isAbortError(e: unknown): boolean {
+    return (e as { name?: string } | null)?.name === 'AbortError'
+  }
+
   const errorMessage = ref<string | null>(null)
   const consecutiveTranscribeFailures = ref(0)
+  const consecutiveChatFailures = ref(0)
   const stopRequested = ref(false)
   const consecutiveSilent = ref(0)
   const promptedAttempts = ref(0)
@@ -116,6 +169,7 @@ export function useConversationLoop() {
     consecutiveSilent.value = 0
     promptedAttempts.value = 0
     consecutiveTranscribeFailures.value = 0
+    consecutiveChatFailures.value = 0
     errorMessage.value = null
     lastAiReplyEn.value = ''
 
@@ -137,18 +191,25 @@ export function useConversationLoop() {
     conversation.setMode('thinking')
     let reply
     try {
-      reply = await chatOpening({
-        aiName: settings.settings.aiCharacter.name,
-        level: conversation.level,
-        topic: conversation.topic,
-        vocabFocus: input.vocabFocusWords,
-        userProfile: recentProfileFacts(),
-        lastConversationSummary: input.lastConversationSummary,
-        model: settings.settings.llmModel,
-        personality: settings.settings.aiCharacter.personality,
-      })
+      const signal = beginTurn()
+      reply = await chatOpening(
+        {
+          aiName: settings.settings.aiCharacter.name,
+          level: conversation.level,
+          topic: conversation.topic,
+          vocabFocus: input.vocabFocusWords,
+          userProfile: recentProfileFacts(),
+          lastConversationSummary: input.lastConversationSummary,
+          model: settings.settings.llmModel,
+          personality: settings.settings.aiCharacter.personality,
+        },
+        { signal },
+      )
     } catch (e) {
-      console.warn('[loop] opening generation failed, skipping:', e)
+      // 会話終了による中断はエラーではない(ユーザーには何も見せない)
+      if (!isAbortError(e)) {
+        console.warn('[loop] opening generation failed, skipping:', e)
+      }
       return
     }
 
@@ -172,17 +233,16 @@ export function useConversationLoop() {
 
     // Phase 3: 読み上げ(失敗してもメッセージは画面に出ているので、
     // ユーザーに「読み上げ失敗」を明示してテキストを読んでもらう導線へ)
-    try {
-      conversation.setMode('aiSpeaking')
-      const opts = buildTtsOptions()
-      await tts.speak(reply.reply_en, {
-        rate: speakRateForLevel(),
-        pitch: opts.pitch,
-        voiceName: opts.voiceName,
-        voicePreference: opts.voicePreference,
-      })
-    } catch (e) {
-      console.warn('[loop] opening TTS failed:', e)
+    conversation.setMode('aiSpeaking')
+    const opts = buildTtsOptions()
+    const spoken = await speakSegments(reply.reply_en, {
+      rate: speakRateForLevel(),
+      pitch: opts.pitch,
+      voiceName: opts.voiceName,
+      voicePreference: opts.voicePreference,
+    })
+    if (!spoken && !stopRequested.value) {
+      console.warn('[loop] opening TTS failed:', speechQueue.lastError.value)
       errorMessage.value =
         'AI挨拶の音声合成に失敗しました。上の英文を読んでから話しかけてください。'
     }
@@ -267,18 +327,50 @@ export function useConversationLoop() {
         conversation.appendMessage(userMsg)
 
         conversation.setMode('thinking')
-        const reply = await chat(trans.text, {
-          aiName: settings.settings.aiCharacter.name,
-          level: conversation.level,
-          topic: conversation.topic,
-          mode: inputMode,
-          vocabFocus: input.vocabFocusWords,
-          userProfile: recentProfileFacts(),
-          lastConversationSummary: input.lastConversationSummary,
-          conversationHistory: buildHistory().slice(-20),
-          model: settings.settings.llmModel,
-          personality: settings.settings.aiCharacter.personality,
-        })
+        let reply
+        try {
+          const signal = beginTurn()
+          reply = await chat(
+            trans.text,
+            {
+              aiName: settings.settings.aiCharacter.name,
+              level: conversation.level,
+              topic: conversation.topic,
+              mode: inputMode,
+              vocabFocus: input.vocabFocusWords,
+              userProfile: recentProfileFacts(),
+              lastConversationSummary: input.lastConversationSummary,
+              conversationHistory: buildHistory().slice(-20),
+              model: settings.settings.llmModel,
+              personality: settings.settings.aiCharacter.personality,
+            },
+            { signal },
+          )
+        } catch (e) {
+          // 会話終了による中断はエラー扱いしない(ユーザーには何も見せずに抜ける)
+          if (isAbortError(e) || stopRequested.value) break
+          console.warn('[loop] chat failed:', e)
+          consecutiveChatFailures.value += 1
+          errorMessage.value =
+            e instanceof ApiError && e.status === 503
+              ? e.message
+              : 'AIの返答生成に失敗しました。もう一度話しかけてみてください。'
+          if (consecutiveChatFailures.value >= MAX_CHAT_FAILURES) {
+            errorMessage.value =
+              `${errorMessage.value}\n` +
+              `AIの返答が${MAX_CHAT_FAILURES}回続けて失敗したため、会話を停止しました。\n` +
+              '「会話を終わる」で終了し、設定画面で軽いモデル(llama3.2:3b など)に切り替えてから会話を始め直してください。'
+            stop()
+            break
+          }
+          continue
+        }
+
+        // 返答が返ってきた = LLM は生きている。積み上がった失敗回数をリセット。
+        if (consecutiveChatFailures.value > 0) {
+          consecutiveChatFailures.value = 0
+          errorMessage.value = null
+        }
 
         if (stopRequested.value) break
 
@@ -306,7 +398,7 @@ export function useConversationLoop() {
         conversation.setMode('aiSpeaking')
         {
           const opts = buildTtsOptions()
-          await tts.speak(reply.reply_en, {
+          await speakSegments(reply.reply_en, {
             rate: speakRateForLevel(),
             pitch: opts.pitch,
             voiceName: opts.voiceName,
@@ -322,8 +414,11 @@ export function useConversationLoop() {
         }
       }
     } catch (e) {
-      console.error('[loop] error:', e)
-      errorMessage.value = (e as Error).message
+      // 停止時の abort が例外で出てきても「エラー」として見せない
+      if (!isAbortError(e) && !stopRequested.value) {
+        console.error('[loop] error:', e)
+        errorMessage.value = (e as Error).message
+      }
     } finally {
       conversation.setMode('idle')
     }
@@ -337,7 +432,7 @@ export function useConversationLoop() {
         if (lastAiReplyEn.value) {
           conversation.setMode('aiSpeaking')
           const opts = buildTtsOptions()
-          await tts.speak(lastAiReplyEn.value, {
+          await speakSegments(lastAiReplyEn.value, {
             rate: 0.8,
             pitch: opts.pitch,
             voiceName: opts.voiceName,
@@ -348,7 +443,7 @@ export function useConversationLoop() {
         if (lastAiReplyEn.value) {
           conversation.setMode('aiSpeaking')
           const opts = buildTtsOptions()
-          await tts.speak("Let's move on. 次に進みましょう。", {
+          await speakSegments("Let's move on. 次に進みましょう。", {
             pitch: opts.pitch,
             voiceName: opts.voiceName,
             voicePreference: opts.voicePreference,
@@ -363,10 +458,10 @@ export function useConversationLoop() {
     if (consecutiveSilent.value >= MAX_SILENT_BEFORE_HINT) {
       conversation.setMode('aiSpeaking')
       // 日本語ヒントは英語 voice 設定の影響を受けないよう、voice 指定を渡さない。
-      await tts.speak('もしかして分からない?英語が分からなければ日本語で話してくれてもいいよ。', {
-        lang: 'ja-JP',
-        rate: 0.95,
-      })
+      await speakSegments(
+        'もしかして分からない?英語が分からなければ日本語で話してくれてもいいよ。',
+        { lang: 'ja-JP', rate: 0.95 },
+      )
       consecutiveSilent.value = 0
     }
   }
@@ -390,8 +485,17 @@ export function useConversationLoop() {
 
   function stop() {
     stopRequested.value = true
+    // 生成中の LLM リクエストを中断する(放置すると会話を終えた後も
+    // Ollama が生成を続けてマシンが重いままになる)
+    abortTurn()
     recorder.stop()
+    // 待機中のセグメントを捨ててから TTS を止める(順序が逆だと
+    // キューが次のセグメントを積み直してしまう)
+    speechQueue.cancelAll()
     tts.cancel()
+    // 会話が終わったらマイクは手放す。画面に留まったままでも OS の
+    // マイク使用インジケータが点きっぱなしにならないようにする。
+    recorder.release()
   }
 
   // endAndPersist の二重実行ガード(handleEnd が何らかの理由で 2 回呼ばれても
@@ -474,8 +578,10 @@ export function useConversationLoop() {
   return {
     recorder,
     tts,
+    speechQueue,
     errorMessage,
     consecutiveTranscribeFailures,
+    consecutiveChatFailures,
     consecutiveSilent,
     promptedAttempts,
     start,

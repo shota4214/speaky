@@ -107,6 +107,13 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 `npm run dist`（root）のチェーンで以下が走る（すべて冪等）:
 
 - `prep:vendor` / `prep:vendor:whisper-cli`（backend）= node_modules / whisper-cli
+  - **`-DGGML_NATIVE=OFF` 必須**（JSON にコメントが書けないのでここに記録）。
+    付けないと ggml が `-mcpu=native+dotprod+i8mm+nosve+sme` でビルドされ、
+    ビルド機（M5）にしか無い命令が入る。i8mm は M1 に、SME は M1/M2/M3 に無いため
+    配布先の低スペック Mac で **SIGILL クラッシュ**する。
+    OFF にすると clang の既定 `-target-cpu apple-m1`（= 全 Apple Silicon の共通基盤）になる。
+    `-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod` は指定可能だが apple-m1 より基盤が古く
+    fp16 ベクタ演算等を落として遅くなるため**付けない**。
 - `prep:vendor:whisper-model`（backend）= ggml-small.bin を HF から DL
 - `prep:vendor:llama-model`（electron）= Llama 3.2 3B を ollama pull して vendor
 - `prep:vendor:ollama-binary`（electron）= Ollama v0.30.4 バイナリを vendor（symlink 実ファイル化込み）

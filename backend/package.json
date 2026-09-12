@@ -9,7 +9,7 @@
     "build": "tsc",
     "build:bundle": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist-bundle/index.cjs --external:nodejs-whisper --external:fsevents",
     "prep:vendor": "cd vendor && rm -rf node_modules && npm_config_arch=arm64 npm_config_target_arch=arm64 npm ci --omit=dev --no-fund --no-audit --silent",
-    "prep:vendor:whisper-cli": "cd vendor/node_modules/nodejs-whisper/cpp/whisper.cpp && rm -rf build && cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF -DCMAKE_OSX_ARCHITECTURES=arm64 > /dev/null && cmake --build build -j --config Release > /dev/null",
+    "prep:vendor:whisper-cli": "cd vendor/node_modules/nodejs-whisper/cpp/whisper.cpp && rm -rf build && cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF -DGGML_NATIVE=OFF -DCMAKE_OSX_ARCHITECTURES=arm64 > /dev/null && cmake --build build -j --config Release > /dev/null",
     "prep:vendor:whisper-model": "node ../scripts/prep-whisper-model.mjs",
     "verify:arm64": "node -e \"const {execSync}=require('child_process');const targets=['vendor/node_modules/ffmpeg-static/ffmpeg','vendor/node_modules/nodejs-whisper/cpp/whisper.cpp/build/bin/whisper-cli'];for(const t of targets){const info=execSync('file '+t).toString();if(!info.includes('arm64')){console.error('FAIL: '+t+' is not arm64:\\n  '+info.trim());process.exit(1)}console.log('OK arm64: '+t)}\"",
     "start": "node dist/index.js",

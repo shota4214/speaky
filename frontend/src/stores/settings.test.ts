@@ -122,6 +122,21 @@ describe('useSettingsStore', () => {
     expect(s.settings.silenceDurationMs).toBe(8000)
   })
 
+  // スキーマ v1 の旧デフォルト whisperModel 'medium'(もう同梱されない)を
+  // 新デフォルト 'small' へ移行することを確認する。
+  it('migrates legacy default whisperModel (medium) to the new default', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        whisperModel: 'medium',
+        schemaVersion: undefined,
+      }),
+    )
+    const s = useSettingsStore()
+    expect(s.settings.whisperModel).toBe(DEFAULT_SETTINGS.whisperModel)
+  })
+
   // 移行済み(schemaVersion=2)なら、たまたま 5000 でも書き換えない。
   it('does not re-apply the migration once schemaVersion is current', () => {
     localStorage.setItem(

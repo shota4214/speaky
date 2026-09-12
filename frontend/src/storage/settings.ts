@@ -8,13 +8,15 @@ const STORAGE_KEY = 'speaky:settings'
  *  新デフォルトを一度だけ適用する」ためだけに使う(値の形は変えない)。
  *
  * - 1 (= schemaVersion 欠落): v1.0.0 以前
- * - 2: silenceDurationMs のデフォルトを 5000 → 1500 に変更。
- *      旧デフォルト(5000)のまま保存されているものを新デフォルトへ移行する。
+ * - 2: silenceDurationMs のデフォルトを 5000 → 1500 に、
+ *      whisperModel のデフォルトを 'medium' → 'small' に変更。
+ *      旧デフォルトのまま保存されているものだけを新デフォルトへ移行する。
  */
 export const SETTINGS_SCHEMA_VERSION = 2
 
-/** v1 時点の silenceDurationMs デフォルト。移行判定にのみ使う。 */
+/** v1 時点のデフォルト値。移行判定にのみ使う。 */
 const LEGACY_DEFAULT_SILENCE_MS = 5000
+const LEGACY_DEFAULT_WHISPER_MODEL: WhisperModel = 'medium'
 
 // nodejs-whisper の MODELS_LIST に含まれ、かつ Hugging Face で実在する
 // `ggml-${name}.bin` を持つ名前のみ許可する。
@@ -193,8 +195,16 @@ export function loadSettings(): AppSettings {
     // --- スキーマ移行(1 → 2): silenceDurationMs の旧デフォルト 5000 を新デフォルトへ ---
     // 旧デフォルトのまま使っていた人だけが対象。自分で値を変えていた人の設定は尊重する。
     const storedVersion = typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 1
-    if (storedVersion < 2 && merged.silenceDurationMs === LEGACY_DEFAULT_SILENCE_MS) {
-      merged.silenceDurationMs = DEFAULT_SETTINGS.silenceDurationMs
+    if (storedVersion < 2) {
+      if (merged.silenceDurationMs === LEGACY_DEFAULT_SILENCE_MS) {
+        merged.silenceDurationMs = DEFAULT_SETTINGS.silenceDurationMs
+      }
+      // 旧デフォルトの medium は DMG に同梱されなくなった(backend も small に
+      // フォールバックする)。設定表示と実際に動くモデルを一致させるため移行する。
+      // medium を自分で DL して使っていた人はファイルが残っているので設定画面で選び直せる。
+      if (merged.whisperModel === LEGACY_DEFAULT_WHISPER_MODEL) {
+        merged.whisperModel = DEFAULT_SETTINGS.whisperModel
+      }
     }
     merged.schemaVersion = SETTINGS_SCHEMA_VERSION
 

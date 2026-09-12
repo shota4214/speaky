@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test -w frontend
    ```
-   （現在テストは frontend 95 件）
+   （現在テストは frontend 96 件）
 4. **main へ直接コミット禁止**。必ずブランチ → PR → マージ。コミットは日本語 `[add]/[fix]/[chore]` プレフィクス。
 
 ## 🔴 次にやるべき最優先タスク（このセッションからの引き継ぎ）

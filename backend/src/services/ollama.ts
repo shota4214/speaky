@@ -1,22 +1,25 @@
+import { DEFAULT_LLM_MODEL, isAllowedLlmModel } from '../shared/llm-models.js'
+
 // env は `??` ではなく `||`(+ trim)で評価する。`??` は null/undefined しか弾かないため、
 // 空文字や空白だけの env(シェルの `VAR=` や Electron から空文字で渡した場合)が
 // そのまま採用されて Ollama に不正な値が飛ぶ。
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434'
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL?.trim() || 'llama3.2:3b'
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL?.trim() || DEFAULT_LLM_MODEL
 
-// 許可するLLMモデルの allowlist。フロントから指定された場合のみ
-// この中に含まれていなければ default にフォールバック。
-export const ALLOWED_LLM_MODELS = new Set<string>([
-  'llama3.2:3b',
-  'llama3.1:8b',
-  'gemma2:9b',
-  'gemma2:2b',
-  'qwen2.5:7b',
-  'qwen2.5:14b',
-])
-
+/**
+ * フロントから指定されたモデル名を採用するか、既定へ落とすかを決める。
+ *
+ * 判定は **ファミリー一致 + 書式チェック**(`shared/llm-models.ts`)。
+ * 完全一致だった v1.1.0 までは `llama3.2:3b-instruct-q4_K_M` のような
+ * 量子化タグが全部ここで既定へ落とされ、しかもユーザーには何も表示されなかった。
+ *
+ * ⚠️ **これはセキュリティ境界ではない**。backend は 127.0.0.1 にしか bind せず、
+ * モデル名は Ollama への JSON ボディに入るだけでシェルにもパスにも渡らない。
+ * ここは「Ollama にゴミを投げない」ための入口ガードである。
+ * 詳細は shared/llm-models.ts の同じ注意書きを参照。
+ */
 export function resolveLlmModel(requested?: string): string {
-  if (requested && ALLOWED_LLM_MODELS.has(requested)) return requested
+  if (requested && isAllowedLlmModel(requested)) return requested
   return OLLAMA_MODEL
 }
 
@@ -55,15 +58,19 @@ type OllamaChatRequest = {
 const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE?.trim() || '30m'
 
 /**
- * コンテキスト長。ここ 1 箇所で調整する。
- * system prompt が約 900 トークン + 履歴最大 20 メッセージあるため、
- * 既定(2048)だと静かに溢れて JSON 崩れの一因になっていた疑いがある。
+ * コンテキスト長の既定値。
+ * standard の system prompt が約 900 トークン + 履歴最大 20 メッセージあるため、
+ * Ollama の既定(2048)だと静かに溢れて JSON 崩れの一因になっていた疑いがある。
  * 計測せずにこれ以上下げないこと(RAM と品質のトレードオフ)。
+ *
+ * 呼び出し側は `options.numCtx`(= プロファイルの値)で上書きできるが、
+ * **env の OLLAMA_NUM_CTX があればそちらが常に勝つ**。env は運用者が明示的に
+ * 決めた値で、プロファイルの既定より意図が強いため。
  */
 const DEFAULT_NUM_CTX = 4096
-const NUM_CTX = (() => {
+const ENV_NUM_CTX = (() => {
   const raw = process.env.OLLAMA_NUM_CTX?.trim()
-  if (!raw) return DEFAULT_NUM_CTX
+  if (!raw) return null
   const parsed = Number(raw)
   // 0 / 負数 / 小数 / 非数値はすべて拒否する(num_ctx は正の整数のみ)。
   // Number('') === 0、Number('1.5') === 1.5 なので isFinite だけでは足りない。
@@ -71,10 +78,17 @@ const NUM_CTX = (() => {
     console.warn(
       `[ollama] OLLAMA_NUM_CTX="${raw}" は正の整数ではないため無視します (num_ctx=${DEFAULT_NUM_CTX} を使用)`,
     )
-    return DEFAULT_NUM_CTX
+    return null
   }
   return parsed
 })()
+
+/** 実際に送る num_ctx を決める(env > 呼び出し側の指定 > 既定)。 */
+function resolveNumCtx(requested?: number): number {
+  if (ENV_NUM_CTX !== null) return ENV_NUM_CTX
+  if (requested !== undefined && Number.isInteger(requested) && requested > 0) return requested
+  return DEFAULT_NUM_CTX
+}
 
 export type OllamaChatResponse = {
   model: string
@@ -146,6 +160,11 @@ export interface ChatWithOllamaOptions {
    * デフォルトは未指定(モデルの判断、長くなりがち)
    */
   numPredict?: number
+  /**
+   * コンテキスト長。プロファイル(services/model-profile.ts)から渡す。
+   * 省略時は既定の 4096。env の OLLAMA_NUM_CTX があればそちらが勝つ。
+   */
+  numCtx?: number
   model?: string
   /**
    * 最初のトークンが返るまでの許容時間 (ms)。0 で無効化。既定 60 秒。
@@ -241,7 +260,7 @@ export async function chatWithOllama(
       stream: false,
       keep_alive: KEEP_ALIVE,
       options: {
-        num_ctx: NUM_CTX,
+        num_ctx: resolveNumCtx(options.numCtx),
         temperature,
         top_p: topP,
         top_k: topK,
@@ -394,7 +413,7 @@ export async function startOllamaChatStream(
       stream: true,
       keep_alive: KEEP_ALIVE,
       options: {
-        num_ctx: NUM_CTX,
+        num_ctx: resolveNumCtx(options.numCtx),
         temperature,
         top_p: topP,
         top_k: topK,

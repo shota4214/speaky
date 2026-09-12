@@ -10,6 +10,8 @@ MacBook(Apple Silicon)上で **Whisper(音声認識)/ Ollama(LLM)/ Web Speech AP
 - 📝 **添削**: あなたの英語の間違いを自然に指摘
 - 📚 **単語学習**: AIが拾った重要単語を「これ覚えたい」ボタンで保存
 - 🇯🇵 **日本語サポート**: 言えない時は日本語で話すと英訳を提示してくれる
+- ⚡ **文ができた順に読み上げ**: AI の返答全体を待たず、最初の 1 文から喋り始めます
+- 🪶 **軽量モード**: 8GB の Mac でも会話が成立するよう、小さいモデル向けに指示と返答を切り詰めます
 - 🧠 **プロフィール自動学習**: 会話の中からAIがあなたのことを覚えていく
 - ⭐ **復習リスト**: 保存した単語で集中的に会話練習
 - 📚 **履歴**: 30日分の会話を保存、いつでも振り返り可能
@@ -21,6 +23,9 @@ MacBook(Apple Silicon)上で **Whisper(音声認識)/ Ollama(LLM)/ Web Speech AP
 
 - **macOS** (Apple Silicon, M4/M5 推奨。最低 M1 以上)
 - **メモリ 8GB 以上**(16GB 以上推奨)
+  - **8GB の Mac**: 初回セットアップがメモリを検出して軽量モデル(Llama 3.2 1B)を
+    あらかじめ選びます。会話は自動で**軽量モード**(後述)になります
+  - **16GB 以上**: 同梱の Llama 3.2 3B が既定。Gemma 2 9B / Qwen 2.5 14B も選べます
 - **空き容量 8GB 以上推奨**(DMG 約 2.7GB + アプリ展開 + ランタイム同期分)
 - 配布版(Speaky.dmg)を使う場合: 追加の依存ソフトは不要
   (Llama 3.2 3B + Whisper small + ffmpeg + Ollama ランタイムをすべて同梱)
@@ -90,8 +95,41 @@ MacBook(Apple Silicon)上で **Whisper(音声認識)/ Ollama(LLM)/ Web Speech AP
 - サイドバー → **設定**
 - 無音検出時間(1〜15秒 / 初期値 1.5秒)
 - LLM / Whisper モデル選択
+- **会話モード**(自動 / 標準に固定 / 軽量に固定)
 - テーマ切替(Mint / Lavender / Peach)
 - データのエクスポート / インポート / 全削除
+
+### 会話モード(軽量モード)
+
+小さいモデル(2B 以下)は長い指示を守れません。そのまま使うと返答が延々と続いたり、
+JSON が崩れたり、英語で返すはずのところに日本語が混ざったりします。
+**軽量モード**は小さいモデル向けに次を切り替えます:
+
+|             | 標準モード             | 軽量モード                                       |
+| ----------- | ---------------------- | ------------------------------------------------ |
+| AI への指示 | 約 900 トークン        | **約 200〜250 トークン**                         |
+| 会話履歴    | 直近 10 往復           | **直近 4 往復**                                  |
+| 返答の長さ  | レベルに応じて 1〜5 文 | **1〜2 文に固定**                                |
+| 添削・単語  | 出す                   | **出さない**(小さいモデルの添削は誤りが多いため) |
+| 日本語訳    | 必ず出す               | **必ず出す**(変わりません)                       |
+
+既定は「自動」で、モデル名のパラメータ数から判定します(**2B 以下 = 軽量**)。
+判定はバックエンドが行い、設定画面には実際に動くモード(「軽量モードで動作中」)が出ます。
+`llama3.2:3b` を使っていた人の挙動は変わりません。
+
+### 選べる LLM
+
+| モデル         | サイズ | 向き                                           |
+| -------------- | ------ | ---------------------------------------------- |
+| `llama3.2:1b`  | ~1.3GB | **8GB 機向け**。最速だが精度は低い(添削なし)   |
+| `qwen2.5:1.5b` | ~1GB   | **8GB 機向け**。日本語は 1B より安定(添削なし) |
+| `gemma2:2b`    | ~1.6GB | 軽量。会話は成立するが添削は粗い               |
+| `llama3.2:3b`  | ~2GB   | **同梱・既定**。8GB 機の標準                   |
+| `gemma2:9b`    | ~5.5GB | 16GB 以上向け。精度重視の標準おすすめ          |
+| `qwen2.5:14b`  | ~9GB   | 16GB 以上向け。高品質だが低速                  |
+
+上記以外でも、同じファミリー(`llama3.2` / `llama3.1` / `gemma2` / `qwen2.5`)の
+量子化版(例: `llama3.2:3b-instruct-q4_K_M`)を自分で `ollama pull` すれば選べます。
 
 ## トラブルシューティング
 
@@ -142,7 +180,9 @@ brew install cmake
 ### ターン応答が遅い(15秒以上)
 
 - 初回はモデルロードで時間がかかるのが正常
-- 2回目以降が遅い場合: メモリ不足の可能性。設定画面から軽量モデル(`llama3.2:3b`)に切り替えてください
+- 2回目以降が遅い場合: メモリ不足の可能性。設定画面から軽量モデルに切り替えてください
+  - 8GB 機なら `llama3.2:1b` または `qwen2.5:1.5b`(自動で軽量モードになります)
+  - それでも遅い場合は Whisper を `base` に下げてください
 
 ### 「Thank you for watching」のような幻覚応答が出る
 
@@ -169,8 +209,9 @@ speaky/
 └── backend/                  # Node.js + Express + TypeScript
     └── src/
         ├── index.ts          # サーバー起動
-        ├── routes/           # chat, transcribe, summarize, extract-facts
-        ├── services/         # ollama, conversation-prompt
+        ├── routes/           # chat, chat-stream, transcribe, summarize, extract-facts
+        ├── services/         # ollama, conversation-prompt, model-profile
+        ├── shared/           # frontend と共有(LLM カタログ / 許可判定 / プロファイル推定)
         └── docs/             # whisper-binding 採用判断ドキュメント
 ```
 
@@ -180,7 +221,8 @@ speaky/
 - **Backend**: Node.js (Express + TypeScript, tsx でホットリロード)
 - **Desktop shell**: Electron(Ollama を sidecar として起動)
 - **STT**: nodejs-whisper(whisper.cpp バインディング, `small` モデル / 多言語)
-- **LLM**: Ollama HTTP API(`llama3.2:3b` 軽量・デフォルト推奨, JSON 出力強制)
+- **LLM**: Ollama HTTP API(`llama3.2:3b` 軽量・デフォルト推奨)。
+  会話の英文は SSE でストリーミングし、日本語訳・添削・単語は後追いで生成
 - **TTS**: Browser Web Speech API(macOS の Samantha/Daniel 音声)
 - **DB**: IndexedDB(Dexie 経由)+ LocalStorage(設定)
 - **Test**: Vitest + fake-indexeddb
@@ -246,8 +288,15 @@ npm run dev:backend
 # Lint
 npm run lint
 
-# テスト(frontend のみ、52件)
+# テスト(frontend 232件 / backend 189件)
+npm test
+
+# 個別
 npm run test -w frontend
+npm run test -w backend
+
+# コミット前の検証セット(すべて pass させること)
+npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
 
 # プロダクションビルド
 npm run build

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   FEATURE_CHAT_ENRICH,
   FEATURE_CHAT_STREAM,
+  formatMemoryGb,
   hasFeature,
+  isLowMemoryMachine,
   NO_FEATURES,
   parseHealthFeatures,
 } from './backend-features'
@@ -47,5 +49,51 @@ describe('parseHealthFeatures', () => {
   it('知らない機能名は false', () => {
     const parsed = parseHealthFeatures({ features: ['chat-stream'] })
     expect(hasFeature(parsed, 'something-else')).toBe(false)
+  })
+})
+
+/**
+ * 搭載メモリ。オンボーディングが「この Mac は 8GB なので軽いモデルを」と
+ * 言い切れるかどうかがこの 1 個に懸かっている。
+ * **分からないときは推測しない**(false / null を返す)のが肝。
+ */
+describe('搭載メモリ', () => {
+  const GB = 1024 * 1024 * 1024
+
+  it('totalMemoryBytes を読み取る', () => {
+    const parsed = parseHealthFeatures({ features: ['chat-stream'], totalMemoryBytes: 8 * GB })
+    expect(parsed.totalMemoryBytes).toBe(8 * GB)
+  })
+
+  it('古いバックエンド(キーなし)は null', () => {
+    expect(parseHealthFeatures({ features: ['chat-stream'] }).totalMemoryBytes).toBeNull()
+  })
+
+  it('不正な値は null に倒す', () => {
+    for (const bad of ['8GB', 0, -1, Number.NaN, Number.POSITIVE_INFINITY, null]) {
+      expect(
+        parseHealthFeatures({ features: ['chat-stream'], totalMemoryBytes: bad }).totalMemoryBytes,
+        String(bad),
+      ).toBeNull()
+    }
+  })
+
+  it('8GB 機は軽量モデル向きと判定する', () => {
+    const parsed = parseHealthFeatures({ features: [], totalMemoryBytes: 8 * GB })
+    expect(isLowMemoryMachine(parsed)).toBe(true)
+    expect(formatMemoryGb(parsed)).toBe('8GB')
+  })
+
+  it('16GB / 24GB 機は軽量モデル向きではない', () => {
+    for (const gb of [16, 24, 36]) {
+      const parsed = parseHealthFeatures({ features: [], totalMemoryBytes: gb * GB })
+      expect(isLowMemoryMachine(parsed), `${gb}GB`).toBe(false)
+      expect(formatMemoryGb(parsed)).toBe(`${gb}GB`)
+    }
+  })
+
+  it('メモリが分からないときは推測しない', () => {
+    expect(isLowMemoryMachine(NO_FEATURES)).toBe(false)
+    expect(formatMemoryGb(NO_FEATURES)).toBeNull()
   })
 })

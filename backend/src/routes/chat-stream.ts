@@ -28,6 +28,7 @@ import {
   startOllamaChatStream,
   type OllamaChatMessage,
 } from '../services/ollama.js'
+import { resolveModelProfile, type ModelProfile } from '../services/model-profile.js'
 import { setupSSE, sseComment, sseSend } from '../services/sse.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
 import { MAX_HISTORY_TURNS, type ChatContext } from './chat.js'
@@ -71,24 +72,20 @@ const STREAM_FIRST_TOKEN_TIMEOUT_MS = 60_000
 const OPENING_STREAM_FIRST_TOKEN_TIMEOUT_MS = 90_000
 
 /**
- * プレーンテキスト経路の生成上限。JSON エンベロープ(日本語訳・添削・単語)が
- * 無くなるので、非ストリーミングの 640 から大きく下げられる。
- * 英語の返答は advanced でもせいぜい 4〜5 文 = 100 トークン前後。
- */
-const STREAM_NUM_PREDICT = 320
-
-/**
- * enrich(日本語訳 + 添削 + 単語)の生成上限。
+ * プレーンテキスト経路 / enrich の生成上限は **プロファイル** が持つ
+ * (services/model-profile.ts の streamNumPredict / enrichNumPredict)。
+ *
+ * standard の 320: JSON エンベロープ(日本語訳・添削・単語)が無くなるので
+ * 非ストリーミングの 640 から大きく下げられる。英語の返答は advanced でも
+ * せいぜい 4〜5 文 = 100 トークン前後。small は「1〜2 文」契約なので 160。
  *
  * enrich は **次のターンと同じ 1 枠を奪い合う**(NUM_PARALLEL=1 / 1 モデル)。
  * 次ターンが始まればクライアントが切るので最長でも「ユーザーが話し終えるまで」だが、
  * その間 Ollama を占有するぶんは短いほどよい。
- * 内訳の見積り: 日本語訳 150〜200 / 添削 90 / 単語 2 件 80 / 記号 30。
- * 480 → 360 に下げ、単語も 3 件 → 2 件にした。JSON のキー順は reply_ja が先頭なので、
- * 予算を使い切って切断されても日本語訳は parseEnrichment の salvage で必ず残る
- * (落ちるのは添削・単語だけ)。
+ * standard 360 の内訳見積り: 日本語訳 150〜200 / 添削 90 / 単語 2 件 80 / 記号 30。
+ * JSON のキー順は reply_ja が先頭なので、予算を使い切って切断されても
+ * 日本語訳は parseEnrichment の salvage で必ず残る(落ちるのは添削・単語だけ)。
  */
-const ENRICH_NUM_PREDICT = 360
 const ENRICH_FIRST_TOKEN_TIMEOUT_MS = 60_000
 
 /** 最初のトークンを待つ間に流す keepalive コメントの間隔。 */
@@ -186,6 +183,8 @@ interface EnrichInput {
   replyEn: string
   userText?: string | null
   context: ChatContext
+  /** 既に解決済みのプロファイル。省略時は context から解決する。 */
+  profile?: ModelProfile
   signal?: AbortSignal
 }
 
@@ -197,11 +196,19 @@ interface EnrichInput {
  */
 export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentResult> {
   const { replyEn, userText, context, signal } = input
+  const profile = input.profile ?? resolveModelProfile(context.modelProfile, context.model)
 
-  // opening(ユーザー発話が無い)は添削も単語も出さない契約なので、
-  // 日本語訳だけを取る。LLM 呼び出しが 1 回で済むぶん速い。
-  if (!userText?.trim()) {
-    const replyJa = await translateEnglishToJapanese(replyEn, { model: context.model, signal })
+  // small プロファイルは日本語訳だけを作る。1B クラスの添削は正しい文を
+  // 「間違い」と言い切ることがあり、単語抽出も学習者が既に知っている語を
+  // 並べるだけになる。**間違った学習材料を出すくらいなら出さない方がよい**。
+  // opening(ユーザー発話が無い)も添削も単語も出さない契約なので同じ経路。
+  // どちらも LLM 呼び出しが 1 回で済むぶん速い。
+  if (profile.enrichment === 'translation-only' || !userText?.trim()) {
+    const replyJa = await translateEnglishToJapanese(replyEn, {
+      model: context.model,
+      numCtx: profile.numCtx,
+      signal,
+    })
     return { replyJa, feedback: null, vocabulary: [] }
   }
 
@@ -218,7 +225,8 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
     const res = await chatWithOllama(messages, {
       model: context.model,
       firstTokenTimeoutMs: ENRICH_FIRST_TOKEN_TIMEOUT_MS,
-      numPredict: ENRICH_NUM_PREDICT,
+      numPredict: profile.enrichNumPredict,
+      numCtx: profile.numCtx,
       temperature: 0.3,
       topP: 0.9,
       jsonFormat: true,
@@ -232,7 +240,11 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
 
   const result: EnrichmentResult = parsed ?? { replyJa: '', feedback: null, vocabulary: [] }
   if (!result.replyJa.trim()) {
-    result.replyJa = await translateEnglishToJapanese(replyEn, { model: context.model, signal })
+    result.replyJa = await translateEnglishToJapanese(replyEn, {
+      model: context.model,
+      numCtx: profile.numCtx,
+      signal,
+    })
   }
   return result
 }
@@ -343,13 +355,15 @@ chatStreamRouter.post('/chat/enrich', async (req: Request, res: Response) => {
   }
   const { signal, dispose } = watchClientAbort(res)
   try {
+    const profile = resolveModelProfile(context.modelProfile, context.model)
     const enrichment = await buildEnrichment({
       replyEn,
       userText: typeof userText === 'string' ? userText : null,
       context,
+      profile,
       signal,
     })
-    return res.json(enrichment)
+    return res.json({ ...enrichment, profile: profile.level })
   } catch (e) {
     return sendOllamaErrorJson(res, e, '[chat:enrich]')
   } finally {
@@ -365,11 +379,13 @@ async function streamTranslationTurn(
   mode: Mode,
   signal: AbortSignal,
 ): Promise<Response | void> {
+  const profile = resolveModelProfile(context.modelProfile, context.model)
   let translated: string
   try {
     translated = await translateToNaturalEnglish(userText, {
       model: context.model,
       level: context.level,
+      numCtx: profile.numCtx,
       signal,
     })
   } catch (e) {
@@ -387,6 +403,7 @@ async function streamTranslationTurn(
     mode,
     model: resolveLlmModel(context.model),
     speakDeltas: false,
+    profile: profile.level,
   })
   safeSend(res, {
     type: 'done',
@@ -412,6 +429,7 @@ async function streamConversationTurn(
   input: ConversationStreamInput,
 ): Promise<Response | void> {
   const { context, userText, signal, firstTokenTimeoutMs, tag } = input
+  const profile = resolveModelProfile(context.modelProfile, context.model)
 
   const systemPrompt = buildSystemPrompt({
     aiName: context.aiName,
@@ -425,6 +443,7 @@ async function streamConversationTurn(
     personality: context.personality,
     // ここが非ストリーミング経路との唯一のプロンプト差分。
     outputFormat: 'text',
+    profile: profile.promptVariant,
   })
 
   const messages: OllamaChatMessage[] = [{ role: 'system', content: systemPrompt }]
@@ -438,10 +457,12 @@ async function streamConversationTurn(
         lastConversationSummary: context.lastConversationSummary,
         personality: context.personality,
         outputFormat: 'text',
+        profile: profile.promptVariant,
       }),
     })
   } else {
-    const history = (context.conversationHistory ?? []).slice(-MAX_HISTORY_TURNS * 2)
+    const historyTurns = Math.min(profile.maxHistoryTurns, MAX_HISTORY_TURNS)
+    const history = (context.conversationHistory ?? []).slice(-historyTurns * 2)
     for (const h of history) {
       messages.push({ role: h.role === 'user' ? 'user' : 'assistant', content: h.text })
     }
@@ -455,11 +476,12 @@ async function streamConversationTurn(
     stream = await startOllamaChatStream(messages, {
       model: context.model,
       jsonFormat: false,
-      numPredict: STREAM_NUM_PREDICT,
+      numPredict: profile.streamNumPredict,
+      numCtx: profile.numCtx,
       firstTokenTimeoutMs,
-      temperature: 0.85,
-      topP: 0.92,
-      repeatPenalty: 1.15,
+      temperature: userText === null ? profile.openingTemperature : profile.temperature,
+      topP: profile.topP,
+      repeatPenalty: profile.repeatPenalty,
       signal,
     })
   } catch (e) {
@@ -467,7 +489,15 @@ async function streamConversationTurn(
   }
 
   setupSSE(res)
-  safeSend(res, { type: 'meta', mode: 'normal', model: stream.model, speakDeltas: true })
+  safeSend(res, {
+    type: 'meta',
+    mode: 'normal',
+    model: stream.model,
+    speakDeltas: true,
+    // どのプロファイルで動いているかをクライアントへ知らせる(UI の表示用)。
+    // 古いフロントは知らないキーとして無視する。
+    profile: profile.level,
+  })
 
   // 無通信になる区間では keepalive コメントを流す。dev プロキシ対策であると同時に、
   // **クライアントの無通信タイムアウト(STREAM_IDLE_TIMEOUT_MS)に巻き込まれない**
@@ -595,6 +625,7 @@ async function streamConversationTurn(
       replyEn: finalText,
       userText,
       context,
+      profile,
       signal,
     })
     if (!signal.aborted) {

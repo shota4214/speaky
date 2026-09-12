@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AiMascot from '../components/AiMascot.vue'
 import BaseButton from '../components/BaseButton.vue'
@@ -11,10 +11,17 @@ import {
   getWhisperCppStatus,
   listOllamaModels,
   listWhisperModels,
+  probeBackendFeatures,
   pullOllamaModel,
 } from '../services/api'
 import type { PersonalityPreset } from '../db/types'
 import { useSettingsStore } from '../stores/settings'
+import {
+  formatMemoryGb,
+  isLowMemoryMachine,
+  NO_FEATURES,
+  type BackendFeatures,
+} from '../utils/backend-features'
 
 const router = useRouter()
 const settings = useSettingsStore()
@@ -82,16 +89,47 @@ watch(step, (s) => {
   if (s === 4) refreshStep4Status()
 })
 
-onMounted(() => {
+/**
+ * この Mac の搭載メモリ。**このステージで一番効く 1 行**。
+ *
+ * 8GB の Mac に 9B を選ばせると「重くて使えない」まま離脱するが、
+ * ユーザーは自分が何を選ぶべきか判断する材料を持っていない
+ * (「軽量」「標準」「高品質」だけでは、自分の機械がどれなのか分からない)。
+ * backend が os.totalmem() を返すので、**このマシンは何 GB か**を言い切って
+ * 既定の選択もそちらへ寄せる。メモリが取れないときは何も推測しない。
+ */
+const backendFeatures = ref<BackendFeatures>(NO_FEATURES)
+const memoryLabel = computed(() => formatMemoryGb(backendFeatures.value))
+const lowMemory = computed(() => isLowMemoryMachine(backendFeatures.value))
+
+onMounted(async () => {
   if (step.value === 2) startOllamaPolling()
   if (step.value === 4) refreshStep4Status()
+
+  backendFeatures.value = await probeBackendFeatures()
+  // 8GB 機には軽いモデルを **あらかじめ選んでおく**。
+  // 「推奨」と書くだけでは既定の 3B のまま次へ進まれる。
+  // ただしユーザーが既にこの画面で選び直していたら尊重する。
+  if (lowMemory.value && llmModel.value === settings.settings.llmModel && !userPickedLlm.value) {
+    llmModel.value = LOW_MEMORY_DEFAULT_LLM
+  }
 })
 
 onUnmounted(() => {
   stopOllamaPolling()
 })
 
+/**
+ * メモリの少ない Mac に最初から選んでおくモデル。
+ * 同梱の 3B ではなく 1B にするのは、8GB 機で「まず会話が成立する」ことを
+ * 優先するため(精度は落ちるが、重くて使えないより遥かによい)。
+ * 3B も同梱されているので、あとから設定画面で 1 クリックで戻せる。
+ */
+const LOW_MEMORY_DEFAULT_LLM = 'llama3.2:1b'
+
 const llmModel = ref(settings.settings.llmModel)
+/** ユーザーがこの画面で LLM を選び直したか(自動選択で上書きしないため)。 */
+const userPickedLlm = ref(false)
 const whisperModel = ref(settings.settings.whisperModel)
 const aiName = ref(settings.settings.aiCharacter.name)
 const aiGender = ref<'female' | 'male'>(settings.settings.aiCharacter.gender)
@@ -307,16 +345,45 @@ function complete() {
           <p class="text-sm text-text-muted">
             利用する LLM と Whisper のモデルを選びます。後から設定で変更可能です。
           </p>
+
+          <!--
+            このマシンのメモリ。「軽量 / 標準 / 高品質」だけでは、ユーザーは
+            自分の Mac がどれに当たるのか判断できない。言い切る。
+          -->
+          <div
+            v-if="lowMemory"
+            class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200"
+          >
+            💡 この Mac のメモリは <strong>{{ memoryLabel }}</strong> です。
+            <strong>軽量なモデル</strong>をおすすめします(既に選んであります)。 大きいモデルを選ぶと
+            1 回の返答に 30 秒以上かかったり、途中で止まったりします。
+          </div>
+          <div v-else-if="memoryLabel" class="text-xs text-text-muted">
+            この Mac のメモリ: <strong class="text-text">{{ memoryLabel }}</strong>
+          </div>
+
           <div>
             <label class="block text-sm font-medium">LLM</label>
             <select
               v-model="llmModel"
               class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+              @change="userPickedLlm = true"
             >
-              <option value="llama3.2:3b">⚡ 軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
-              <option value="gemma2:9b">⚖️ 標準 (Gemma 2 9B / ~5.5GB)</option>
-              <option value="qwen2.5:14b">💎 高品質 (Qwen 2.5 14B / ~9GB)</option>
+              <option value="llama3.2:1b">
+                ⚡⚡ 最軽量 (Llama 3.2 1B / ~1.3GB / 8GB 機向け・精度は低め)
+              </option>
+              <option value="qwen2.5:1.5b">
+                ⚡⚡ 超軽量 (Qwen 2.5 1.5B / ~1GB / 8GB 機向け・日本語は 1B より安定)
+              </option>
+              <option value="llama3.2:3b">⚡ 軽量(同梱) (Llama 3.2 3B / ~2GB)</option>
+              <option value="gemma2:9b">⚖️ 標準 (Gemma 2 9B / ~5.5GB / 16GB 以上向け)</option>
+              <option value="qwen2.5:14b">💎 高品質 (Qwen 2.5 14B / ~9GB / 16GB 以上向け)</option>
             </select>
+            <p class="mt-1 text-xs text-text-muted">
+              2B 以下のモデルを選ぶと <strong class="text-text">軽量モード</strong>
+              で動きます(AI への指示を短くし、返答を 1〜2
+              文に制限。添削は出さず日本語訳のみ)。設定画面で切り替えられます。
+            </p>
           </div>
           <div>
             <label class="block text-sm font-medium">Whisper</label>

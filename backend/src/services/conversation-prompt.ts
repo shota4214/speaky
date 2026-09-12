@@ -1,3 +1,5 @@
+import type { ModelProfileLevel } from '../shared/llm-models.js'
+
 export type Level = 'beginner' | 'intermediate' | 'advanced'
 export type Mode = 'normal' | 'japanese_help' | 'mixed'
 export type PersonalityPreset = 'friendly' | 'teacher' | 'cool' | 'kohai' | 'colleague'
@@ -23,6 +25,11 @@ export interface BuildPromptInput {
   personality?: PersonalityPreset
   /** 既定は 'json'(従来挙動)。ストリーミング経路だけが 'text' を渡す。 */
   outputFormat?: OutputFormat
+  /**
+   * 会話プロファイル。既定 'standard' は v1.1.0 までと完全に同じプロンプト。
+   * 'small' は 1B〜2B クラス向けに切り詰めた別プロンプトへ分岐する。
+   */
+  profile?: ModelProfileLevel
 }
 
 /**
@@ -69,7 +76,121 @@ export function buildPersonalityBlock(personality: PersonalityPreset = 'friendly
   }
 }
 
+/**
+ * small プロファイル用の人格。standard の 5〜8 行を **1 行**にしたもの。
+ * 1B クラスは「箇条書き 6 行の人格指定」を守るより、指示の総量に押し潰されて
+ * 肝心の「英語で 1〜2 文」を落とす方が先に起きる。
+ */
+const SMALL_PERSONALITY_LINE: Record<PersonalityPreset, string> = {
+  friendly: 'Be warm and friendly, like a close friend.',
+  teacher: 'Be a patient, encouraging teacher.',
+  cool: 'Be calm and understated. Dry humor, never gushing.',
+  kohai: 'Be an excited younger friend. React with energy.',
+  colleague: 'Be a polite, professional colleague. No slang.',
+}
+
+/**
+ * small プロファイル用のレベル指示。
+ * standard は 3 レベルぶんを全部載せているが、**今のターンに関係あるのは 1 つだけ**。
+ * 残り 2 行は小型モデルにとってノイズでしかないので、該当レベルだけを渡す。
+ */
+const SMALL_LEVEL_LINE: Record<Level, string> = {
+  beginner: 'Use very simple words (CEFR A1-A2). No idioms, no slang.',
+  intermediate: 'Use everyday words (CEFR B1-B2). Common idioms are fine.',
+  advanced: 'Use natural, varied English (CEFR C1-C2). Idioms and slang are fine.',
+}
+
+/** small プロファイルの system prompt に載せるユーザープロフィール事実の上限。 */
+const SMALL_MAX_PROFILE_FACTS = 6
+
+/** small プロファイルのプレーンテキスト出力契約。 */
+const SMALL_TEXT_CONTRACT = `# Output
+Write only the words you would say out loud, as plain text.
+No JSON, no braces, no markdown, no labels, no Japanese.`
+
+/**
+ * small プロファイルの JSON 出力契約。
+ *
+ * feedback / vocabulary を **null と [] に固定** しているのは品質の判断。
+ * 1B クラスの添削は正しい文を「間違い」と言い切ることがあり、単語抽出も
+ * 学習者が既に知っている語を並べるだけになりがちで、どちらも
+ * 「あった方がまし」ではなく「無い方がまし」の側にいる。
+ * enrich 側(services/model-profile.ts の enrichment: 'translation-only')と
+ * 揃えてある。スキーマを 1 行に潰しているのは、複数行の擬似 JSON を見せると
+ * 小型モデルが整形しようとして改行やコードフェンスを混ぜ始めるため。
+ */
+const SMALL_JSON_CONTRACT = `# Output
+Respond with ONE JSON object and nothing else. No markdown, no code fences.
+{"reply_en":"your 1-2 sentence English reply","reply_ja":"Japanese translation of reply_en","feedback":null,"vocabulary":[],"mode":"normal"}
+- reply_ja must be written in Japanese.
+- feedback must be null. vocabulary must be []. mode must be "normal".`
+
+/**
+ * 1B〜2B クラス向けの system prompt。**約 300 トークン以内**に収める。
+ *
+ * standard(約 900 トークン)から落としたもの:
+ *  1) "Conversation style — VARIETY IS CRITICAL" の 6 行。
+ *     「毎回違う言い回しで」「違う質問で」「違う出だしで」は
+ *     小型モデルが従える種類の指示ではないうえ、一番文字数を食っていた。
+ *     代わりに「同じ言い回しを繰り返すな」の 1 行だけ残し、
+ *     実効の手当ては repeat_penalty(1.2)に寄せた。
+ *  2) 3 レベルぶんの説明。該当レベルの 1 行だけにした。
+ *  3) 人格ブロック(5〜8 行)。1 行に圧縮した。
+ * 代わりに **最優先の指示を最初に、短く** 置く:
+ *  「英語で 1〜2 文、プレーンテキスト」。
+ */
+function buildSmallSystemPrompt(input: BuildPromptInput): string {
+  const aiName = input.aiName ?? 'Emma'
+  const level = input.level ?? 'intermediate'
+  const topic = input.topic ?? 'casual chat'
+  const personality = input.personality ?? 'friendly'
+  const vocabFocus = input.vocabFocus ?? []
+  const userProfile = input.userProfile ?? []
+  const lastSummary = input.lastConversationSummary ?? null
+  const topicLine = input.topicDescription ? `${topic}: ${input.topicDescription}` : topic
+
+  const sections = [
+    `You are ${aiName}, a native English speaker chatting with a Japanese learner.`,
+    `# Rules — follow every line
+- Reply in ENGLISH only, in ONE or TWO short sentences. Never more.
+- ${SMALL_LEVEL_LINE[level]}
+- ${SMALL_PERSONALITY_LINE[personality]}
+- React to what the user said, then ask one short question about half the time.
+- Do not reuse a phrase you already used in this conversation.`,
+    `# Topic
+${topicLine} (it's fine if the conversation drifts)`,
+  ]
+
+  // 以下は「あるときだけ」載せる。standard は空でも見出しを出していたが、
+  // 小型モデルにとって "(no profile information yet)" は読む価値の無い 5 トークンで、
+  // しかも見出しがあるぶん「何か書かないといけない」と誤解させる。
+  if (vocabFocus.length > 0) {
+    sections.push(`# Try to use these words naturally
+${vocabFocus.join(', ')}`)
+  }
+  if (userProfile.length > 0) {
+    // フロントは直近 20 件まで送ってくる(MAX_PROFILE_FACTS_IN_PROMPT)。
+    // 20 件そのままだと、それだけでこのプロンプトと同じ長さになり
+    // 「300 トークン以内」という設計が会話 3 回目で崩れる。新しい方から 6 件に絞る。
+    sections.push(`# About the user
+${userProfile
+  .slice(-SMALL_MAX_PROFILE_FACTS)
+  .map((f) => `- ${f}`)
+  .join('\n')}`)
+  }
+  if (lastSummary) {
+    sections.push(`# Last conversation
+${lastSummary}`)
+  }
+
+  sections.push(
+    (input.outputFormat ?? 'json') === 'text' ? SMALL_TEXT_CONTRACT : SMALL_JSON_CONTRACT,
+  )
+  return sections.join('\n\n')
+}
+
 export function buildSystemPrompt(input: BuildPromptInput = {}): string {
+  if ((input.profile ?? 'standard') === 'small') return buildSmallSystemPrompt(input)
   const aiName = input.aiName ?? 'Emma'
   const level = input.level ?? 'intermediate'
   const topic = input.topic ?? 'casual chat'
@@ -230,6 +351,7 @@ The user spoke in English. Respond naturally as their conversation partner. Foll
  * system prompt の personality ブロックが本体で、ここは「最初の一言」用の補助。
  */
 export function buildOpeningUserPrompt(input: BuildPromptInput = {}): string {
+  if ((input.profile ?? 'standard') === 'small') return buildSmallOpeningUserPrompt(input)
   const aiName = input.aiName ?? 'Emma'
   const topic = input.topic ?? 'casual chat'
   const personality = input.personality ?? 'friendly'
@@ -259,6 +381,25 @@ Vary your greeting — DON'T just say "Hi! Let's talk about X." Be creative. Exa
 ${examples.map((e) => `- ${e}`).join('\n')}
 
 ${closing})`
+}
+
+/**
+ * small プロファイルの挨拶プロンプト。
+ *
+ * standard 版は tone hint + 例文 3〜4 本(約 150 トークン)を載せているが、
+ * 小型モデルに例文を見せると **そのまま丸写しする**(「don't copy verbatim」は
+ * 効かない)。例を全部落として、やることだけを 2 文で指示する。
+ */
+function buildSmallOpeningUserPrompt(input: BuildPromptInput): string {
+  const topic = input.topic ?? 'casual chat'
+  const closing =
+    (input.outputFormat ?? 'json') === 'text'
+      ? 'Plain English text only.'
+      : 'Use the JSON format from the system prompt.'
+  const continuity = input.lastConversationSummary
+    ? ' You may briefly mention what you talked about last time.'
+    : ''
+  return `(SYSTEM_INTERNAL: You speak first — there is no user message yet. Say hello and ask ONE specific question about "${topic}".${continuity} One or two short sentences. ${closing})`
 }
 
 /**

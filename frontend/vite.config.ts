@@ -19,6 +19,15 @@ export default defineConfig({
   // 絶対パス (/assets/...) の方が SPA fallback + ネスト route で正しく解決される。
   server: {
     port: 5173,
+    fs: {
+      // `src/storage/settings.ts` は LLM カタログを
+      // `backend/src/shared/llm-models.ts` から直接 import している
+      // (backend と frontend の allowlist 二重化を消すため)。
+      // npm workspaces のルートは Vite が自動検出するはずだが、
+      // 検出に失敗すると dev server だけが 403 で落ちて build は通る、という
+      // 気づきにくい壊れ方をするので明示しておく。
+      allow: [path.resolve(fileURLToPath(import.meta.url), '..', '..')],
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

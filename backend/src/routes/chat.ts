@@ -15,30 +15,35 @@ import {
 } from '../services/ollama.js'
 import { parseChatReply, salvageChatReply } from '../services/chat-reply.js'
 import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
+import { resolveModelProfile, type ModelProfile } from '../services/model-profile.js'
+import type { ModelProfilePref } from '../shared/llm-models.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
 
+/**
+ * プロンプトに載せる会話履歴の往復数の **上限**(standard の値)。
+ * 実際に使う値はプロファイル(`ModelProfile.maxHistoryTurns`)側にあり、
+ * small では 4 往復まで減る。ここは「これ以上は絶対に載せない」の天井。
+ */
 export const MAX_HISTORY_TURNS = 10 // user + ai pairs to keep in context
 
 /**
- * 生成トークン上限。**リトライで倍化しない**(フラット予算)。
+ * 生成トークン上限は **プロファイル**(services/model-profile.ts)が持つ。
+ * **リトライで倍化しない**(フラット予算)。
  *
  * 旧実装は 500 → 1000 → 2000 と倍化していた。倍化は「length 切断で JSON が壊れた」
  * ケースを救うためのものだったが、
  *   - 切断された返答も返答としては使える(= salvage で拾える)
  *   - 倍化は「失敗するターンほど遅くなる」という最悪の性質を持つ
- * ため廃止した。失敗ターンの最悪生成量は 3500 → 1280 トークンになる。
+ * ため廃止した。
  *
- * 640 の根拠(JSON エンベロープ最大構成の見積り。日本語は 1 文字 ≒ 1.5 トークン):
+ * standard の 640 の根拠(JSON エンベロープ最大構成の見積り。日本語は 1 文字 ≒ 1.5 トークン):
  *   reply_en 約 50 / reply_ja 約 120 / feedback(user_said+corrected+日本語 explanation)
  *   約 135 / vocabulary 3 件 約 180 / JSON のキー・記号 約 45  ≒ 530 トークン。
  * 旧初期値 500 はこの最大構成にわずかに足りず、それが倍化リトライを常態化させていた。
  * 640 は最大構成 + 約 20% の余裕で、典型ターン(feedback/vocab なし、約 200 トークン)
  * の速度には影響しない(num_predict は上限であって目標ではない)。
+ * small は feedback / vocabulary を出さない契約なので 320 で足りる。
  */
-const CHAT_NUM_PREDICT = 640
-
-/** opening は feedback / vocabulary を出さない(= reply_en + reply_ja のみ)ので小さくてよい。 */
-const OPENING_NUM_PREDICT = 400
 
 /**
  * 1 ターンの試行設定。**2 回まで**。
@@ -55,18 +60,33 @@ type AttemptSampling = Pick<
 /** リトライ時の温度。JSON の構造が崩れにくい側に寄せる。 */
 const RETRY_TEMPERATURE = 0.5
 
-const CHAT_ATTEMPTS: AttemptSampling[] = [
-  // 1 回目: バリエーション重視(seed は ollama.ts 側でランダム)
-  { temperature: 0.85, topP: 0.92, repeatPenalty: 1.15 },
-  // 2 回目: 決定的で保守的な 1 本
-  { temperature: RETRY_TEMPERATURE, topP: 0.85, repeatPenalty: 1.05, seed: RETRY_SEED },
-]
+/** 2 回目(決定的で保守的な 1 本)はプロファイルに依らず共通。 */
+const CONSERVATIVE_RETRY: AttemptSampling = {
+  temperature: RETRY_TEMPERATURE,
+  topP: 0.85,
+  repeatPenalty: 1.05,
+  seed: RETRY_SEED,
+}
 
-const OPENING_ATTEMPTS: AttemptSampling[] = [
-  // 挨拶はバリエーション最重視
-  { temperature: 0.95, topP: 0.95, repeatPenalty: 1.2 },
-  { temperature: RETRY_TEMPERATURE, topP: 0.85, repeatPenalty: 1.05, seed: RETRY_SEED },
-]
+function chatAttempts(profile: ModelProfile): AttemptSampling[] {
+  return [
+    // 1 回目: プロファイルの既定(seed は ollama.ts 側でランダム)
+    { temperature: profile.temperature, topP: profile.topP, repeatPenalty: profile.repeatPenalty },
+    CONSERVATIVE_RETRY,
+  ]
+}
+
+function openingAttempts(profile: ModelProfile): AttemptSampling[] {
+  return [
+    // 挨拶はバリエーション最重視(standard 0.95 / small 0.8)
+    {
+      temperature: profile.openingTemperature,
+      topP: Math.min(profile.topP + 0.03, 0.95),
+      repeatPenalty: profile.repeatPenalty + 0.05,
+    },
+    CONSERVATIVE_RETRY,
+  ]
+}
 
 /**
  * 会話経路の first-token 予算。
@@ -107,6 +127,11 @@ export interface ChatContext {
   model?: string
   /** AI の性格プリセット。未指定時は buildSystemPrompt 側で 'friendly' にフォールバック。 */
   personality?: PersonalityPreset
+  /**
+   * 会話プロファイルの指定。'auto'(既定)はモデル名のパラメータ数から推定する。
+   * 推定は **backend が唯一の出典**(shared/llm-models.ts)。
+   */
+  modelProfile?: ModelProfilePref
 }
 
 interface ChatRequestBody {
@@ -140,6 +165,9 @@ async function handleChatTurn(
   signal: AbortSignal,
 ): Promise<Response | void> {
   const mode: Mode = context.mode ?? 'normal'
+  // プロファイルはこのターンで 1 回だけ解決する(翻訳経路と会話経路で
+  // 別々に解決すると、将来どちらかだけ条件が変わったときに静かに食い違う)。
+  const profile = resolveModelProfile(context.modelProfile, context.model)
 
   // 翻訳モード(japanese_help / mixed)は会話 LLM 経路ではなく専用翻訳経路へ。
   // システムプロンプトで指示してもらうだけだと 3B クラスは無視して会話継続して
@@ -149,6 +177,7 @@ async function handleChatTurn(
       const translated = await translateToNaturalEnglish(userText, {
         model: context.model,
         level: context.level,
+        numCtx: profile.numCtx,
         signal,
       })
       if (!translated) {
@@ -161,6 +190,9 @@ async function handleChatTurn(
         feedback: null,
         vocabulary: [],
         mode,
+        // ストリーミング側の meta と揃える。ここを落とすと、日本語入力の
+        // ターンだけクライアントのプロファイル表示が更新されない。
+        profile: profile.level,
       })
     } catch (e) {
       // 中断はユーザー起因の正常系。タイムアウト扱いで 503 を返してはいけない。
@@ -185,12 +217,14 @@ async function handleChatTurn(
     userProfile: context.userProfile,
     lastConversationSummary: context.lastConversationSummary,
     personality: context.personality,
+    profile: profile.promptVariant,
   })
 
   const messages: OllamaChatMessage[] = [{ role: 'system', content: systemPrompt }]
 
-  // 直近のN往復を文脈として渡す
-  const history = (context.conversationHistory ?? []).slice(-MAX_HISTORY_TURNS * 2)
+  // 直近のN往復を文脈として渡す(プロファイルごとの上限。天井は MAX_HISTORY_TURNS)
+  const historyTurns = Math.min(profile.maxHistoryTurns, MAX_HISTORY_TURNS)
+  const history = (context.conversationHistory ?? []).slice(-historyTurns * 2)
   for (const h of history) {
     messages.push({
       role: h.role === 'user' ? 'user' : 'assistant',
@@ -200,18 +234,20 @@ async function handleChatTurn(
 
   messages.push({ role: 'user', content: userText })
 
+  const attempts = chatAttempts(profile)
   let lastRawContent: string | undefined
 
-  for (let attempt = 1; attempt <= CHAT_ATTEMPTS.length; attempt++) {
+  for (let attempt = 1; attempt <= attempts.length; attempt++) {
     // 中断済みならもう 1 本生成を始めない(2 回目の attempt がゾンビ生成になる)。
     if (signal.aborted) return endAborted(res)
-    const sampling = CHAT_ATTEMPTS[attempt - 1]!
+    const sampling = attempts[attempt - 1]!
     try {
       const ollamaRes = await chatWithOllama(messages, {
         model: context.model,
         firstTokenTimeoutMs: CHAT_FIRST_TOKEN_TIMEOUT_MS,
         // 倍化しないフラット予算。切断は salvage で拾う。
-        numPredict: CHAT_NUM_PREDICT,
+        numPredict: profile.chatNumPredict,
+        numCtx: profile.numCtx,
         signal,
         ...sampling,
       })
@@ -223,7 +259,7 @@ async function handleChatTurn(
         reply = salvageChatReply(lastRawContent, mode)
         if (reply) {
           console.warn(
-            `[chat] salvaged reply from malformed JSON (attempt ${attempt}/${CHAT_ATTEMPTS.length}).`,
+            `[chat] salvaged reply from malformed JSON (attempt ${attempt}/${attempts.length}).`,
           )
         }
       }
@@ -234,14 +270,17 @@ async function handleChatTurn(
         if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
           reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {
             model: context.model,
+            numCtx: profile.numCtx,
             signal,
           })
         }
-        return res.json(reply)
+        // どのプロファイルで動いたかをクライアントへ返す(UI の「軽量モード」表示用)。
+        return res.json({ ...reply, profile: profile.level })
       }
       console.warn(
-        `[chat] JSON parse + salvage failed (attempt ${attempt}/${CHAT_ATTEMPTS.length}, ` +
-          `numPredict=${CHAT_NUM_PREDICT}, temperature=${sampling.temperature}). raw=`,
+        `[chat] JSON parse + salvage failed (attempt ${attempt}/${attempts.length}, ` +
+          `profile=${profile.level}, numPredict=${profile.chatNumPredict}, ` +
+          `temperature=${sampling.temperature}). raw=`,
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
@@ -257,7 +296,7 @@ async function handleChatTurn(
   }
 
   return res.status(502).json({
-    error: `Ollama did not return valid JSON after ${CHAT_ATTEMPTS.length} attempts.`,
+    error: `Ollama did not return valid JSON after ${attempts.length} attempts.`,
     rawContent: lastRawContent,
   })
 }
@@ -280,6 +319,7 @@ async function handleOpeningTurn(
   signal: AbortSignal,
 ): Promise<Response | void> {
   const mode: Mode = 'normal'
+  const profile = resolveModelProfile(context.modelProfile, context.model)
 
   const systemPrompt = buildSystemPrompt({
     aiName: context.aiName,
@@ -291,6 +331,7 @@ async function handleOpeningTurn(
     userProfile: context.userProfile,
     lastConversationSummary: context.lastConversationSummary,
     personality: context.personality,
+    profile: profile.promptVariant,
   })
 
   const openingUserPrompt = buildOpeningUserPrompt({
@@ -302,6 +343,7 @@ async function handleOpeningTurn(
     // system prompt と user prompt の双方を整合させないと、teacher などを
     // 選んだのに最初の一言だけ friend-like になる矛盾が出る。
     personality: context.personality,
+    profile: profile.promptVariant,
   })
 
   const messages: OllamaChatMessage[] = [
@@ -309,17 +351,19 @@ async function handleOpeningTurn(
     { role: 'user', content: openingUserPrompt },
   ]
 
+  const attempts = openingAttempts(profile)
   let lastRawContent: string | undefined
 
-  for (let attempt = 1; attempt <= OPENING_ATTEMPTS.length; attempt++) {
+  for (let attempt = 1; attempt <= attempts.length; attempt++) {
     if (signal.aborted) return endAborted(res)
-    const sampling = OPENING_ATTEMPTS[attempt - 1]!
+    const sampling = attempts[attempt - 1]!
     try {
       const ollamaRes = await chatWithOllama(messages, {
         model: context.model,
         firstTokenTimeoutMs: OPENING_FIRST_TOKEN_TIMEOUT_MS,
         // 倍化しないフラット予算。切断は salvage で拾う。
-        numPredict: OPENING_NUM_PREDICT,
+        numPredict: profile.openingNumPredict,
+        numCtx: profile.numCtx,
         signal,
         ...sampling,
       })
@@ -329,7 +373,7 @@ async function handleOpeningTurn(
         reply = salvageChatReply(lastRawContent, mode)
         if (reply) {
           console.warn(
-            `[chat/opening] salvaged reply from malformed JSON (attempt ${attempt}/${OPENING_ATTEMPTS.length}).`,
+            `[chat/opening] salvaged reply from malformed JSON (attempt ${attempt}/${attempts.length}).`,
           )
         }
       }
@@ -337,14 +381,16 @@ async function handleOpeningTurn(
         if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
           reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {
             model: context.model,
+            numCtx: profile.numCtx,
             signal,
           })
         }
-        return res.json(reply)
+        return res.json({ ...reply, profile: profile.level })
       }
       console.warn(
-        `[chat/opening] JSON parse + salvage failed (attempt ${attempt}/${OPENING_ATTEMPTS.length}, ` +
-          `numPredict=${OPENING_NUM_PREDICT}, temperature=${sampling.temperature}). raw=`,
+        `[chat/opening] JSON parse + salvage failed (attempt ${attempt}/${attempts.length}, ` +
+          `profile=${profile.level}, numPredict=${profile.openingNumPredict}, ` +
+          `temperature=${sampling.temperature}). raw=`,
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
@@ -360,7 +406,7 @@ async function handleOpeningTurn(
   }
 
   return res.status(502).json({
-    error: `Ollama did not return valid JSON after ${OPENING_ATTEMPTS.length} attempts.`,
+    error: `Ollama did not return valid JSON after ${attempts.length} attempts.`,
     rawContent: lastRawContent,
   })
 }

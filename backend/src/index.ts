@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import { existsSync } from 'node:fs'
+import { totalmem } from 'node:os'
 import path from 'node:path'
 import { chatRouter } from './routes/chat.js'
 import { chatStreamRouter } from './routes/chat-stream.js'
@@ -62,8 +63,15 @@ app.use(express.json({ limit: '10mb' }))
  * 古いバックエンドはこのキー自体を返さないので、その場合は
  * 「ストリーミング無し」と解釈される。
  */
-const API_FEATURES = ['chat-stream', 'chat-opening-stream', 'chat-enrich'] as const
-const API_VERSION = 2
+const API_FEATURES = [
+  'chat-stream',
+  'chat-opening-stream',
+  'chat-enrich',
+  // 会話プロファイル(standard / small)。フロントはこれがあるときだけ
+  // context.modelProfile を送り、UI に「軽量モード」を表示する。
+  'model-profile',
+] as const
+const API_VERSION = 3
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -71,6 +79,16 @@ app.get('/api/health', (_req, res) => {
     timestamp: new Date().toISOString(),
     apiVersion: API_VERSION,
     features: API_FEATURES,
+    /**
+     * この Mac の搭載メモリ(バイト)。
+     *
+     * ブラウザ側には積んでいる RAM を知る手段が無い(`deviceMemory` は
+     * Chromium でも最大 8 を返す丸め値で、Electron では当てにならない)。
+     * backend は Node なので 1 行で正確に取れる。
+     * オンボーディングが「このマシンは 8GB なので軽いモデルを薦めます」と
+     * 言えるかどうかがこの 1 行に懸かっている。
+     */
+    totalMemoryBytes: totalmem(),
   })
 })
 

@@ -262,6 +262,18 @@ async function retryJapanese(message: Message) {
             <div class="mt-1 flex items-center gap-2 text-xs">
               <LevelBadge :level="conversation.level" size="sm" />
               <TopicChip :label="conversation.topic" size="sm" />
+              <!--
+                backend が申告したプロファイル(推定ではなく実際に動いた値)。
+                軽量モードは添削も単語も出ないので、「出ない」のか「壊れている」のかを
+                ユーザーが区別できるようにここで明示する。
+              -->
+              <span
+                v-if="loop.activeProfile.value === 'small'"
+                class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300"
+                title="小さいモデル向けの設定で動いています(返答は1〜2文・添削と単語は出ません)"
+              >
+                🪶 軽量モード
+              </span>
               <span v-if="conversation.isPaused" class="text-amber-500"> ⏸ 一時停止中 </span>
             </div>
           </div>

@@ -30,10 +30,12 @@ import {
   FEATURE_CHAT_ENRICH,
   FEATURE_CHAT_OPENING_STREAM,
   FEATURE_CHAT_STREAM,
+  FEATURE_MODEL_PROFILE,
   hasFeature,
   NO_FEATURES,
   type BackendFeatures,
 } from '../utils/backend-features'
+import { resolveProfileLevel, type ModelProfileLevel } from '../storage/settings'
 import type {
   ChatEnrichment,
   ChatStreamEffect,
@@ -297,6 +299,35 @@ export function useConversationLoop() {
     return hasFeature(backendFeatures.value, FEATURE_CHAT_ENRICH)
   }
 
+  /**
+   * 会話プロファイルの指定を context に載せるか。
+   * 機能を申告していない古いバックエンドには送らない(無視されるだけだが、
+   * 「送ったから効いている」と UI が誤って表示しないよう揃える)。
+   */
+  function profilePatch(): Pick<ChatRequestContext, 'modelProfile'> {
+    if (!hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)) return {}
+    return { modelProfile: settings.settings.modelProfile }
+  }
+
+  /**
+   * いま動いている会話プロファイル。**backend が申告した値だけを入れる**。
+   *
+   * ⚠️ フロント側の推定で初期化してはいけない。Electron は frontend を app bundle から、
+   * backend を userData から読むので「frontend だけが新しい」組み合わせが普通に起こる。
+   * その古い backend は modelProfile を知らないので **必ず standard で動く**。
+   * ここを推定で埋めると、1B を選んだ人に「🪶 軽量モード(添削は出ません)」と
+   * 表示しながら backend は長いプロンプトで添削を返す、という嘘になる。
+   * 機能を申告している backend のときだけ推定で先出しし、それ以外は null のまま。
+   */
+  const activeProfile = ref<ModelProfileLevel | null>(null)
+
+  /** 機能検出の直後に呼ぶ。申告がある backend にだけ推定値を先出しする。 */
+  function seedActiveProfile(): void {
+    activeProfile.value = hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)
+      ? resolveProfileLevel(settings.settings.modelProfile, settings.settings.llmModel)
+      : null
+  }
+
   function buildRequestContext(input: StartLoopInput, mode?: Message['mode']): ChatRequestContext {
     return {
       aiName: settings.settings.aiCharacter.name,
@@ -308,6 +339,7 @@ export function useConversationLoop() {
       lastConversationSummary: input.lastConversationSummary,
       model: settings.settings.llmModel,
       personality: settings.settings.aiCharacter.personality,
+      ...profilePatch(),
     }
   }
 
@@ -358,6 +390,7 @@ export function useConversationLoop() {
         level: conversation.level,
         topic: conversation.topic,
         model: settings.settings.llmModel,
+        ...profilePatch(),
       })
       await applyEnrichment(messageId, enrichment)
     } catch (e) {
@@ -494,8 +527,10 @@ export function useConversationLoop() {
     // ⚠️ ストリームは「永続化より先に」閉じ得る(enrich を出せずに終わったケース)。
     // その順序では下の markEnrichFailed が空振りするので、永続化側でも再判定する。
     void handle.finished
-      .then(() => {
+      .then((state) => {
         turn.streamFinished = true
+        // backend が申告したプロファイルで上書きする(推定ではなく実際に動いた値)。
+        if (state.meta?.profile) activeProfile.value = state.meta.profile
         if (!turn.persistedId || turn.enrichApplied) return
         // 会話終了による中断だけは「失敗表示」にしない(画面はサマリへ移る)。
         // 次のターンを始めるために切った場合は **必ず失敗にする** —
@@ -657,6 +692,7 @@ export function useConversationLoop() {
     // 機能検出はここ(= 会話画面のマウント時)。アプリ起動時ではない。
     // 失敗しても例外は投げず「機能なし」= 非ストリーミング経路になる。
     backendFeatures.value = await probeBackendFeatures()
+    seedActiveProfile()
 
     await profile.load().catch(() => undefined)
     await playOpening(input)
@@ -728,6 +764,7 @@ export function useConversationLoop() {
     }
 
     if (stopRequested.value || !conversation.id) return
+    if (reply.profile) activeProfile.value = reply.profile
 
     // Phase 2: メッセージ永続化(IndexedDB)
     const aiMsg = await messagesRepo.create({
@@ -918,6 +955,7 @@ export function useConversationLoop() {
         }
 
         // 返答が返ってきた = LLM は生きている。積み上がった失敗回数をリセット。
+        if (reply.profile) activeProfile.value = reply.profile
         if (consecutiveChatFailures.value > 0) {
           consecutiveChatFailures.value = 0
           errorMessage.value = null
@@ -1151,6 +1189,7 @@ export function useConversationLoop() {
       level: conversation.level,
       topic: conversation.topic,
       model: settings.settings.llmModel,
+      ...profilePatch(),
     }
     const canBackfill = canRetryEnrich()
     const transcriptItems: ChatHistoryItem[] = buildHistory()
@@ -1225,6 +1264,7 @@ export function useConversationLoop() {
     speechQueue,
     errorMessage,
     backendFeatures,
+    activeProfile,
     streamingReplyEn,
     enrichPendingIds,
     enrichFailedIds,

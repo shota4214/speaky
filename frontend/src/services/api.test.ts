@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { chatStream } from './api'
+import { ApiError, chat, chatEnrich, chatOpening, chatStream } from './api'
 
 /**
  * ストリーミング経路のクライアント側の締め切りのテスト。
@@ -164,5 +164,180 @@ describe('chatStream の無通信タイムアウト', () => {
 
     await handle.finished
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+/**
+ * 非ストリーミング経路の締め切り。
+ *
+ * ストリーミング経路には締め切りが入っていたが、フォールバックで通る
+ * `POST /api/chat` / `/api/chat/opening` / `/api/chat/enrich` には無かった。
+ * backend の予算は backend が生きていれば効く。効かないのは半開きソケット
+ * (スリープ復帰)で、その場合ターンは応答も失敗もしないまま止まり、
+ * UI は「Thinking...」のまま・マイクは閉じたままになる。
+ */
+describe('非ストリーミング経路の締め切り', () => {
+  /** 永遠に応答しない fetch。渡された signal でだけ AbortError になる。 */
+  function hangingFetch(): { fetch: typeof fetch; aborted: () => boolean } {
+    let wasAborted = false
+    const fakeFetch = ((_url: unknown, init?: { signal?: AbortSignal }) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        const fail = () => {
+          wasAborted = true
+          const e = new Error('The operation was aborted')
+          e.name = 'AbortError'
+          reject(e)
+        }
+        if (!signal) return
+        if (signal.aborted) fail()
+        else signal.addEventListener('abort', fail, { once: true })
+      })) as unknown as typeof fetch
+    return { fetch: fakeFetch, aborted: () => wasAborted }
+  }
+
+  it('/api/chat は 120 秒で打ち切って TIMEOUT を返す', async () => {
+    const { fetch: fakeFetch, aborted } = hangingFetch()
+    vi.stubGlobal('fetch', fakeFetch)
+
+    const promise = chat('hello', {}).catch((e: unknown) => e)
+
+    // backend の予算(90 秒)より長く待つ。ここを短くすると
+    // 正常に動いているコールドロードを殺す。
+    await vi.advanceTimersByTimeAsync(100_000)
+    expect(aborted()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(25_000)
+    const error = await promise
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('TIMEOUT')
+    expect((error as ApiError).status).toBe(504)
+  })
+
+  it('/api/chat/opening にも同じ締め切りが効く', async () => {
+    const { fetch: fakeFetch } = hangingFetch()
+    vi.stubGlobal('fetch', fakeFetch)
+
+    const promise = chatOpening({}).catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(125_000)
+    expect((await promise) as ApiError).toBeInstanceOf(ApiError)
+  })
+
+  it('/api/chat/enrich は会話ターンより短い締め切り(90 秒)', async () => {
+    const { fetch: fakeFetch, aborted } = hangingFetch()
+    vi.stubGlobal('fetch', fakeFetch)
+
+    const promise = chatEnrich('Hello there!', null, {}).catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(85_000)
+    expect(aborted()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect((await promise) as ApiError).toBeInstanceOf(ApiError)
+  })
+
+  /**
+   * ⚠️ ここが肝。締め切り切れと「ユーザーが会話を終えた」はどちらも AbortError
+   * なので、区別せずに ApiError へ変換すると **会話を終えただけ**が
+   * 「応答がありませんでした」というエラー表示になる。
+   */
+  it('呼び出し側の中断は AbortError のまま返す(タイムアウトにしない)', async () => {
+    const { fetch: fakeFetch } = hangingFetch()
+    vi.stubGlobal('fetch', fakeFetch)
+
+    const ctrl = new AbortController()
+    const promise = chat('hello', {}, { signal: ctrl.signal }).catch((e: unknown) => e)
+    ctrl.abort(new DOMException('conversation-stopped', 'AbortError'))
+
+    const error = await promise
+    expect(error).not.toBeInstanceOf(ApiError)
+    expect((error as Error).name).toBe('AbortError')
+  })
+
+  it('成功したらタイマーを残さない', async () => {
+    vi.stubGlobal('fetch', (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ reply_en: 'Hi!', reply_ja: 'やあ!' }), { status: 200 }),
+      )) as unknown as typeof fetch)
+
+    await chat('hello', {})
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+/**
+ * `fetch()` はヘッダーが返った時点で解決する。そこで締め切りを止めると
+ * **本文の読み取りが無防備な区間**になり、半開きソケットが
+ * 「ステータス行だけ届いて本文が来ない」形で起きたときにまた固まる。
+ */
+describe('非ストリーミング経路: 本文の読み取りも締め切りの内側', () => {
+  /** ヘッダーだけ返して本文を永久に握ったままの fetch。 */
+  function headersOnlyFetch(): typeof fetch {
+    return ((_url: unknown, init?: { signal?: AbortSignal }) => {
+      const signal = init?.signal
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal?.addEventListener(
+            'abort',
+            () => controller.error(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+            { once: true },
+          )
+        },
+      })
+      return Promise.resolve(new Response(body, { status: 200 }))
+    }) as unknown as typeof fetch
+  }
+
+  it('ヘッダーだけ返って本文が来ないときも締め切りが効く', async () => {
+    vi.stubGlobal('fetch', headersOnlyFetch())
+    const promise = chat('hello', {}).catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(125_000)
+    const error = await promise
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('TIMEOUT')
+  })
+
+  it('本文の読み取り中でも呼び出し側の中断が効く(会話終了でぶら下がらない)', async () => {
+    vi.stubGlobal('fetch', headersOnlyFetch())
+    const ctrl = new AbortController()
+    const promise = chat('hello', {}, { signal: ctrl.signal }).catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(1_000)
+    ctrl.abort(new DOMException('conversation-stopped', 'AbortError'))
+    const error = await promise
+    expect(error).not.toBeInstanceOf(ApiError)
+    expect((error as Error).name).toBe('AbortError')
+  })
+
+  /**
+   * ⚠️ 締め切りで固まったターンにしびれを切らしたユーザーが「会話を終わる」を
+   * 押す、という順序。`signal.aborted` だけを見ていると判定がひっくり返って、
+   * 締め切り用の内部エラーがそのままユーザーに出る(ApiError でも AbortError
+   * でもないので loop の isAbortError もすり抜ける)。先に起きた方を採る。
+   */
+  it('締め切り切れの後に会話を終えても TIMEOUT のまま', async () => {
+    const { fetch: fakeFetch } = (() => {
+      let reject: (e: unknown) => void = () => undefined
+      const f = ((_url: unknown, init?: { signal?: AbortSignal }) =>
+        new Promise<Response>((_res, rej) => {
+          reject = rej
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+            { once: true },
+          )
+        })) as unknown as typeof fetch
+      return { fetch: f }
+    })()
+    vi.stubGlobal('fetch', fakeFetch)
+
+    const ctrl = new AbortController()
+    const promise = chat('hello', {}, { signal: ctrl.signal }).catch((e: unknown) => e)
+    // 先に締め切りが切れる
+    await vi.advanceTimersByTimeAsync(125_000)
+    // その後でユーザーが会話を終える
+    ctrl.abort(new DOMException('conversation-stopped', 'AbortError'))
+
+    const error = await promise
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('TIMEOUT')
   })
 })

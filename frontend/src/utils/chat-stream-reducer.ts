@@ -1,3 +1,4 @@
+import type { ModelProfileLevel } from '../storage/settings'
 import type { Mode, VocabItem } from '../db/types'
 
 /**
@@ -9,7 +10,7 @@ import type { Mode, VocabItem } from '../db/types'
  * を全部テストできる状態を保つ。
  *
  * バックエンドが送ってくるイベント(data-only SSE。type は JSON の中に入っている):
- *   {"type":"meta","mode":"normal","model":"...","speakDeltas":true}
+ *   {"type":"meta","mode":"normal","model":"...","speakDeltas":true,"profile":"small"}
  *   {"type":"delta","text":" I went"}
  *   {"type":"done","text":"<英文全体>","replyJa":"..."(翻訳モードのみ)}
  *   {"type":"enrich","replyJa":"...","feedback":{...}|null,"vocabulary":[...]}
@@ -33,6 +34,11 @@ export interface ChatStreamMeta {
   model: string | null
   /** false = このターンはデルタを読み上げない(日本語/混在入力の翻訳ターン)。 */
   speakDeltas: boolean
+  /**
+   * backend が実際に使った会話プロファイル。
+   * 'model-profile' を知らない古いバックエンドは送らないので null。
+   */
+  profile: ModelProfileLevel | null
 }
 
 export interface ChatStreamError {
@@ -276,6 +282,7 @@ export function reduceChatStreamEvent(state: ChatStreamState, event: unknown): R
               mode === 'normal' || mode === 'japanese_help' || mode === 'mixed' ? mode : 'normal',
             model: typeof r.model === 'string' ? r.model : null,
             speakDeltas: r.speakDeltas !== false,
+            profile: r.profile === 'small' || r.profile === 'standard' ? r.profile : null,
           },
         },
         effects: [],

@@ -140,7 +140,7 @@ export function stripTranslationPreamble(raw: string): string {
 
 export async function translateToNaturalEnglish(
   userText: string,
-  options: { model?: string; level?: Level; signal?: AbortSignal },
+  options: { model?: string; level?: Level; numCtx?: number; signal?: AbortSignal },
 ): Promise<string> {
   const messages: OllamaChatMessage[] = [
     { role: 'system', content: buildTranslationSystemPrompt(options.level) },
@@ -160,6 +160,7 @@ export async function translateToNaturalEnglish(
   for (const a of attempts) {
     const ollamaRes = await chatWithOllama(messages, {
       model: options.model,
+      numCtx: options.numCtx,
       firstTokenTimeoutMs: 60_000,
       // 翻訳は再現性重視で低温度(会話経路の 0.85 より低い)。
       temperature: a.temperature,
@@ -210,7 +211,7 @@ export function sanitizeJapaneseTranslation(raw: string): string {
 
 export async function translateEnglishToJapanese(
   englishText: string,
-  options: { model?: string; signal?: AbortSignal },
+  options: { model?: string; numCtx?: number; signal?: AbortSignal },
 ): Promise<string> {
   const messages: OllamaChatMessage[] = [
     { role: 'system', content: EN_TO_JA_SYSTEM_PROMPT },
@@ -219,6 +220,7 @@ export async function translateEnglishToJapanese(
   try {
     const ollamaRes = await chatWithOllama(messages, {
       model: options.model,
+      numCtx: options.numCtx,
       firstTokenTimeoutMs: 60_000,
       temperature: 0.3,
       topP: 0.9,

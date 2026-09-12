@@ -20,7 +20,15 @@ import {
   pullOllamaModel,
   type InstalledModel,
 } from '../services/api'
-import { ALLOWED_LLM_MODELS, VALID_WHISPER_MODELS, type WhisperModel } from '../storage/settings'
+import {
+  isAllowedLlmModel,
+  LLM_CATALOG,
+  llmParameterBillions,
+  resolveProfileLevel,
+  VALID_WHISPER_MODELS,
+  type ModelProfilePref,
+  type WhisperModel,
+} from '../storage/settings'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore } from '../stores/theme'
 import {
@@ -205,11 +213,12 @@ const llmPullProgress = ref(0)
 const llmPullStatus = ref('')
 const llmPullError = ref('')
 
-const llmPresets = [
-  { value: 'llama3.2:3b', label: '⚡ Llama 3.2 3B — 軽量・高速(~2GB)' },
-  { value: 'gemma2:9b', label: '⚖️ Gemma 2 9B — バランス・標準おすすめ(~5.5GB)' },
-  { value: 'qwen2.5:14b', label: '💎 Qwen 2.5 14B — 高品質・低速(~9GB)' },
-]
+// 取得フォームの選択肢はカタログ(backend/src/shared/llm-models.ts)から作る。
+// 一覧をここに手書きすると、また backend と食い違う。
+const llmPresets = LLM_CATALOG.filter((e) => e.offerForDownload).map((e) => ({
+  value: e.tag,
+  label: `${e.icon} ${e.label} — ${e.note}(${e.sizeLabel})`,
+}))
 
 async function handlePullLlm() {
   if (llmPulling.value) return
@@ -250,19 +259,20 @@ const whisperPresets = [
 ]
 
 // インストール済みリストで「どれを選べばいいか」が分かるよう、
-// モデル名から特徴(アイコン + 一言説明)を返す。前方一致で判定する。
+// モデル名から特徴(アイコン + 一言説明)を返す。
+// まずカタログの完全一致、次にパラメータ数からの推定(量子化タグ対応)。
 function describeLlm(name: string): { icon: string; note: string } {
-  const n = name.toLowerCase()
-  if (n.startsWith('llama3.2:3b')) return { icon: '⚡', note: '軽量・高速 / 精度は控えめ' }
-  if (n.startsWith('gemma2:9b')) return { icon: '⚖️', note: 'バランス型 / 標準おすすめ' }
-  if (n.startsWith('qwen2.5:14b')) return { icon: '💎', note: '高品質 / 重め・低速' }
-  if (n.includes(':1b') || n.includes(':0.5b'))
-    return { icon: '⚡⚡', note: '超軽量 / 最速・精度低' }
-  if (n.includes('14b') || n.includes('13b') || n.includes('32b') || n.includes('70b'))
-    return { icon: '💎', note: '高品質 / 重め' }
-  if (n.includes('7b') || n.includes('8b') || n.includes('9b'))
-    return { icon: '⚖️', note: 'バランス型' }
-  if (n.includes('1b') || n.includes('3b')) return { icon: '⚡', note: '軽量・高速' }
+  const entry = LLM_CATALOG.find((e) => e.tag === name)
+  if (entry) return { icon: entry.icon, note: entry.note }
+
+  // 自分で pull した量子化タグ(`llama3.2:3b-instruct-q4_K_M` 等)はここへ来る。
+  const billions = llmParameterBillions(name)
+  if (billions !== null) {
+    if (billions <= 2) return { icon: '⚡⚡', note: '超軽量 / 最速・精度低(軽量モード対象)' }
+    if (billions <= 3) return { icon: '⚡', note: '軽量・高速 / 精度は控えめ' }
+    if (billions <= 9) return { icon: '⚖️', note: 'バランス型' }
+    return { icon: '💎', note: '高品質 / 重め・低速' }
+  }
   return { icon: '🤖', note: 'LLM モデル' }
 }
 
@@ -391,17 +401,43 @@ function isLlmDeleteDisabled(name: string): boolean {
 
 // 🧠 モデルセクションの選択肢は「インストール済みのもの」だけに絞る。
 // 未取得モデルを選ばせると、会話開始時に存在しないモデルを使おうとして失敗するため。
-// インストール済み AND backend allowlist 内のものだけを選択肢にする。
-// allowlist 外(例: mistral, llama3.2:1b)を選ばせても backend が default に
-// フォールバックして「選んだのに使われない」状態になるため。
+// インストール済み AND backend が受け付けるものだけを選択肢にする。
+// 受け付けない名前(例: mistral)を選ばせても backend が default にフォールバックして
+// 「選んだのに使われない」状態になるため。
+// 判定は backend と同一の関数(shared/llm-models.ts)。ファミリー一致なので、
+// 自分で pull した量子化タグもここに出る(v1.1.0 までは消えていた)。
 const installedLlmOptions = computed(() =>
   ollamaModels.value
-    .filter((m) => ALLOWED_LLM_MODELS.has(m.name))
+    .filter((m) => isAllowedLlmModel(m.name))
     .map((m) => {
       const d = describeLlm(m.name)
       return { value: m.name, label: `${d.icon} ${m.name} — ${d.note}` }
     }),
 )
+
+// --- 会話プロファイル ---
+// 推定は backend と同じ関数で行う(shared/llm-models.ts が唯一の出典)。
+// 実際に動いたプロファイルは会話中に backend が meta / レスポンスで返すが、
+// 設定画面は会話前に開くので、ここでは同じ関数で先に見せる。
+const activeProfileLevel = computed(() =>
+  resolveProfileLevel(settings.settings.modelProfile, settings.settings.llmModel),
+)
+
+const profileOptions: { value: ModelProfilePref; label: string }[] = [
+  { value: 'auto', label: '自動(モデルの大きさで決める / 推奨)' },
+  { value: 'standard', label: '標準に固定(詳しい指示・添削あり)' },
+  { value: 'small', label: '軽量に固定(短い指示・日本語訳のみ)' },
+]
+
+const profileBadge = computed(() =>
+  activeProfileLevel.value === 'small'
+    ? { label: '軽量モードで動作中', tone: 'small' as const }
+    : { label: '標準モードで動作中', tone: 'standard' as const },
+)
+
+function updateModelProfile(e: Event) {
+  settings.update({ modelProfile: (e.target as HTMLSelectElement).value as ModelProfilePref })
+}
 
 // Whisper はインストール名が "ggml-small.bin"。設定値は短縮名 "small" なので変換する。
 // transcribe 側の allowlist と同期した VALID_WHISPER_MODELS で絞る。
@@ -728,6 +764,7 @@ async function handleDeleteAll() {
           </p>
           <p class="mt-1 text-xs text-text-muted">
             選べるのはインストール済みのモデルだけです。速度の目安(M4/M5):
+            <strong class="text-text">Llama 1B ≈ 1秒未満</strong> /
             <strong class="text-text">Llama 3B ≈ 1-2秒</strong> /
             <strong class="text-text">Gemma 9B ≈ 3-5秒</strong> /
             <strong class="text-text">Qwen 14B ≈ 5-10秒</strong> per turn
@@ -741,6 +778,45 @@ async function handleDeleteAll() {
             💡 精度重視なら <strong>Gemma 9B</strong> または <strong>Qwen 14B</strong> がおすすめ。
             <strong>Llama 3.2 3B</strong>
             は軽量・高速ですが、英文の添削や日本語→英語の翻訳が不正確になることがあり、誤った添削・誤訳が表示される場合があります。
+            <strong>Llama 3.2 1B / Qwen 2.5 1.5B</strong>
+            はさらに精度が落ちます(添削は出しません)。メモリ 8GB の Mac
+            で「重くて会話にならない」ときの選択肢です。
+          </p>
+        </div>
+
+        <!-- 会話プロファイル -->
+        <div class="border-t border-border pt-3">
+          <div class="flex items-center justify-between">
+            <label class="block text-sm">会話モード</label>
+            <span
+              class="rounded-full px-2 py-0.5 text-[10px]"
+              :class="
+                profileBadge.tone === 'small'
+                  ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+              "
+            >
+              {{ profileBadge.label }}
+            </span>
+          </div>
+          <select
+            :value="settings.settings.modelProfile"
+            class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+            @change="updateModelProfile"
+          >
+            <option v-for="o in profileOptions" :key="o.value" :value="o.value">
+              {{ o.label }}
+            </option>
+          </select>
+          <p class="mt-1 text-xs text-text-muted">
+            小さいモデル(2B 以下)は長い指示を守れないため、<strong class="text-text"
+              >軽量モード</strong
+            >では AI への指示を短くし、会話履歴を減らし、返答を 1〜2
+            文に制限します。添削と単語は出さず、日本語訳だけを作ります(小さいモデルの添削は誤りが多いため)。
+          </p>
+          <p class="mt-1 text-xs text-text-muted">
+            「自動」はモデル名のパラメータ数で判定します(2B 以下 =
+            軽量)。実際にどちらで動いたかは会話画面のバッジに出ます(こちらはバックエンドの申告)。
           </p>
         </div>
       </div>

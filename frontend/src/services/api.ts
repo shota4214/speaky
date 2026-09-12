@@ -1,3 +1,4 @@
+import type { ModelProfileLevel, ModelProfilePref } from '../storage/settings'
 import type { Level, Mode, PersonalityPreset, VocabItem } from '../db/types'
 import { NO_FEATURES, parseHealthFeatures, type BackendFeatures } from '../utils/backend-features'
 import {
@@ -34,6 +35,12 @@ export interface ChatRequestContext {
   model?: string
   /** AI の性格プリセット。未指定なら backend 側で 'friendly' にフォールバック。 */
   personality?: PersonalityPreset
+  /**
+   * 会話プロファイルの指定('auto' / 'standard' / 'small')。
+   * 解決は backend が行う(shared/llm-models.ts が唯一の出典)。
+   * 'model-profile' 機能を申告したバックエンドにだけ送る。
+   */
+  modelProfile?: ModelProfilePref
 }
 
 export interface FeedbackResponse {
@@ -48,6 +55,8 @@ export interface ChatReply {
   feedback: FeedbackResponse | null
   vocabulary: VocabItem[]
   mode: Mode
+  /** backend が実際に使った会話プロファイル。古いバックエンドは返さない。 */
+  profile?: ModelProfileLevel
 }
 
 export class ApiError extends Error {
@@ -99,18 +108,96 @@ export async function transcribeAudio(
   return asJson<TranscribeResult>(res)
 }
 
+/**
+ * 非ストリーミング経路のクライアント側デッドライン。
+ *
+ * ストリーミング経路には STREAM_HEADER_TIMEOUT_MS / STREAM_IDLE_TIMEOUT_MS を
+ * 入れたが、**非ストリーミング経路には締め切りが無かった**。
+ * backend の予算(first-token 90 秒)は backend が生きていれば効く。効かないのは
+ * 「ソケットが半開きのまま死んだ」場合 — スリープ復帰が典型で、TCP は切れたことに
+ * 気づかず read が永遠に返らない。そのときターンは応答も失敗もしないまま止まり、
+ * UI は「Thinking...」のまま、マイクは閉じたままになる(会話を終わるしか無くなる)。
+ *
+ * 値は backend の予算(90 秒)+ 余裕。ここを backend より短くすると
+ * **正常に動いているコールドロードを殺す**ので、必ず長い側に取る。
+ * 1 呼び出しが一括で返る経路なので、区間を分ける意味は無い(1 本の締め切り)。
+ */
+const REQUEST_TIMEOUT_MS = 120_000
+
+/** enrich / 要約など、会話ターンより短くてよい呼び出しのデッドライン。 */
+const SHORT_REQUEST_TIMEOUT_MS = 90_000
+
+/**
+ * JSON を POST して JSON を受け取る。「呼び出し側の signal」と
+ * 「自前のデッドライン」の両方を効かせる。
+ *
+ * ⚠️ **本文を読み終わるまで締め切りを生かしておくこと**。
+ * `fetch()` はヘッダーが返った時点で解決するので、そこでタイマーを止めると
+ * `res.text()` が保護されない区間になる。半開きソケット(スリープ復帰)は
+ * 「ステータス行だけ届いて本文が来ない」形でも起こるので、そこを空けると
+ * この機能が塞ごうとしている穴がそのまま残る。だから fetch と本文の読み取りを
+ * 1 つの try に入れてある(ストリーミング側の openChatStream と同じ考え方)。
+ *
+ * ⚠️ 呼び出し側の中断(会話終了)と締め切り切れを **区別できる形で** 返すこと。
+ * どちらも AbortError なので、素朴に書くと「ユーザーが会話を終えただけ」が
+ * タイムアウトのエラー表示になる。**先に起きた方**を採用する
+ * (`signal.aborted` だけを見ると、締め切りで固まったターンにしびれを切らした
+ * ユーザーが「会話を終わる」を押した瞬間に判定がひっくり返る)。
+ * 締め切り切れだけを ApiError(504) にし、呼び出し側の中断は AbortError のまま
+ * 投げ直す(useConversationLoop の isAbortError がそれを見ている)。
+ */
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  const ctrl = new AbortController()
+  /** 先に起きた方だけを記録する(後から起きた方では上書きしない)。 */
+  let outcome: 'timeout' | 'caller' | null = null
+
+  const abortFromCaller = (): void => {
+    outcome ??= 'caller'
+    ctrl.abort(signal?.reason)
+  }
+  if (signal?.aborted) abortFromCaller()
+  else signal?.addEventListener('abort', abortFromCaller, { once: true })
+
+  const timer = setTimeout(() => {
+    outcome ??= 'timeout'
+    ctrl.abort(new Error('request deadline'))
+  }, timeoutMs)
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+    return await asJson<T>(res)
+  } catch (e) {
+    if (outcome === 'timeout') {
+      console.warn(`[api] ${url} が ${timeoutMs}ms で応答しなかったため打ち切り`)
+      throw new ApiError(
+        504,
+        '応答がありませんでした。通信が切れている可能性があります。',
+        'TIMEOUT',
+      )
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abortFromCaller)
+  }
+}
+
 export async function chat(
   userText: string,
   context: ChatRequestContext = {},
   options: { signal?: AbortSignal } = {},
 ): Promise<ChatReply> {
-  const res = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userText, context }),
-    signal: options.signal,
-  })
-  return asJson<ChatReply>(res)
+  return postJson<ChatReply>('/api/chat', { userText, context }, REQUEST_TIMEOUT_MS, options.signal)
 }
 
 /**
@@ -121,13 +208,7 @@ export async function chatOpening(
   context: ChatRequestContext = {},
   options: { signal?: AbortSignal } = {},
 ): Promise<ChatReply> {
-  const res = await fetch('/api/chat/opening', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ context }),
-    signal: options.signal,
-  })
-  return asJson<ChatReply>(res)
+  return postJson<ChatReply>('/api/chat/opening', { context }, REQUEST_TIMEOUT_MS, options.signal)
 }
 
 // ----- Backend capability probe -----
@@ -418,13 +499,12 @@ export async function chatEnrich(
   context: ChatRequestContext = {},
   options: { signal?: AbortSignal } = {},
 ): Promise<ChatEnrichment> {
-  const res = await fetch('/api/chat/enrich', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ replyEn, userText, context }),
-    signal: options.signal,
-  })
-  return asJson<ChatEnrichment>(res)
+  return postJson<ChatEnrichment>(
+    '/api/chat/enrich',
+    { replyEn, userText, context },
+    SHORT_REQUEST_TIMEOUT_MS,
+    options.signal,
+  )
 }
 
 export async function summarize(
@@ -432,13 +512,12 @@ export async function summarize(
   topic?: string,
   options: { model?: string; signal?: AbortSignal } = {},
 ): Promise<{ summary: string }> {
-  const res = await fetch('/api/summarize', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transcript, topic, model: options.model }),
-    signal: options.signal,
-  })
-  return asJson<{ summary: string }>(res)
+  return postJson<{ summary: string }>(
+    '/api/summarize',
+    { transcript, topic, model: options.model },
+    SHORT_REQUEST_TIMEOUT_MS,
+    options.signal,
+  )
 }
 
 export interface ExtractFactsResult {
@@ -452,18 +531,12 @@ export async function extractFacts(
   existingName: string | null,
   options: { model?: string; signal?: AbortSignal } = {},
 ): Promise<ExtractFactsResult> {
-  const res = await fetch('/api/extract-facts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      transcript,
-      existingFacts,
-      existingName,
-      model: options.model,
-    }),
-    signal: options.signal,
-  })
-  return asJson<ExtractFactsResult>(res)
+  return postJson<ExtractFactsResult>(
+    '/api/extract-facts',
+    { transcript, existingFacts, existingName, model: options.model },
+    SHORT_REQUEST_TIMEOUT_MS,
+    options.signal,
+  )
 }
 
 export interface OllamaHealth {

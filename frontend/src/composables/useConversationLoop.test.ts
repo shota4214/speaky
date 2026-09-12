@@ -156,8 +156,9 @@ function makeFakeStream(onEffect: (e: ChatStreamEffect) => void, signal?: AbortS
 }
 
 const FEATURES = {
-  apiVersion: 1,
-  features: ['chat-stream', 'chat-opening-stream', 'chat-enrich'],
+  apiVersion: 3,
+  features: ['chat-stream', 'chat-opening-stream', 'chat-enrich', 'model-profile'],
+  totalMemoryBytes: 8 * 1024 * 1024 * 1024,
 }
 
 const startInput = {

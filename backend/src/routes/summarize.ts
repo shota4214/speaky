@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express'
 import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
 import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
+import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 
 interface TranscriptItem {
   role: 'user' | 'ai'
@@ -47,7 +48,8 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
     const ollamaRes = await chatWithOllama(messages, {
       jsonFormat: false,
       model,
-      firstTokenTimeoutMs: 60_000,
+      // 予算は shared/request-budget.ts が出典(クライアント締め切りがここから導かれる)。
+      firstTokenTimeoutMs: OLLAMA_BUDGET_MS.summarize,
       // 要約は安定性重視: 低 temperature
       temperature: 0.3,
       topP: 0.85,

@@ -83,7 +83,7 @@ describe('resolveModelProfile', () => {
     expect(resolveModelProfile('auto', 'gemma2:2b').level).toBe('small')
   })
 
-  it('auto + 3B → standard(同梱モデルは従来どおり)', () => {
+  it('auto + 3B → standard(追加ダウンロードで標準モードに戻る)', () => {
     expect(resolveModelProfile('auto', 'llama3.2:3b').level).toBe('standard')
   })
 

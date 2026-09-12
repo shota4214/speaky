@@ -7,6 +7,7 @@
 import type { Level } from './conversation-prompt.js'
 import { looksLikeJsonScaffold, matchJsonStringField } from './json-salvage.js'
 import { chatWithOllama, OllamaError, RETRY_SEED, type OllamaChatMessage } from './ollama.js'
+import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 
 /**
  * japanese_help / mixed モードは LLM のシステムプロンプトに「翻訳して」と書くだけでは
@@ -138,6 +139,18 @@ export function stripTranslationPreamble(raw: string): string {
   return out
 }
 
+/**
+ * ja→en 翻訳の試行設定。
+ * ⚠️ **本数は shared/request-budget.ts の OLLAMA_ATTEMPTS.translation と一致させること。**
+ * /api/chat の日本語入力経路はこの梯子だけを通るので、クライアント側の締め切りが
+ * 「本数 × first-token 予算」から計算されている(v1.1.0 は 120 秒 対 120 秒の同値で、
+ * どちらが先に諦めるかが運になっていた)。
+ */
+export const TRANSLATION_ATTEMPTS: readonly { temperature: number; seed?: number }[] = [
+  { temperature: 0.3 },
+  { temperature: 0.1, seed: RETRY_SEED },
+]
+
 export async function translateToNaturalEnglish(
   userText: string,
   options: { model?: string; level?: Level; numCtx?: number; signal?: AbortSignal },
@@ -152,16 +165,15 @@ export async function translateToNaturalEnglish(
   // それは「同じ分布からの引き直し」= 独立した宝くじで、(a) 失敗が再現できない
   // (b) 運が悪ければ同じ壊れ方を繰り返す、という会話経路で潰したのと同じ欠陥。
   // 翻訳は決定的な 1 本が欲しい処理なので、なおさら上げる理由が無い。
-  const attempts: { temperature: number; seed?: number }[] = [
-    { temperature: 0.3 },
-    { temperature: 0.1, seed: RETRY_SEED },
-  ]
   let lastTranslated = ''
-  for (const a of attempts) {
+  for (const a of TRANSLATION_ATTEMPTS) {
     const ollamaRes = await chatWithOllama(messages, {
       model: options.model,
       numCtx: options.numCtx,
-      firstTokenTimeoutMs: 60_000,
+      // 予算は shared/request-budget.ts が出典。**attempts の本数**(2)も
+      // OLLAMA_ATTEMPTS.translation と一致させること: /api/chat の日本語入力経路は
+      // この梯子だけを通るので、クライアント締め切りがここから計算されている。
+      firstTokenTimeoutMs: OLLAMA_BUDGET_MS.translation,
       // 翻訳は再現性重視で低温度(会話経路の 0.85 より低い)。
       temperature: a.temperature,
       ...(a.seed !== undefined && { seed: a.seed }),
@@ -221,7 +233,7 @@ export async function translateEnglishToJapanese(
     const ollamaRes = await chatWithOllama(messages, {
       model: options.model,
       numCtx: options.numCtx,
-      firstTokenTimeoutMs: 60_000,
+      firstTokenTimeoutMs: OLLAMA_BUDGET_MS.translation,
       temperature: 0.3,
       topP: 0.9,
       numPredict: 300,

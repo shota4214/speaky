@@ -70,6 +70,18 @@ export interface LlmCatalogEntry {
   lightweight: boolean
   /** 取得フォーム / オンボーディングの選択肢に出すか。 */
   offerForDownload: boolean
+  /**
+   * DMG に同梱していて、**オフラインの初回起動でも必ず存在する**モデルか。
+   *
+   * ⚠️ true にしてよいのは {@link BUNDLED_LLM_MODEL} ただ 1 つ。
+   * ここが実際の同梱物とずれると、オンボーディングが
+   * 「同梱」と表示したモデルをオフラインのユーザーが取得できず、
+   * 初回起動が行き止まりになる(v1.1.0 直前に実際に踏んだ穴)。
+   * 同梱物を変えるときは scripts/prep-llama-model.mjs の MODEL と
+   * この定数を必ず同時に変えること(両者の一致は
+   * shared/llm-models.test.ts が prep スクリプトを読んで検証している)。
+   */
+  bundled: boolean
 }
 
 /**
@@ -84,77 +96,114 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Llama 3.2 1B',
     sizeLabel: '~1.3GB',
     icon: '⚡⚡',
-    note: '最軽量 / 8GB 機向け・精度は低め(添削と和訳は当てにしない)',
+    note: '同梱・既定 / 8GB 機向け・精度は低め(軽量モード: 添削と単語は出ません)',
     lightweight: true,
     offerForDownload: true,
+    bundled: true,
   },
   {
     tag: 'qwen2.5:1.5b',
     label: 'Qwen 2.5 1.5B',
     sizeLabel: '~1GB',
     icon: '⚡⚡',
-    note: '超軽量 / 8GB 機向け・日本語は 1B より安定',
+    note: '要ダウンロード / 8GB 機向け・日本語は 1B より安定(軽量モード)',
     lightweight: true,
     offerForDownload: true,
+    bundled: false,
   },
   {
     tag: 'gemma2:2b',
     label: 'Gemma 2 2B',
     sizeLabel: '~1.6GB',
     icon: '⚡',
-    note: '軽量 / 会話は成立するが添削は粗い',
+    note: '要ダウンロード / 会話は成立するが添削は粗い',
     lightweight: true,
     offerForDownload: false,
+    bundled: false,
   },
   {
     tag: 'llama3.2:3b',
     label: 'Llama 3.2 3B',
     sizeLabel: '~2GB',
     icon: '⚡',
-    note: '軽量・高速 / 同梱モデル・8GB 機の標準',
+    note: '要ダウンロード / 標準モード(添削・単語あり)に戻せる最小のモデル',
     lightweight: true,
     offerForDownload: true,
+    bundled: false,
   },
   {
     tag: 'qwen2.5:7b',
     label: 'Qwen 2.5 7B',
     sizeLabel: '~4.7GB',
     icon: '⚖️',
-    note: 'バランス型 / 16GB 以上向け',
+    note: '要ダウンロード / バランス型・16GB 以上向け',
     lightweight: false,
     offerForDownload: false,
+    bundled: false,
   },
   {
     tag: 'llama3.1:8b',
     label: 'Llama 3.1 8B',
     sizeLabel: '~4.9GB',
     icon: '⚖️',
-    note: 'バランス型 / 16GB 以上向け',
+    note: '要ダウンロード / バランス型・16GB 以上向け',
     lightweight: false,
     offerForDownload: false,
+    bundled: false,
   },
   {
     tag: 'gemma2:9b',
     label: 'Gemma 2 9B',
     sizeLabel: '~5.5GB',
     icon: '⚖️',
-    note: 'バランス型 / 16GB 以上向け・標準おすすめ',
+    note: '要ダウンロード / バランス型・16GB 以上向け・精度重視のおすすめ',
     lightweight: false,
     offerForDownload: true,
+    bundled: false,
   },
   {
     tag: 'qwen2.5:14b',
     label: 'Qwen 2.5 14B',
     sizeLabel: '~9GB',
     icon: '💎',
-    note: '高品質 / 低速・16GB 以上向け',
+    note: '要ダウンロード / 高品質・低速・16GB 以上向け',
     lightweight: false,
     offerForDownload: true,
+    bundled: false,
   },
 ]
 
-/** 既定の会話モデル(DMG に同梱しているもの)。 */
-export const DEFAULT_LLM_MODEL = 'llama3.2:3b'
+/**
+ * **DMG に同梱している唯一の会話モデル**。
+ *
+ * v1.1.0 までは 3B を同梱していたが、v1.2.0 で 1B に差し替えた。理由:
+ * オンボーディングは 12GB 未満の Mac に軽量モデルを**あらかじめ選ぶ**のに、
+ * 同梱していたのは 3B だけだった。ネットの無い 8GB 機では
+ * 「選ばれているモデルが取得できず、モデル DL ステップの『次へ』が
+ * 永久に押せない」= 初回起動が行き止まりになる。
+ * 完全ローカルを売りにしている以上、**既定は必ず同梱物でなければならない**。
+ *
+ * 副作用として、素の初回インストールは自動判定で `small` プロファイル
+ * (短い返答 / 添削・単語なし)になる。これは意図した結果であり、
+ * 設定画面とオンボーディングで明示し、メモリに余裕のある人には
+ * {@link RECOMMENDED_DOWNLOAD_LLM_MODEL} の取得を案内する。
+ *
+ * ⚠️ 変更するときは `scripts/prep-llama-model.mjs` の MODEL / MANIFEST_REL、
+ * README / CLAUDE.md の同梱物の記述も同時に直すこと。
+ * prep スクリプトとの一致は `shared/llm-models.test.ts` が検証している。
+ */
+export const BUNDLED_LLM_MODEL = 'llama3.2:1b'
+
+/** 既定の会話モデル。**同梱物と一致していること**(オフライン初回起動の前提)。 */
+export const DEFAULT_LLM_MODEL: string = BUNDLED_LLM_MODEL
+
+/**
+ * メモリに余裕のある Mac(12GB 以上)に薦める追加ダウンロード。
+ * 同梱の 1B は自動判定で軽量モード(添削・単語なし)になるため、
+ * 「フルの体験に戻すには何を落とせばいいか」を 1 箇所で持つ。
+ * オンボーディングと設定画面の両方がここを読む。
+ */
+export const RECOMMENDED_DOWNLOAD_LLM_MODEL = 'llama3.2:3b'
 
 /**
  * モデル参照の書式チェック。**allowlist より前に通す門番**。

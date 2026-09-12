@@ -17,6 +17,7 @@ import { parseChatReply, salvageChatReply } from '../services/chat-reply.js'
 import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
 import { resolveModelProfile, type ModelProfile } from '../services/model-profile.js'
 import type { ModelProfilePref } from '../shared/llm-models.js'
+import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
 
 /**
@@ -68,7 +69,12 @@ const CONSERVATIVE_RETRY: AttemptSampling = {
   seed: RETRY_SEED,
 }
 
-function chatAttempts(profile: ModelProfile): AttemptSampling[] {
+/**
+ * ⚠️ attempts の **本数** は `shared/request-budget.ts` の OLLAMA_ATTEMPTS.chat と
+ * 一致していなければならない(クライアント締め切りがそこから計算される)。
+ * 本数を変えたら request-budget.ts も直すこと。ズレは request-budget.test.ts が落とす。
+ */
+export function chatAttempts(profile: ModelProfile): AttemptSampling[] {
   return [
     // 1 回目: プロファイルの既定(seed は ollama.ts 側でランダム)
     { temperature: profile.temperature, topP: profile.topP, repeatPenalty: profile.repeatPenalty },
@@ -76,7 +82,8 @@ function chatAttempts(profile: ModelProfile): AttemptSampling[] {
   ]
 }
 
-function openingAttempts(profile: ModelProfile): AttemptSampling[] {
+/** ⚠️ 本数は OLLAMA_ATTEMPTS.opening と一致させること(chatAttempts と同じ理由)。 */
+export function openingAttempts(profile: ModelProfile): AttemptSampling[] {
   return [
     // 挨拶はバリエーション最重視(standard 0.95 / small 0.8)
     {
@@ -98,15 +105,19 @@ function openingAttempts(profile: ModelProfile): AttemptSampling[] {
  * よって v1.1.0 と同じ 90 秒を維持する。
  * ストリーミング導入後は first-token と全体が分離するため、
  * ここを 60 秒へ下げ、stall 予算側で停止を検出する。
+ *
+ * ⚠️ **値は `shared/request-budget.ts` が持つ**。クライアント側の締め切りは
+ * この予算 × attempt 数 + 翻訳 1 回から計算されており、ここだけ直すと
+ * 「backend より先にクライアントが諦める」状態に戻る(v1.1.0 の事故)。
  */
-const CHAT_FIRST_TOKEN_TIMEOUT_MS = 90_000
+const CHAT_FIRST_TOKEN_TIMEOUT_MS = OLLAMA_BUDGET_MS.chat
 
 /**
  * opening だけは別枠で長め。セッション最初の LLM 呼び出しであり、
  * 8GB 機ではここだけモデルのコールドロード(数十秒)を確実に踏む。
  * ここを 60 秒にすると「動くはずの初回起動」を落としかねない。
  */
-const OPENING_FIRST_TOKEN_TIMEOUT_MS = 90_000
+const OPENING_FIRST_TOKEN_TIMEOUT_MS = OLLAMA_BUDGET_MS.opening
 
 export interface HistoryItem {
   role: 'user' | 'ai'

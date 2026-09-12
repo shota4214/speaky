@@ -12,6 +12,7 @@ import {
   matchJsonStringArrayField,
 } from '../services/json-salvage.js'
 import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
+import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 
 interface TranscriptItem {
   role: 'user' | 'ai'
@@ -47,8 +48,12 @@ interface ExtractFactsResult {
 const EXTRACT_FACTS_NUM_PREDICT = 700
 const EXTRACT_FACTS_RETRY_NUM_PREDICT = 1400
 
-/** 2 回まで。2 回目は温度をさらに下げ、seed を固定し、予算を広げる。 */
-const EXTRACT_FACTS_ATTEMPTS: Pick<
+/**
+ * 2 回まで。2 回目は温度をさらに下げ、seed を固定し、予算を広げる。
+ * ⚠️ **本数は shared/request-budget.ts の OLLAMA_ATTEMPTS.extractFacts と一致させること**
+ * (クライアント締め切りが「本数 × first-token 予算」から計算される)。
+ */
+export const EXTRACT_FACTS_ATTEMPTS: Pick<
   ChatWithOllamaOptions,
   'temperature' | 'topP' | 'seed' | 'numPredict'
 >[] = [
@@ -193,7 +198,7 @@ async function runExtraction(
       const ollamaRes = await chatWithOllama(messages, {
         jsonFormat: true,
         model,
-        firstTokenTimeoutMs: 60_000,
+        firstTokenTimeoutMs: OLLAMA_BUDGET_MS.extractFacts,
         signal,
         ...sampling,
       })

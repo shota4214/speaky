@@ -1,4 +1,5 @@
 import {
+  DEFAULT_LLM_MODEL,
   inferProfileLevel,
   isModelProfilePref,
   type ModelProfilePref,
@@ -67,9 +68,13 @@ export const VALID_WHISPER_MODELS = new Set<WhisperModel>([
  * 見えない不整合になる。二重化そのものを消したので、ここは再 export だけ。
  */
 export {
+  BUNDLED_LLM_MODEL,
+  DEFAULT_LLM_MODEL,
+  findCatalogEntry,
   isAllowedLlmModel,
   LLM_CATALOG,
   llmParameterBillions,
+  RECOMMENDED_DOWNLOAD_LLM_MODEL,
   resolveProfileLevel,
   type LlmCatalogEntry,
   type ModelProfileLevel,
@@ -149,7 +154,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // 1.5秒: 話し終わってから送信されるまでの猶予。設定画面で 1-15 秒に調整可能。
   // 5秒だと毎ターン無言の待ち時間が乗って体感が大幅に悪化するため短縮した。
   silenceDurationMs: 1500,
-  llmModel: 'llama3.2:3b',
+  // ⚠️ **必ず同梱モデル**(backend/src/shared/llm-models.ts の BUNDLED_LLM_MODEL)。
+  // 既定が同梱物でないと、ネットの無い初回起動が「選ばれているモデルを取得できない」
+  // 行き止まりになる。v1.2.0 で 3B → 1B に変更した(DMG も約 2.67GB → 約 1.5GB)。
+  // 1B は自動判定で軽量モード(短い返答 / 添削・単語なし)になる — これは意図した
+  // 結果で、メモリに余裕のある人には設定画面から 3B の取得を案内する。
+  llmModel: DEFAULT_LLM_MODEL,
   // 新規ユーザーは自動判定。1B / 1.5B を選べば自動で軽量モードになる。
   modelProfile: 'auto',
   // small(多言語・約488MB): 8GB Mac でも現実的な速度/RAM。日本語入力を扱うので `.en` は不可。
@@ -250,7 +260,14 @@ export function loadSettings(): AppSettings {
     // 再実行されればまた 'standard' に引き戻される。下の「移行したら即保存」
     // (needsMigration → saveSettings)が効いていないとこれが毎起動起きる。
     if (storedVersion < 3) {
-      merged.modelProfile = inferProfileLevel(merged.llmModel) === 'small' ? 'standard' : 'auto'
+      // ⚠️ **`merged` ではなく `parsed` の値で判定する**。merged はキーが欠けていると
+      // 新しいデフォルト(= 同梱モデル。v1.2.0 で 1B になった)で埋まるため、
+      // 「llmModel を保存していない旧ユーザー」が新デフォルトの 1B を根拠に
+      // standard へ据え置かれてしまう。据え置くべきなのは
+      // **自分で 2B 以下を選んで保存していた人**だけ。
+      const storedModel = typeof parsed.llmModel === 'string' ? parsed.llmModel : null
+      merged.modelProfile =
+        storedModel !== null && inferProfileLevel(storedModel) === 'small' ? 'standard' : 'auto'
     }
     // 壊れた値(手編集・将来版からのダウングレード)は既定へ戻す。
     if (!isModelProfilePref(merged.modelProfile)) {

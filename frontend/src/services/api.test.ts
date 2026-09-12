@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, chat, chatEnrich, chatOpening, chatStream } from './api'
+import { ApiError, chat, chatEnrich, chatOpening, chatStream, transcribeAudio } from './api'
+import {
+  BACKEND_WORST_CASE_MS,
+  CHAT_ROUTE_WORST_CASE_MS,
+  CLIENT_DEADLINE_MS,
+  TRANSCRIBE_BUDGET_MS,
+} from '../../../backend/src/shared/request-budget'
+
+/** 締め切りの「ちょうど手前」と「ちょうど過ぎ」を作る。 */
+const JUST_BEFORE = (deadline: number) => deadline - 1_000
+const JUST_AFTER = 2_000
 
 /**
  * ストリーミング経路のクライアント側の締め切りのテスト。
@@ -196,18 +206,21 @@ describe('非ストリーミング経路の締め切り', () => {
     return { fetch: fakeFetch, aborted: () => wasAborted }
   }
 
-  it('/api/chat は 120 秒で打ち切って TIMEOUT を返す', async () => {
+  it('/api/chat は backend の最悪値を過ぎてから打ち切って TIMEOUT を返す', async () => {
     const { fetch: fakeFetch, aborted } = hangingFetch()
     vi.stubGlobal('fetch', fakeFetch)
 
     const promise = chat('hello', {}).catch((e: unknown) => e)
 
-    // backend の予算(90 秒)より長く待つ。ここを短くすると
-    // 正常に動いているコールドロードを殺す。
-    await vi.advanceTimersByTimeAsync(100_000)
+    // ⚠️ backend のリトライ梯子(最悪 240 秒)を **過ぎてから** でないと切らない。
+    // v1.1.0 はここが 120 秒で、遅いだけの健全なターンを殺して通信エラーにし、
+    // 会話ループの連続失敗カウンタ(3 回で停止)を積み上げていた。
+    await vi.advanceTimersByTimeAsync(CHAT_ROUTE_WORST_CASE_MS)
     expect(aborted()).toBe(false)
 
-    await vi.advanceTimersByTimeAsync(25_000)
+    await vi.advanceTimersByTimeAsync(
+      CLIENT_DEADLINE_MS.chat - CHAT_ROUTE_WORST_CASE_MS + JUST_AFTER,
+    )
     const error = await promise
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('TIMEOUT')
@@ -219,20 +232,63 @@ describe('非ストリーミング経路の締め切り', () => {
     vi.stubGlobal('fetch', fakeFetch)
 
     const promise = chatOpening({}).catch((e: unknown) => e)
-    await vi.advanceTimersByTimeAsync(125_000)
+    await vi.advanceTimersByTimeAsync(CLIENT_DEADLINE_MS.opening + JUST_AFTER)
     expect((await promise) as ApiError).toBeInstanceOf(ApiError)
   })
 
-  it('/api/chat/enrich は会話ターンより短い締め切り(90 秒)', async () => {
+  it('/api/chat/enrich は会話ターンより短いが、enrich の梯子(120 秒)は必ず超える', async () => {
+    // enrich は「日本語訳を再取得」ボタンの経路 = ユーザーが失敗を直に見る。
+    // v1.1.0 は 90 秒で、backend の最悪値(enrich 60 + en→ja 補完 60)より短かった。
+    expect(CLIENT_DEADLINE_MS.enrich).toBeGreaterThan(BACKEND_WORST_CASE_MS.enrich)
+    expect(CLIENT_DEADLINE_MS.enrich).toBeLessThan(CLIENT_DEADLINE_MS.chat)
+
     const { fetch: fakeFetch, aborted } = hangingFetch()
     vi.stubGlobal('fetch', fakeFetch)
 
     const promise = chatEnrich('Hello there!', null, {}).catch((e: unknown) => e)
-    await vi.advanceTimersByTimeAsync(85_000)
+    await vi.advanceTimersByTimeAsync(JUST_BEFORE(CLIENT_DEADLINE_MS.enrich))
     expect(aborted()).toBe(false)
 
-    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.advanceTimersByTimeAsync(JUST_AFTER)
     expect((await promise) as ApiError).toBeInstanceOf(ApiError)
+  })
+
+  /**
+   * 転写は **毎ターン必ず通る唯一の経路**。v1.1.0 まではここだけ締め切りも
+   * signal も無く、whisper が詰まると「認識中」のままマイクを閉じて
+   * 二度と戻ってこなかった(会話を終わる以外に出口が無い)。
+   */
+  it('/api/transcribe は backend の転写予算を過ぎてから打ち切る', async () => {
+    const { fetch: fakeFetch, aborted } = hangingFetch()
+    vi.stubGlobal('fetch', fakeFetch)
+
+    const promise = transcribeAudio(new Blob(['dummy']), { model: 'small' }).catch(
+      (e: unknown) => e,
+    )
+    await vi.advanceTimersByTimeAsync(TRANSCRIBE_BUDGET_MS)
+    expect(aborted()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(
+      CLIENT_DEADLINE_MS.transcribe - TRANSCRIBE_BUDGET_MS + JUST_AFTER,
+    )
+    const error = await promise
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('TIMEOUT')
+  })
+
+  it('/api/transcribe は呼び出し側の中断を AbortError のまま返す(会話終了)', async () => {
+    const { fetch: fakeFetch } = hangingFetch()
+    vi.stubGlobal('fetch', fakeFetch)
+
+    const ctrl = new AbortController()
+    const promise = transcribeAudio(new Blob(['dummy']), { signal: ctrl.signal }).catch(
+      (e: unknown) => e,
+    )
+    ctrl.abort(new DOMException('conversation-stopped', 'AbortError'))
+
+    const error = await promise
+    expect(error).not.toBeInstanceOf(ApiError)
+    expect((error as Error).name).toBe('AbortError')
   })
 
   /**
@@ -290,7 +346,7 @@ describe('非ストリーミング経路: 本文の読み取りも締め切り�
   it('ヘッダーだけ返って本文が来ないときも締め切りが効く', async () => {
     vi.stubGlobal('fetch', headersOnlyFetch())
     const promise = chat('hello', {}).catch((e: unknown) => e)
-    await vi.advanceTimersByTimeAsync(125_000)
+    await vi.advanceTimersByTimeAsync(CLIENT_DEADLINE_MS.chat + JUST_AFTER)
     const error = await promise
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('TIMEOUT')
@@ -332,7 +388,7 @@ describe('非ストリーミング経路: 本文の読み取りも締め切り�
     const ctrl = new AbortController()
     const promise = chat('hello', {}, { signal: ctrl.signal }).catch((e: unknown) => e)
     // 先に締め切りが切れる
-    await vi.advanceTimersByTimeAsync(125_000)
+    await vi.advanceTimersByTimeAsync(CLIENT_DEADLINE_MS.chat + JUST_AFTER)
     // その後でユーザーが会話を終える
     ctrl.abort(new DOMException('conversation-stopped', 'AbortError'))
 

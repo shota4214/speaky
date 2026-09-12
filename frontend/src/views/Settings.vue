@@ -17,18 +17,24 @@ import {
   getWhisperCppStatus,
   listOllamaModels,
   listWhisperModels,
+  previewModelProfile,
+  probeBackendFeatures,
   pullOllamaModel,
   type InstalledModel,
+  type ModelProfilePreview,
 } from '../services/api'
 import {
+  BUNDLED_LLM_MODEL,
+  findCatalogEntry,
   isAllowedLlmModel,
   LLM_CATALOG,
   llmParameterBillions,
-  resolveProfileLevel,
+  RECOMMENDED_DOWNLOAD_LLM_MODEL,
   VALID_WHISPER_MODELS,
   type ModelProfilePref,
   type WhisperModel,
 } from '../storage/settings'
+import { FEATURE_MODEL_PROFILE_PREVIEW, hasFeature } from '../utils/backend-features'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore } from '../stores/theme'
 import {
@@ -207,7 +213,9 @@ async function loadInstalledModels() {
 }
 
 // LLM pull
-const newLlmName = ref('llama3.2:3b')
+// 取得フォームの初期値は「同梱の 1B から標準モードへ戻すのに要るモデル」。
+// ここを固定文字列で書くと、同梱物を変えたときに真っ先に嘘になる。
+const newLlmName = ref<string>(RECOMMENDED_DOWNLOAD_LLM_MODEL)
 const llmPulling = ref(false)
 const llmPullProgress = ref(0)
 const llmPullStatus = ref('')
@@ -371,6 +379,7 @@ const totalSize = () => {
 }
 
 onMounted(loadInstalledModels)
+onMounted(refreshProfilePreview)
 
 function updateSilence(e: Event) {
   const value = Number((e.target as HTMLInputElement).value)
@@ -416,12 +425,55 @@ const installedLlmOptions = computed(() =>
 )
 
 // --- 会話プロファイル ---
-// 推定は backend と同じ関数で行う(shared/llm-models.ts が唯一の出典)。
-// 実際に動いたプロファイルは会話中に backend が meta / レスポンスで返すが、
-// 設定画面は会話前に開くので、ここでは同じ関数で先に見せる。
-const activeProfileLevel = computed(() =>
-  resolveProfileLevel(settings.settings.modelProfile, settings.settings.llmModel),
-)
+//
+// ⚠️ **ここはローカルの設定から推測してはいけない**(v1.1.0 の不具合)。
+// 会話画面のバッジは backend が申告した値だけを信じているのに、この画面だけが
+// `resolveProfileLevel()` をフロントで呼んで「軽量モードで動作中」と言い切っていた。
+// Electron は frontend を app bundle から、backend を userData から読み、backend の
+// 同期は app version の gate で走るので **frontend だけ新しい** 組み合わせが普通に起こる。
+// その旧 backend は
+//   - プロファイルを知らない(常に長いプロンプトで動く)
+//   - allowlist が完全一致で `llama3.2:1b` を含まない → 黙って既定モデルへ差し替える
+// ため、ユーザーは「選んだモデル」も「表示されたモード」も両方間違った画面を見ていた。
+//
+// なので **backend に聞く**(POST /api/model-profile/preview)。
+// 聞けない backend(機能申告が無い / 応答しない)には何も言い切らない。
+const profilePreview = ref<ModelProfilePreview | null>(null)
+/** backend がプレビューに対応しているか。null = まだ確認できていない。 */
+const profilePreviewSupported = ref<boolean | null>(null)
+
+/**
+ * 問い合わせの世代。モデルとモードを続けて変えると問い合わせが並走し、
+ * 遅かった方が後から解決して**古い結果でバッジを上書きする**ことがある。
+ * バッジは「backend が確認した内容」を名乗る以上、古い答えを出すのは
+ * 推測を出すのと同じくらい悪い。最後の問い合わせだけを採用する。
+ */
+let previewGeneration = 0
+
+async function refreshProfilePreview() {
+  const generation = ++previewGeneration
+  const model = settings.settings.llmModel
+  const pref = settings.settings.modelProfile
+
+  const features = await probeBackendFeatures()
+  if (generation !== previewGeneration) return
+  if (!hasFeature(features, FEATURE_MODEL_PROFILE_PREVIEW)) {
+    profilePreviewSupported.value = false
+    profilePreview.value = null
+    return
+  }
+  try {
+    const preview = await previewModelProfile(model, pref)
+    if (generation !== previewGeneration) return
+    profilePreview.value = preview
+    profilePreviewSupported.value = true
+  } catch {
+    // 応答が無い = 確認できない。推測で埋めない。
+    if (generation !== previewGeneration) return
+    profilePreviewSupported.value = false
+    profilePreview.value = null
+  }
+}
 
 const profileOptions: { value: ModelProfilePref; label: string }[] = [
   { value: 'auto', label: '自動(モデルの大きさで決める / 推奨)' },
@@ -429,14 +481,34 @@ const profileOptions: { value: ModelProfilePref; label: string }[] = [
   { value: 'small', label: '軽量に固定(短い指示・日本語訳のみ)' },
 ]
 
-const profileBadge = computed(() =>
-  activeProfileLevel.value === 'small'
-    ? { label: '軽量モードで動作中', tone: 'small' as const }
-    : { label: '標準モードで動作中', tone: 'standard' as const },
+/**
+ * バッジ。**backend が確認した内容だけ**を出す。
+ * 確認できないときは「不明」と言う(嘘をつくより役に立つ)。
+ */
+const profileBadge = computed(() => {
+  if (profilePreviewSupported.value === null) {
+    return { label: '確認中...', tone: 'unknown' as const }
+  }
+  const preview = profilePreview.value
+  if (!preview) {
+    return { label: 'このバックエンドでは確認できません', tone: 'unknown' as const }
+  }
+  return preview.profile === 'small'
+    ? { label: '軽量モードで動作します(backend 確認済み)', tone: 'small' as const }
+    : { label: '標準モードで動作します(backend 確認済み)', tone: 'standard' as const }
+})
+
+/** backend が選択モデルを黙って差し替える状態。旧 backend + 新しいモデル名で起きる。 */
+const modelSubstituted = computed(
+  () => profilePreview.value !== null && !profilePreview.value.modelAccepted,
 )
+
+/** 添削・単語が出ない状態か(backend の申告)。 */
+const enrichmentReduced = computed(() => profilePreview.value?.enrichment === 'translation-only')
 
 function updateModelProfile(e: Event) {
   settings.update({ modelProfile: (e.target as HTMLSelectElement).value as ModelProfilePref })
+  void refreshProfilePreview()
 }
 
 // Whisper はインストール名が "ggml-small.bin"。設定値は短縮名 "small" なので変換する。
@@ -469,9 +541,37 @@ function updateWhisper(e: Event) {
     whisperModel: (e.target as HTMLSelectElement).value as WhisperModel,
   })
 }
+/**
+ * LLM を選び直したら、会話モードの固定を **自動へ戻す**。
+ *
+ * 設定スキーマ v3 の移行は `gemma2:2b` を使っていた人に 'standard' を書き込んで
+ * 挙動を据え置いた。移行の瞬間としては正しいが、その値は残り続けるので、
+ * あとからその人が 1B へ乗り換えると **小さいモデルに長いプロンプト** という、
+ * この一連の作業がまさに潰そうとしている組み合わせに静かに戻ってしまう。
+ * モデルを変える瞬間は「前のモデルのための固定」を捨ててよい唯一の合図なので、
+ * ここで 'auto' に戻す(下の説明文にもそう書いてある)。
+ */
 function updateLlm(e: Event) {
-  settings.update({ llmModel: (e.target as HTMLSelectElement).value })
+  const next = (e.target as HTMLSelectElement).value
+  const patch: { llmModel: string; modelProfile?: ModelProfilePref } = { llmModel: next }
+  if (settings.settings.modelProfile !== 'auto') patch.modelProfile = 'auto'
+  settings.update(patch)
+  void refreshProfilePreview()
 }
+
+/** 同梱モデル / 追加ダウンロードの案内に使う表示名。 */
+const bundledLlmLabel = computed(() => {
+  const entry = findCatalogEntry(BUNDLED_LLM_MODEL)
+  return entry ? `${entry.label}(${entry.sizeLabel})` : BUNDLED_LLM_MODEL
+})
+const recommendedDownloadLabel = computed(() => {
+  const entry = findCatalogEntry(RECOMMENDED_DOWNLOAD_LLM_MODEL)
+  return entry ? `${entry.label}(${entry.sizeLabel})` : RECOMMENDED_DOWNLOAD_LLM_MODEL
+})
+/** 追加ダウンロードのモデルが既に入っているか(案内を出すかどうか)。 */
+const recommendedDownloadInstalled = computed(() =>
+  ollamaModels.value.some((m) => m.name === RECOMMENDED_DOWNLOAD_LLM_MODEL),
+)
 function updateDarkMode(e: Event) {
   settings.update({
     darkMode: (e.target as HTMLSelectElement).value as 'system' | 'light' | 'dark',
@@ -773,6 +873,17 @@ async function handleDeleteAll() {
             ※ 未取得モデルは下の「インストール済みモデル」セクションの「+ 取得」ボタンで先に DL
           </p>
           <p
+            v-if="!recommendedDownloadInstalled"
+            class="mt-2 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:bg-sky-900/20 dark:text-sky-200"
+          >
+            💡 DMG に同梱しているのは <strong>{{ bundledLlmLabel }}</strong> だけです(ネット無しで
+            すぐ会話できます)。これは小さいモデルなので
+            <strong>軽量モード</strong>で動き、<strong>添削と単語カードは出ません</strong>。
+            メモリに余裕がある Mac なら、下の「インストール済みモデル」で
+            <strong>{{ recommendedDownloadLabel }}</strong>
+            を取得すると<strong>標準モードに戻り、添削と単語カードが出るようになります</strong>。
+          </p>
+          <p
             class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
           >
             💡 精度重視なら <strong>Gemma 9B</strong> または <strong>Qwen 14B</strong> がおすすめ。
@@ -790,11 +901,14 @@ async function handleDeleteAll() {
             <label class="block text-sm">会話モード</label>
             <span
               class="rounded-full px-2 py-0.5 text-[10px]"
-              :class="
-                profileBadge.tone === 'small'
-                  ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
-                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-              "
+              :class="{
+                'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300':
+                  profileBadge.tone === 'small',
+                'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300':
+                  profileBadge.tone === 'standard',
+                'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300':
+                  profileBadge.tone === 'unknown',
+              }"
             >
               {{ profileBadge.label }}
             </span>
@@ -815,8 +929,40 @@ async function handleDeleteAll() {
             文に制限します。添削と単語は出さず、日本語訳だけを作ります(小さいモデルの添削は誤りが多いため)。
           </p>
           <p class="mt-1 text-xs text-text-muted">
-            「自動」はモデル名のパラメータ数で判定します(2B 以下 =
-            軽量)。実際にどちらで動いたかは会話画面のバッジに出ます(こちらはバックエンドの申告)。
+            「自動」はモデル名のパラメータ数で判定します(2B 以下 = 軽量)。 上のバッジは<strong
+              class="text-text"
+              >バックエンドに問い合わせた結果</strong
+            >で、 会話画面のバッジ(実際に動いた値)と同じ出典です。
+            <strong class="text-text">LLM を選び直すと、この設定は「自動」に戻ります</strong>
+            (前のモデル向けの固定を、別のモデルに引きずらないため)。
+          </p>
+          <p
+            v-if="profilePreviewSupported === false"
+            class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            ⚠ このバックエンドは会話モードに対応していない(または応答しない)ため、
+            <strong>実際にどのモードで動くか確認できません</strong>。
+            対応していないバックエンドはこの設定を無視し、選んだモデルも受け付けずに
+            自分の既定モデルへ差し替えることがあります。
+            アプリを再起動しても直らない場合は、アプリを最新版に入れ直してください。
+          </p>
+          <p
+            v-else-if="modelSubstituted"
+            class="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-900/20 dark:text-rose-300"
+          >
+            ⚠ バックエンドは選択中のモデルを受け付けず、
+            <code class="font-mono">{{ profilePreview?.model }}</code>
+            に差し替えて動作します。アプリを最新版に入れ直してください。
+          </p>
+          <p
+            v-else-if="enrichmentReduced"
+            class="mt-2 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:bg-sky-900/20 dark:text-sky-200"
+          >
+            ℹ️
+            いまの組み合わせでは<strong>添削と単語カードは出ません</strong>(日本語訳は必ず出ます)。
+            小さいモデルの添削は誤りが多く、間違った学習材料を出すより出さない方がよいためです。
+            <strong>{{ recommendedDownloadLabel }}</strong> 以上のモデルを取得して選ぶと、
+            標準モードに戻って添削と単語カードが出るようになります。
           </p>
         </div>
       </div>

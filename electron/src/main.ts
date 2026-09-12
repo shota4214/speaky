@@ -209,6 +209,17 @@ function runRuntimeSync(sync: NonNullable<RuntimePlan['sync']>): void {
  *   - manifest は template 側で更新される可能性があるので、上書きで template 側を反映する
  *     ユーザーが pull した別モデルの manifest は別ディレクトリにあるので影響しない
  *
+ * ⚠️ **この同期は「足す」だけで、絶対に「消さない」**。
+ * v1.2.0 で同梱モデルを 3B → 1B に差し替えたが、既存ユーザーの userData には
+ * 3B の blob と manifest が入っている。ここで「template に無いものを消す」
+ * 掃除を足すと、**アップグレードした瞬間に使用中のモデルが消える**
+ * (設定に保存された `llama3.2:3b` だけが残り、会話開始で MODEL_NOT_FOUND)。
+ * Whisper 側(syncRuntime)がユーザー DL 分を退避 → 復元しているのと同じ意図を、
+ * こちらは「そもそも消さない」形で満たしている。
+ * ollama-data は runtimeDir(毎回 rmSync で作り直す)の**外**(userData/ollama-data)に
+ * あるので、runtime の作り直しにも巻き込まれない。ここを動かすときは
+ * 「既存ユーザーの 3B が残るか」を必ず確認すること。
+ *
  * テンプレート側に ollama-data が無いケース(将来同梱を外す等)は単純に no-op。
  */
 function syncOllamaModels(templateOllamaDir: string, targetModelsDir: string): void {
@@ -375,7 +386,7 @@ function syncRuntime(templateDir: string, runtimeDir: string): void {
  * Ollama を sidecar として起動する。
  * - 既存の Ollama (brew や Ollama.app 等) が動いていれば検出して再利用
  * - 動いていなければ electron-ollama に DL & 起動を任せる
- * - packaged 版では同梱した Llama 3.2 3B を OLLAMA_MODELS 経由で読ませる
+ * - packaged 版では同梱した Llama 3.2 1B を OLLAMA_MODELS 経由で読ませる
  *   (env を spawn 前にセットしておけば electron-ollama の子プロセスが継承する)
  */
 async function startOllama(ollamaModelsDir: string | null): Promise<void> {

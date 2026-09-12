@@ -37,9 +37,20 @@ export function watchClientAbort(res: Response): { signal: AbortSignal; dispose:
   }
 }
 
-/** 外部 abort(= クライアントが切った)による失敗か。タイムアウトとは別物。 */
+/**
+ * 外部 abort(= クライアントが切った)による失敗か。タイムアウトとは別物。
+ *
+ * 2 つの形を受ける:
+ *  - `OllamaError('ABORTED')` … LLM 経路。`chatWithOllama` が自分のデッドラインで
+ *    切ったのか外から切られたのかを区別して詰め替えている。
+ *  - 名前が `AbortError` の例外 … 転写経路。whisper は Ollama を通らないので
+ *    素の `AbortError` がそのまま上がってくる(`routes/transcribe.ts` の Deadline)。
+ *    ⚠️ LLM 経路で素の AbortError が漏れてくることは無い(必ず OllamaError に
+ *    詰め替わる)ので、ここで名前を見てもタイムアウトを中断と誤認することはない。
+ */
 export function isAbortedError(e: unknown): boolean {
-  return e instanceof OllamaError && e.code === 'ABORTED'
+  if (e instanceof OllamaError) return e.code === 'ABORTED'
+  return (e as { name?: string } | null)?.name === 'AbortError'
 }
 
 /**

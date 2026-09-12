@@ -6,6 +6,7 @@ import path from 'node:path'
 import { chatRouter } from './routes/chat.js'
 import { chatStreamRouter } from './routes/chat-stream.js'
 import { extractFactsRouter } from './routes/extract-facts.js'
+import { modelProfileRouter } from './routes/model-profile.js'
 import { modelsRouter } from './routes/models.js'
 import { summarizeRouter } from './routes/summarize.js'
 import { transcribeRouter } from './routes/transcribe.js'
@@ -70,8 +71,13 @@ const API_FEATURES = [
   // 会話プロファイル(standard / small)。フロントはこれがあるときだけ
   // context.modelProfile を送り、UI に「軽量モード」を表示する。
   'model-profile',
+  // POST /api/model-profile/preview。設定画面が「この設定で backend は実際に
+  // どのモデル・どのモードで動くのか」を **backend に聞く** ためのもの。
+  // これが無い backend に対して設定画面は推測を表示してはいけない
+  // (モデル名を黙って既定へ落とす旧 backend が実在する)。
+  'model-profile-preview',
 ] as const
-const API_VERSION = 3
+const API_VERSION = 4
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -129,6 +135,7 @@ app.use('/api', summarizeRouter)
 app.use('/api', extractFactsRouter)
 app.use('/api', transcribeRouter)
 app.use('/api', modelsRouter)
+app.use('/api', modelProfileRouter)
 
 // Electron パッケージ用: 同じ Express で frontend dist を serve し、
 // SPA fallback で全ルート(/history, /settings 等)を index.html に解決する。

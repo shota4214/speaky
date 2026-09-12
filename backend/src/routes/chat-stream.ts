@@ -29,6 +29,7 @@ import {
   type OllamaChatMessage,
 } from '../services/ollama.js'
 import { resolveModelProfile, type ModelProfile } from '../services/model-profile.js'
+import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 import { setupSSE, sseComment, sseSend } from '../services/sse.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
 import { MAX_HISTORY_TURNS, type ChatContext } from './chat.js'
@@ -63,13 +64,13 @@ import { MAX_HISTORY_TURNS, type ChatContext } from './chat.js'
  * 生成が動き出しているかどうかは stall 予算(15 秒)が見てくれるので、
  * ここは 60 秒まで下げられる。8GB 機のコールドロード(20〜40 秒)には十分。
  */
-const STREAM_FIRST_TOKEN_TIMEOUT_MS = 60_000
+const STREAM_FIRST_TOKEN_TIMEOUT_MS = OLLAMA_BUDGET_MS.chatStream
 
 /**
  * opening だけは 90 秒のまま。セッション最初の LLM 呼び出しで、
  * ここだけはモデルのコールドロードを確実に踏むため(非ストリーミング側と同じ理由)。
  */
-const OPENING_STREAM_FIRST_TOKEN_TIMEOUT_MS = 90_000
+const OPENING_STREAM_FIRST_TOKEN_TIMEOUT_MS = OLLAMA_BUDGET_MS.openingStream
 
 /**
  * プレーンテキスト経路 / enrich の生成上限は **プロファイル** が持つ
@@ -86,7 +87,7 @@ const OPENING_STREAM_FIRST_TOKEN_TIMEOUT_MS = 90_000
  * JSON のキー順は reply_ja が先頭なので、予算を使い切って切断されても
  * 日本語訳は parseEnrichment の salvage で必ず残る(落ちるのは添削・単語だけ)。
  */
-const ENRICH_FIRST_TOKEN_TIMEOUT_MS = 60_000
+const ENRICH_FIRST_TOKEN_TIMEOUT_MS = OLLAMA_BUDGET_MS.enrich
 
 /** 最初のトークンを待つ間に流す keepalive コメントの間隔。 */
 const KEEPALIVE_INTERVAL_MS = 10_000

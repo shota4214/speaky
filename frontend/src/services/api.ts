@@ -1,3 +1,4 @@
+import { CLIENT_DEADLINE_MS } from '../../../backend/src/shared/request-budget'
 import type { ModelProfileLevel, ModelProfilePref } from '../storage/settings'
 import type { Level, Mode, PersonalityPreset, VocabItem } from '../db/types'
 import { NO_FEATURES, parseHealthFeatures, type BackendFeatures } from '../utils/backend-features'
@@ -88,6 +89,19 @@ async function asJson<T>(res: Response): Promise<T> {
   return JSON.parse(text) as T
 }
 
+/**
+ * 録音を backend に送って文字起こしする。
+ *
+ * ⚠️ **毎ターン必ず通る唯一の経路**なので、締め切りは他のどれよりも重要。
+ * v1.1.0 まではここだけ締め切りも signal も無く、whisper が詰まる
+ * (メモリ逼迫)かソケットが半開きになる(スリープ復帰)と、ループは
+ * 「認識中」表示のままマイクを閉じて二度と戻ってこなかった
+ * (「会話を終わる」以外に出口が無い = 事実上のハング)。
+ *
+ * 予算は backend の転写予算(180 秒)+ 余裕 = 210 秒。転写は低速機で本当に
+ * 時間がかかるので寛容に取る。ここを短くすると健全な発話を殺して、
+ * 連続失敗として会話を止めてしまう。
+ */
 export async function transcribeAudio(
   blob: Blob,
   options: {
@@ -100,15 +114,15 @@ export async function transcribeAudio(
   // text フィールドは file より前に append する(multer の挙動に合わせる)
   if (options.model) form.append('model', options.model)
   form.append('audio', blob, options.filename ?? 'recording.webm')
-  const res = await fetch('/api/transcribe', {
-    method: 'POST',
-    body: form,
-    signal: options.signal,
-  })
-  return asJson<TranscribeResult>(res)
+  return fetchWithDeadline<TranscribeResult>(
+    '/api/transcribe',
+    { method: 'POST', body: form },
+    CLIENT_DEADLINE_MS.transcribe,
+    options.signal,
+  )
 }
 
-/**
+/*
  * 非ストリーミング経路のクライアント側デッドライン。
  *
  * ストリーミング経路には STREAM_HEADER_TIMEOUT_MS / STREAM_IDLE_TIMEOUT_MS を
@@ -118,14 +132,16 @@ export async function transcribeAudio(
  * 気づかず read が永遠に返らない。そのときターンは応答も失敗もしないまま止まり、
  * UI は「Thinking...」のまま、マイクは閉じたままになる(会話を終わるしか無くなる)。
  *
- * 値は backend の予算(90 秒)+ 余裕。ここを backend より短くすると
- * **正常に動いているコールドロードを殺す**ので、必ず長い側に取る。
- * 1 呼び出しが一括で返る経路なので、区間を分ける意味は無い(1 本の締め切り)。
+ * ⚠️ **値は手で置いてはいけない**。v1.1.0 はここに 120 秒 / 90 秒という
+ * 手置きの定数があり、backend のリトライ梯子(最悪 240 秒 / 120 秒)より
+ * **短かった**。結果として「遅いだけで健全なターン」がクライアント側で
+ * 打ち切られて通信エラーになり、会話ループの連続失敗カウンタ(3 回で停止)を
+ * 積み上げていた。締め切りは backend の梯子から**計算**する
+ * (`backend/src/shared/request-budget.ts`)。ルートごとの内訳はそこに書いてある。
+ *
+ * 現在の値: /api/chat と /api/chat/opening が 270 秒、/api/chat/enrich と
+ * /api/extract-facts が 150 秒、/api/summarize が 90 秒、/api/transcribe が 210 秒。
  */
-const REQUEST_TIMEOUT_MS = 120_000
-
-/** enrich / 要約など、会話ターンより短くてよい呼び出しのデッドライン。 */
-const SHORT_REQUEST_TIMEOUT_MS = 90_000
 
 /**
  * JSON を POST して JSON を受け取る。「呼び出し側の signal」と
@@ -146,9 +162,9 @@ const SHORT_REQUEST_TIMEOUT_MS = 90_000
  * 締め切り切れだけを ApiError(504) にし、呼び出し側の中断は AbortError のまま
  * 投げ直す(useConversationLoop の isAbortError がそれを見ている)。
  */
-async function postJson<T>(
+async function fetchWithDeadline<T>(
   url: string,
-  body: unknown,
+  init: RequestInit,
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<T> {
@@ -169,12 +185,7 @@ async function postJson<T>(
   }, timeoutMs)
 
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    })
+    const res = await fetch(url, { ...init, signal: ctrl.signal })
     return await asJson<T>(res)
   } catch (e) {
     if (outcome === 'timeout') {
@@ -192,12 +203,36 @@ async function postJson<T>(
   }
 }
 
+/** JSON を POST して JSON を受け取る(デッドライン付き)。 */
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  return fetchWithDeadline<T>(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    timeoutMs,
+    signal,
+  )
+}
+
 export async function chat(
   userText: string,
   context: ChatRequestContext = {},
   options: { signal?: AbortSignal } = {},
 ): Promise<ChatReply> {
-  return postJson<ChatReply>('/api/chat', { userText, context }, REQUEST_TIMEOUT_MS, options.signal)
+  return postJson<ChatReply>(
+    '/api/chat',
+    { userText, context },
+    CLIENT_DEADLINE_MS.chat,
+    options.signal,
+  )
 }
 
 /**
@@ -208,7 +243,52 @@ export async function chatOpening(
   context: ChatRequestContext = {},
   options: { signal?: AbortSignal } = {},
 ): Promise<ChatReply> {
-  return postJson<ChatReply>('/api/chat/opening', { context }, REQUEST_TIMEOUT_MS, options.signal)
+  return postJson<ChatReply>(
+    '/api/chat/opening',
+    { context },
+    CLIENT_DEADLINE_MS.opening,
+    options.signal,
+  )
+}
+
+/**
+ * 「この設定で会話を始めたら backend は実際にどう動くのか」を backend に聞く。
+ *
+ * 設定画面の「会話モード」バッジがローカル設定から**推測**していたのをやめ、
+ * backend の解決結果だけを表示するためのもの。`model-profile-preview` 機能を
+ * 申告したバックエンドにだけ呼ぶこと(古い backend はこのルートを持たない)。
+ * LLM は呼ばれないので即答する。
+ */
+export interface ModelProfilePreview {
+  /** リクエストしたモデル名(未指定なら null)。 */
+  requestedModel: string | null
+  /** backend が実際に Ollama へ投げる名前。allowlist で落ちたら backend の既定名。 */
+  model: string
+  /** リクエストした名前がそのまま採用されたか。false = 黙って差し替えられる。 */
+  modelAccepted: boolean
+  pref: ModelProfilePref
+  profile: ModelProfileLevel
+  /** 'translation-only' = 添削と単語は出ない。 */
+  enrichment: 'full' | 'translation-only'
+}
+
+/**
+ * プレビューは LLM を呼ばない即答ルートなので、会話用の長い締め切りは要らない。
+ * 設定画面を開いた瞬間に走るので、遅ければ「確認できない」と出す方がよい。
+ */
+const PROFILE_PREVIEW_TIMEOUT_MS = 5_000
+
+export async function previewModelProfile(
+  model: string,
+  modelProfile: ModelProfilePref,
+  options: { signal?: AbortSignal } = {},
+): Promise<ModelProfilePreview> {
+  return postJson<ModelProfilePreview>(
+    '/api/model-profile/preview',
+    { model, modelProfile },
+    PROFILE_PREVIEW_TIMEOUT_MS,
+    options.signal,
+  )
 }
 
 // ----- Backend capability probe -----
@@ -502,7 +582,7 @@ export async function chatEnrich(
   return postJson<ChatEnrichment>(
     '/api/chat/enrich',
     { replyEn, userText, context },
-    SHORT_REQUEST_TIMEOUT_MS,
+    CLIENT_DEADLINE_MS.enrich,
     options.signal,
   )
 }
@@ -515,7 +595,7 @@ export async function summarize(
   return postJson<{ summary: string }>(
     '/api/summarize',
     { transcript, topic, model: options.model },
-    SHORT_REQUEST_TIMEOUT_MS,
+    CLIENT_DEADLINE_MS.summarize,
     options.signal,
   )
 }
@@ -534,7 +614,7 @@ export async function extractFacts(
   return postJson<ExtractFactsResult>(
     '/api/extract-facts',
     { transcript, existingFacts, existingName, model: options.model },
-    SHORT_REQUEST_TIMEOUT_MS,
+    CLIENT_DEADLINE_MS.extractFacts,
     options.signal,
   )
 }

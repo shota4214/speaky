@@ -92,3 +92,11 @@ export const FEATURE_CHAT_ENRICH = 'chat-enrich'
  * 「効いていると思わせて効いていない」表示をしないために機能検出で揃える。
  */
 export const FEATURE_MODEL_PROFILE = 'model-profile'
+/**
+ * `POST /api/model-profile/preview`。設定画面が「この設定で backend は実際に
+ * どのモデル・どのモードで動くのか」を backend に問い合わせられるか。
+ * **これが無いバックエンドに対して設定画面はモードを言い切ってはいけない**
+ * (旧 backend はプロファイルを知らず、allowlist も完全一致なので
+ * `llama3.2:1b` を黙って既定モデルへ差し替える)。
+ */
+export const FEATURE_MODEL_PROFILE_PREVIEW = 'model-profile-preview'

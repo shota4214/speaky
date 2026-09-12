@@ -35,7 +35,7 @@ import {
   NO_FEATURES,
   type BackendFeatures,
 } from '../utils/backend-features'
-import { resolveProfileLevel, type ModelProfileLevel } from '../storage/settings'
+import { BUNDLED_LLM_MODEL, resolveProfileLevel, type ModelProfileLevel } from '../storage/settings'
 import type {
   ChatEnrichment,
   ChatStreamEffect,
@@ -216,9 +216,28 @@ export function useConversationLoop() {
     return turnController.signal
   }
 
+  /**
+   * 転写の AbortController。**ターンの controller とは別に持つ**。
+   *
+   * 転写はストリーミングの enrich(前のターンのぶん)が裏で走っている最中に起きる。
+   * ここで `beginTurn()` を呼んで使い回すと、前のターンの enrich が
+   * 転写の時間ぶん早く切られて「日本語訳を準備中」が失敗表示に化ける。
+   * かといって signal を渡さないと、会話を終えても転写だけが残って
+   * whisper(と 1 枠しかない Ollama の後ろ)を占有し続ける。
+   */
+  let transcribeController: AbortController | null = null
+
+  function beginTranscribe(): AbortSignal {
+    transcribeController?.abort(abortReason(ABORT_SUPERSEDED))
+    transcribeController = new AbortController()
+    return transcribeController.signal
+  }
+
   function abortTurn(): void {
     turnController?.abort(abortReason(ABORT_STOPPED))
     turnController = null
+    transcribeController?.abort(abortReason(ABORT_STOPPED))
+    transcribeController = null
   }
 
   /** 会話終了(ユーザー操作)による中断か。次ターンのための中断は false。 */
@@ -818,14 +837,22 @@ export function useConversationLoop() {
           trans = await transcribeAudio(recording.blob, {
             filename: `recording.${pickExtension(recording.mimeType)}`,
             model: settings.settings.whisperModel,
+            // 会話を終えたら転写も止める。渡さないと「会話を終わる」を押しても
+            // backend 側の whisper が走り続ける(NUM_PARALLEL=1 の枠を食う)。
+            signal: beginTranscribe(),
           })
         } catch (e) {
+          // 会話終了による中断はエラー扱いしない(chat 経路と同じ扱い)。
+          // ここを数えると「終了操作」が連続失敗として積み上がる。
+          if (isAbortError(e) || stopRequested.value) break
           console.warn('[loop] transcribe failed:', e)
           consecutiveTranscribeFailures.value += 1
-          // 503(モデルが無い)は backend がユーザー向けの日本語文言を返すのでそのまま見せる。
+          // 503(モデルが無い)と 504(転写が予算超過)は backend がユーザー向けの
+          // 日本語文言を返すのでそのまま見せる。クライアント側の締め切り切れも
+          // ApiError(504, 'TIMEOUT') なので同じ経路に乗る。
           // 500 は内部エラー文字列(ffmpeg のパス等)なのでユーザーには出さない。
           errorMessage.value =
-            e instanceof ApiError && e.status === 503
+            e instanceof ApiError && (e.status === 503 || e.status === 504)
               ? e.message
               : '音声の認識に失敗しました。もう一度話しかけてみてください。'
           if (consecutiveTranscribeFailures.value >= MAX_TRANSCRIBE_FAILURES) {
@@ -1060,7 +1087,8 @@ export function useConversationLoop() {
     return (
       `${base ?? 'AIの返答生成に失敗しました。'}\n` +
       `AIの返答が${MAX_CHAT_FAILURES}回続けて失敗したため、会話を停止しました。\n` +
-      '「会話を終わる」で終了し、設定画面で軽いモデル(llama3.2:3b など)に切り替えてから会話を始め直してください。'
+      `「会話を終わる」で終了し、設定画面で軽いモデル(同梱の ${BUNDLED_LLM_MODEL} など)に` +
+      '切り替えてから会話を始め直してください。'
     )
   }
 

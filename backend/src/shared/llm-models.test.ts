@@ -1,8 +1,13 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   ALLOWED_LLM_FAMILIES,
+  BUNDLED_LLM_MODEL,
   DEFAULT_LLM_MODEL,
   LLM_CATALOG,
+  RECOMMENDED_DOWNLOAD_LLM_MODEL,
   inferProfileLevel,
   isAllowedLlmModel,
   isModelProfilePref,
@@ -256,5 +261,60 @@ describe('カタログの一貫性', () => {
 
   it('ファミリー一覧に重複が無い', () => {
     expect(new Set(ALLOWED_LLM_FAMILIES).size).toBe(ALLOWED_LLM_FAMILIES.length)
+  })
+})
+
+/**
+ * 同梱物の整合。**このアプリの一番の売り(完全オフライン動作)を守る**テスト。
+ *
+ * v1.1.0 直前の状態: オンボーディングは 12GB 未満の Mac に `llama3.2:1b` を
+ * あらかじめ選んでいたのに、DMG に同梱していたのは `llama3.2:3b` だけだった。
+ * ネットの無い 8GB 機では「選ばれているモデルが取得できず次へ進めない」
+ * = 初回起動が行き止まり。コードのどこを読んでも矛盾が見えないのが厄介で、
+ * 「既定モデル」「同梱モデル」「prep スクリプトが pull するモデル」の 3 つが
+ * 別々の場所に書かれていたことが原因だった。ここで縛る。
+ */
+describe('同梱モデルの整合', () => {
+  it('既定モデルは同梱モデルと一致する(オフライン初回起動の前提)', () => {
+    expect(DEFAULT_LLM_MODEL).toBe(BUNDLED_LLM_MODEL)
+  })
+
+  it('カタログで bundled=true なのは同梱モデルだけ', () => {
+    const bundled = LLM_CATALOG.filter((e) => e.bundled).map((e) => e.tag)
+    expect(bundled).toEqual([BUNDLED_LLM_MODEL])
+  })
+
+  it('同梱モデルと追加ダウンロード推奨はどちらもカタログに載っている', () => {
+    expect(LLM_CATALOG.some((e) => e.tag === BUNDLED_LLM_MODEL)).toBe(true)
+    const recommended = LLM_CATALOG.find((e) => e.tag === RECOMMENDED_DOWNLOAD_LLM_MODEL)
+    expect(recommended).toBeDefined()
+    // 「取得して標準モードに戻す」案内なので、取得フォームに出ていないと辿り着けない。
+    expect(recommended!.offerForDownload).toBe(true)
+  })
+
+  it('同梱モデルは自動判定で軽量モードになる(= 添削が出ないことを UI が言い切れる)', () => {
+    expect(inferProfileLevel(BUNDLED_LLM_MODEL)).toBe('small')
+  })
+
+  it('追加ダウンロード推奨は自動判定で標準モードになる(= 添削が戻る)', () => {
+    expect(inferProfileLevel(RECOMMENDED_DOWNLOAD_LLM_MODEL)).toBe('standard')
+  })
+
+  it('prep スクリプトが vendor するモデルが BUNDLED_LLM_MODEL と一致する', () => {
+    // ⚠️ prep スクリプトは .mjs なのでこの定数を import できない(node が .ts を読めない)。
+    // 二重化は避けられないので、**ズレたらここで落ちる**ようにしてある。
+    // これが無いと「コード上は 1B なのに DMG には 3B が入っている」状態が
+    // 実機で起動するまで誰にも見えない。
+    const here = dirname(fileURLToPath(import.meta.url))
+    const prepPath = resolve(here, '..', '..', '..', 'scripts', 'prep-llama-model.mjs')
+    const source = readFileSync(prepPath, 'utf-8')
+
+    const model = /^const MODEL = '([^']+)'$/m.exec(source)?.[1]
+    expect(model, 'prep-llama-model.mjs の MODEL を読めなかった').toBe(BUNDLED_LLM_MODEL)
+
+    // manifest のパスもタグ単位で作られているので、family/tag も一致を見る。
+    const family = /^const MODEL_FAMILY = '([^']+)'$/m.exec(source)?.[1]
+    const tag = /^const MODEL_TAG = '([^']+)'$/m.exec(source)?.[1]
+    expect(`${family}:${tag}`).toBe(BUNDLED_LLM_MODEL)
   })
 })

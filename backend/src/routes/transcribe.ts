@@ -8,7 +8,11 @@ import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
-import { whisperModelExists, whisperModelPath } from '../services/whisper-paths.js'
+import {
+  listInstalledWhisperModelNames,
+  whisperModelExists,
+  whisperModelPath,
+} from '../services/whisper-paths.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -138,24 +142,65 @@ function resolveWhisperModel(requested?: string): WhisperModelName {
 }
 
 /**
+ * フォールバック先に選んでよい多言語モデルを「小さい順」に並べたもの。
+ *
+ * - `.en` 系は絶対に入れないこと。日本語音声入力(japanese_help / mixed 経路)が
+ *   英語専用モデルでは壊れる。フォールバックは品質劣化であってはならない。
+ * - 低スペック機向けブランチなので、大きい方ではなく**小さい方**を優先する
+ *   (rescue が RAM を食い潰して次の問題を作らないように)。
+ */
+const MULTILINGUAL_FALLBACK_ORDER: WhisperModelName[] = [
+  'tiny',
+  'base',
+  'small',
+  'medium',
+  'large-v3-turbo',
+  'large-v1',
+]
+
+/**
  * 実行直前にモデル実体(ggml-*.bin)がディスクにあるかを確認する。
  *
  * 旧版では `medium` が localStorage に残っているユーザーがいるが、DMG に同梱するのは
  * `small` になったため、そのまま whisper を叩くとモデルが無い。nodejs-whisper に
  * autoDownloadModelName を渡していた頃はここで DL + ビルドが走って固まっていた。
- * 無い場合は同梱デフォルトにフォールバックし、それも無ければ null を返して
- * 呼び出し側で 503 にする(勝手にネットを叩かない = オフライン動作の前提を守る)。
+ *
+ * フォールバック順: リクエスト値 → 同梱デフォルト → インストール済みの多言語モデル
+ * (小さい順) → null(呼び出し側で 503)。
+ * 3 段目が無いと「設定は small だがディスクには medium しか無い」ユーザーが、
+ * 使えるモデルが同じディレクトリにあるのに毎ターン 503 になっていた。
+ * どの段でもネットは叩かない(オフライン動作の前提を守る)。明示 DL は
+ * POST /api/models/whisper/download のみ。
  */
 function ensureWhisperModel(requested: WhisperModelName): WhisperModelName | null {
   if (whisperModelExists(requested)) return requested
 
   console.warn(
     `[transcribe] model file not found for "${requested}" (${whisperModelPath(requested)}); ` +
-      `falling back to bundled "${BUNDLED_WHISPER_MODEL}"`,
+      `looking for a usable fallback`,
   )
   if (requested !== BUNDLED_WHISPER_MODEL && whisperModelExists(BUNDLED_WHISPER_MODEL)) {
+    console.warn(`[transcribe] falling back to bundled model "${BUNDLED_WHISPER_MODEL}"`)
     return BUNDLED_WHISPER_MODEL
   }
+
+  // 同梱モデルも無い(ユーザーが消した / 旧 userData のまま等)。
+  // models ディレクトリを走査して、使える多言語モデルがあればそれを使う。
+  const installed = new Set(listInstalledWhisperModelNames())
+  const alternative = MULTILINGUAL_FALLBACK_ORDER.find(
+    (m) => m !== requested && ALLOWED_WHISPER_MODELS.has(m) && installed.has(m),
+  )
+  if (alternative) {
+    console.warn(
+      `[transcribe] falling back to installed multilingual model "${alternative}" ` +
+        `(installed: ${[...installed].join(', ') || '(none)'})`,
+    )
+    return alternative
+  }
+
+  console.error(
+    `[transcribe] no usable whisper model on disk (installed: ${[...installed].join(', ') || '(none)'})`,
+  )
   return null
 }
 
@@ -250,8 +295,8 @@ transcribeRouter.post(
       await fs.unlink(filePath).catch(() => {})
       return res.status(503).json({
         error:
-          `Whisper model not installed: ${resolvedModel} ` +
-          `(bundled default "${BUNDLED_WHISPER_MODEL}" is also missing). ` +
+          `音声認識モデルが見つかりません(要求: ${resolvedModel} / 同梱: ${BUNDLED_WHISPER_MODEL})。` +
+          `使用できるモデルが 1 つもインストールされていません。` +
           `設定画面の「インストール済みモデル」から取得してください。`,
       })
     }

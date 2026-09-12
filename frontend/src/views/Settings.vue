@@ -407,10 +407,24 @@ const installedWhisperOptions = computed(() =>
     .map((m) => {
       const short = m.name.replace(/^ggml-/, '').replace(/\.bin$/, '')
       const d = describeWhisper(m.name)
-      return { value: short, label: `${d.icon} ${short} — ${d.note}` }
+      return { value: short, label: `${d.icon} ${short} — ${d.note}`, installed: true }
     })
     .filter((o) => VALID_WHISPER_MODELS.has(o.value as WhisperModel)),
 )
+
+/**
+ * 実際に <select> へ流す選択肢。
+ * 保存されている whisperModel がインストール済み一覧に無いと、ブラウザは先頭の
+ * option を選択状態として描画してしまい、「画面の表示」と「保存値(実際に
+ * backend へ送られる値)」が食い違う。現在値を必ず表現できるよう、未インストール
+ * なら先頭に disabled の項目として差し込む。
+ */
+const whisperSelectOptions = computed(() => {
+  const current = settings.settings.whisperModel
+  const options = installedWhisperOptions.value
+  if (options.some((o) => o.value === current)) return options
+  return [{ value: current, label: `⚠️ ${current} — 未インストール`, installed: false }, ...options]
+})
 function updateWhisper(e: Event) {
   settings.update({
     whisperModel: (e.target as HTMLSelectElement).value as WhisperModel,
@@ -653,7 +667,12 @@ async function handleDeleteAll() {
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateWhisper"
           >
-            <option v-for="o in installedWhisperOptions" :key="o.value" :value="o.value">
+            <option
+              v-for="o in whisperSelectOptions"
+              :key="o.value"
+              :value="o.value"
+              :disabled="!o.installed"
+            >
               {{ o.label }}
             </option>
           </select>

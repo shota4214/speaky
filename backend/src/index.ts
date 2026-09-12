@@ -3,6 +3,7 @@ import cors from 'cors'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { chatRouter } from './routes/chat.js'
+import { chatStreamRouter } from './routes/chat-stream.js'
 import { extractFactsRouter } from './routes/extract-facts.js'
 import { modelsRouter } from './routes/models.js'
 import { summarizeRouter } from './routes/summarize.js'
@@ -50,8 +51,27 @@ app.use(
 )
 app.use(express.json({ limit: '10mb' }))
 
+/**
+ * バックエンドが持っている機能の宣言。
+ *
+ * Electron パッケージは frontend を app bundle から、backend を userData から
+ * 読み込み、backend の同期は version gate で走る。つまり
+ * **frontend だけが新しい** 状態が普通に起こりうる(前リリースでこの非対称が
+ * 実際に事故になった)。そのためフロントは「機能があること」を **肯定的に**
+ * 確認してからしか新経路を使ってはいけない。
+ * 古いバックエンドはこのキー自体を返さないので、その場合は
+ * 「ストリーミング無し」と解釈される。
+ */
+const API_FEATURES = ['chat-stream', 'chat-opening-stream', 'chat-enrich'] as const
+const API_VERSION = 2
+
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    apiVersion: API_VERSION,
+    features: API_FEATURES,
+  })
 })
 
 // 管理 API 用のトークンを同一オリジンの frontend に渡す。
@@ -86,6 +106,7 @@ app.get('/api/health/ollama', async (_req, res) => {
 })
 
 app.use('/api', chatRouter)
+app.use('/api', chatStreamRouter)
 app.use('/api', summarizeRouter)
 app.use('/api', extractFactsRouter)
 app.use('/api', transcribeRouter)

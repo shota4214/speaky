@@ -83,7 +83,7 @@ export type OllamaChatResponse = {
   done: boolean
 }
 
-export type OllamaErrorCode = 'NOT_RUNNING' | 'MODEL_NOT_FOUND' | 'TIMEOUT' | 'UNKNOWN'
+export type OllamaErrorCode = 'NOT_RUNNING' | 'MODEL_NOT_FOUND' | 'TIMEOUT' | 'ABORTED' | 'UNKNOWN'
 
 export class OllamaError extends Error {
   code: OllamaErrorCode
@@ -144,21 +144,20 @@ export interface ChatWithOllamaOptions {
   /**
    * 最初のトークンが返るまでの許容時間 (ms)。0 で無効化。既定 60 秒。
    *
-   * ⚠️ 現状 Ollama へのリクエストは `stream: false` のため、レスポンスは
-   * 生成が完全に終わってから一括で返ってくる。つまり「最初のトークン」を
-   * 観測する手段がなく、この予算は実質「呼び出し全体のデッドライン」として
-   * 機能する。ストリーミング化後は文字どおり最初のトークンまでの予算になる。
+   * - `chatWithOllama`(`stream: false`)では最初のトークンを観測できないため、
+   *   実質「呼び出し全体のデッドライン」として機能する。
+   * - `startOllamaChatStream`(`stream: true`)では文字どおり
+   *   「リクエスト送出 → 最初の content チャンク」までの予算になる。
    */
   firstTokenTimeoutMs?: number
   /**
    * トークン間の無音(ストール)を許容する時間 (ms)。0 で無効化。既定 15 秒。
    *
-   * ⚠️ 現状の非ストリーミング経路では **発火しない**。トークンの到着を
-   * 観測できないため、判定材料が存在しないからである。
-   * Tier2 の後続ステージで `stream: true` + SSE に移行した時点で
-   * 「最後のチャンク受信から stallTimeoutMs 経過したら abort」として有効になり、
-   * その時 firstTokenTimeoutMs は最初のチャンクまでにのみ適用される。
-   * 先に型と既定値だけ通しておくことで、後続ステージは routes を触らずに済む。
+   * ⚠️ 非ストリーミング経路(`chatWithOllama`)では **発火しない**。
+   * トークンの到着を観測できないため、判定材料が存在しないからである。
+   * `startOllamaChatStream` では「最後のチャンク受信から stallTimeoutMs 経過したら
+   * abort」として有効になり、その時 firstTokenTimeoutMs は最初のチャンクまでにのみ
+   * 適用される。
    */
   stallTimeoutMs?: number
   /** 外部から渡せる AbortSignal(UIキャンセル用) */
@@ -254,6 +253,224 @@ export async function chatWithOllama(
   }
 
   return (await response.json()) as OllamaChatResponse
+}
+
+/**
+ * ストリーミング版の Ollama チャット。
+ *
+ * 非ストリーミング版と役割を分けてある理由:
+ *  - **ヘッダーを送る前に失敗を確定させたい**。`startOllamaChatStream()` は
+ *    「fetch が ok で解決した」ところまでを await して返す。呼び出し側はその後で
+ *    はじめて SSE ヘッダーを送れるので、Ollama 未起動 / モデル無しは本物の 503 に
+ *    できる(ヘッダーを送った後ではステータスは固定されてしまう)。
+ *  - 最初のチャンクまで = firstTokenTimeoutMs、チャンク間 = stallTimeoutMs と、
+ *    2 つの予算を分けて適用できる。
+ *
+ * 返り値の `chunks()` は content デルタだけを yield する。
+ */
+export interface OllamaChatStream {
+  /** 実際に使われたモデル名(allowlist 解決後)。 */
+  model: string
+  /** content デルタを到着順に yield する。1 回だけ消費できる。 */
+  chunks(): AsyncGenerator<string, void, undefined>
+  /** 途中で読むのをやめる(ソケットを閉じて Ollama の生成を止める)。 */
+  abort(): void
+}
+
+type OllamaStreamLine = {
+  message?: { role?: string; content?: string }
+  done?: boolean
+  error?: string
+}
+
+export async function startOllamaChatStream(
+  messages: OllamaChatMessage[],
+  options: ChatWithOllamaOptions = {},
+): Promise<OllamaChatStream> {
+  const jsonFormat = options.jsonFormat ?? true
+  const temperature = options.temperature ?? 0.7
+  const topP = options.topP ?? 0.9
+  const topK = options.topK ?? 40
+  const repeatPenalty = options.repeatPenalty ?? 1.1
+  const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31)
+  const model = resolveLlmModel(options.model)
+  const firstTokenTimeoutMs = options.firstTokenTimeoutMs ?? DEFAULT_FIRST_TOKEN_TIMEOUT_MS
+  const stallTimeoutMs = options.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS
+
+  const ctrl = new AbortController()
+  /** 自前のタイマーで abort したのか、外部(UI キャンセル)で abort されたのかの区別。 */
+  let timedOutBy: 'first-token' | 'stall' | null = null
+  let externalAbort = false
+
+  let timer: ReturnType<typeof setTimeout> | null = null
+  function clearTimer(): void {
+    if (timer !== null) {
+      clearTimeout(timer)
+      timer = null
+    }
+  }
+  function armTimer(ms: number, reason: 'first-token' | 'stall'): void {
+    clearTimer()
+    if (ms <= 0) return
+    timer = setTimeout(() => {
+      timedOutBy = reason
+      ctrl.abort()
+    }, ms)
+  }
+
+  const onExternalAbort = () => {
+    externalAbort = true
+    ctrl.abort()
+  }
+  if (options.signal) {
+    if (options.signal.aborted) onExternalAbort()
+    else options.signal.addEventListener('abort', onExternalAbort, { once: true })
+  }
+  function detachExternal(): void {
+    options.signal?.removeEventListener('abort', onExternalAbort)
+  }
+
+  function abortError(e: unknown): OllamaError {
+    if (externalAbort) {
+      return new OllamaError('ABORTED', 'リクエストが中断されました', e)
+    }
+    return new OllamaError(
+      'TIMEOUT',
+      timedOutBy === 'stall'
+        ? `Ollama の生成が停止しました(${stallTimeoutMs}ms 無応答)`
+        : `Ollama 呼び出しがタイムアウトしました(${firstTokenTimeoutMs}ms)`,
+      { cause: e, firstTokenTimeoutMs, stallTimeoutMs, timedOutBy },
+    )
+  }
+
+  // 最初のチャンクまでの予算は fetch(= モデルのコールドロードを含む)から数え始める。
+  armTimer(firstTokenTimeoutMs, 'first-token')
+
+  let response: Response
+  try {
+    const body: OllamaChatRequest = {
+      model,
+      messages,
+      stream: true,
+      keep_alive: KEEP_ALIVE,
+      options: {
+        num_ctx: NUM_CTX,
+        temperature,
+        top_p: topP,
+        top_k: topK,
+        seed,
+        repeat_penalty: repeatPenalty,
+        ...(options.numPredict !== undefined && { num_predict: options.numPredict }),
+      },
+    }
+    if (jsonFormat) body.format = 'json'
+
+    response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+  } catch (e) {
+    clearTimer()
+    detachExternal()
+    if ((e as Error).name === 'AbortError') throw abortError(e)
+    throw new OllamaError(
+      'NOT_RUNNING',
+      `Ollamaに接続できませんでした(${OLLAMA_BASE_URL})。'ollama serve' で起動してください。`,
+      e,
+    )
+  }
+
+  if (!response.ok) {
+    clearTimer()
+    detachExternal()
+    const text = await response.text().catch(() => '')
+    const looksLikeModelMissing = response.status === 404 || /model.*not found/i.test(text)
+    if (looksLikeModelMissing) {
+      throw new OllamaError(
+        'MODEL_NOT_FOUND',
+        `モデル '${model}' が見つかりません。'ollama pull ${model}' で取得してください。`,
+        text,
+      )
+    }
+    throw new OllamaError('UNKNOWN', `Ollama APIエラー: ${response.status} ${text}`, text)
+  }
+
+  if (!response.body) {
+    clearTimer()
+    detachExternal()
+    throw new OllamaError('UNKNOWN', 'Ollama がストリーム本体を返しませんでした')
+  }
+  // reader はここで取得しておく(generator の中で narrowing を持ち回らないため)。
+  // chunks() を一度も消費しなかった場合でも abort() が cancel してソケットを閉じる。
+  const reader = response.body.getReader()
+
+  async function* chunks(): AsyncGenerator<string, void, undefined> {
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          let obj: OllamaStreamLine
+          try {
+            obj = JSON.parse(trimmed) as OllamaStreamLine
+          } catch {
+            // 壊れた 1 行は捨てる(Ollama は 1 行 1 JSON なので後続は独立して読める)。
+            console.warn('[ollama:stream] 解釈できない行を無視:', trimmed.slice(0, 120))
+            continue
+          }
+          if (obj.error) {
+            throw new OllamaError('UNKNOWN', `Ollama APIエラー: ${obj.error}`, obj.error)
+          }
+          const content = obj.message?.content
+          if (content) {
+            // チャンクが届くたびにストール予算を張り直す。
+            // (最初のチャンクでは first-token 予算をストール予算に差し替えている)
+            armTimer(stallTimeoutMs, 'stall')
+            yield content
+          }
+          if (obj.done) return
+        }
+      }
+    } catch (e) {
+      if (e instanceof OllamaError) throw e
+      if ((e as Error).name === 'AbortError') throw abortError(e)
+      throw new OllamaError('UNKNOWN', `Ollama ストリームの読み取りに失敗: ${String(e)}`, e)
+    } finally {
+      clearTimer()
+      detachExternal()
+      // ⚠️ ここが肝: signal を abort するだけでは Ollama の生成が止まらないことがある。
+      // 読み取り側を cancel してソケットを閉じ、サーバー側に書き込み失敗を伝える。
+      try {
+        await reader.cancel()
+      } catch {
+        // 既に壊れている場合は無視
+      }
+      ctrl.abort()
+    }
+  }
+
+  return {
+    model,
+    chunks,
+    abort(): void {
+      externalAbort = true
+      clearTimer()
+      detachExternal()
+      ctrl.abort()
+      void reader.cancel().catch(() => undefined)
+    },
+  }
 }
 
 export const ollamaConfig = {

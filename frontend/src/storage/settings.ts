@@ -99,6 +99,15 @@ export interface AppSettings {
   ttsPitch: number
   /** AI 返答に日本語訳を表示するか。true(表示)がデフォルト。 */
   showJapanese: boolean
+  /**
+   * 返答のストリーミング読み上げを使うか(既定 true)。
+   *
+   * **キルスイッチ**。バックエンドを差し替えずに、クライアント側だけで
+   * 旧来の一括生成へ戻せるようにするためのもの。
+   * true でも、バックエンドが `/api/health` の features で機能を申告していなければ
+   * ストリーミングは使われない(機能検出は常に肯定的に行う)。
+   */
+  streaming: boolean
   lastCleanupAt: number | null
   defaultLevel: Level
   /** 保存済み設定のスキーマ版。欠落 = 1(v1.0.0 以前)として扱う。 */
@@ -127,6 +136,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ttsRate: 1.0,
   ttsPitch: 1.0,
   showJapanese: true,
+  streaming: true,
   lastCleanupAt: null,
   defaultLevel: 'intermediate',
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -212,6 +222,11 @@ export function loadSettings(): AppSettings {
     // showJapanese は旧バージョンに無いので欠落時はデフォルト(表示)に
     if (typeof merged.showJapanese !== 'boolean') {
       merged.showJapanese = DEFAULT_SETTINGS.showJapanese
+    }
+    // streaming も旧バージョンに無い。欠落時はデフォルト(有効)に。
+    // 値の形は変わらないのでスキーマ版は上げない(v2 のまま)。
+    if (typeof merged.streaming !== 'boolean') {
+      merged.streaming = DEFAULT_SETTINGS.streaming
     }
     // silenceDurationMs を許容範囲に clamp
     merged.silenceDurationMs = clamp(

@@ -2,6 +2,15 @@ export type Level = 'beginner' | 'intermediate' | 'advanced'
 export type Mode = 'normal' | 'japanese_help' | 'mixed'
 export type PersonalityPreset = 'friendly' | 'teacher' | 'cool' | 'kohai' | 'colleague'
 
+/**
+ * 出力契約。
+ * - `json`: 従来どおり 1 つの JSON オブジェクト(reply_en / reply_ja / feedback /
+ *   vocabulary / mode)を返させる。非ストリーミング経路(`POST /api/chat`)専用。
+ * - `text`: 英語の返答だけをプレーンテキストで返させる。ストリーミング経路専用で、
+ *   日本語訳・添削・単語は別途 enrich で生成する。
+ */
+export type OutputFormat = 'json' | 'text'
+
 export interface BuildPromptInput {
   aiName?: string
   level?: Level
@@ -12,6 +21,8 @@ export interface BuildPromptInput {
   userProfile?: string[]
   lastConversationSummary?: string | null
   personality?: PersonalityPreset
+  /** 既定は 'json'(従来挙動)。ストリーミング経路だけが 'text' を渡す。 */
+  outputFormat?: OutputFormat
 }
 
 /**
@@ -93,10 +104,13 @@ export function buildSystemPrompt(input: BuildPromptInput = {}): string {
     )
   }
   const personalityBlock = buildPersonalityBlock(personality)
+  const outputFormat = input.outputFormat ?? 'json'
+  const modeBlock = outputFormat === 'text' ? TEXT_MODE_BLOCK : NORMAL_MODE_BLOCK
+  const outputContract = outputFormat === 'text' ? TEXT_OUTPUT_CONTRACT : JSON_OUTPUT_CONTRACT
 
   return `You are a native English-speaking friend helping a Japanese learner practice English conversation. Your name is ${aiName}.
 
-${NORMAL_MODE_BLOCK}
+${modeBlock}
 
 ${personalityBlock}
 
@@ -126,7 +140,16 @@ ${profileBlock}
 # Last conversation summary (if any)
 ${summaryBlock}
 
-# Output format
+${outputContract}`
+}
+
+/**
+ * 非ストリーミング経路(`POST /api/chat` / `POST /api/chat/opening`)の出力契約。
+ *
+ * Stage 0 の調査で「この 2 ブロックは効いている(外すと小型モデルの JSON が崩れる)」
+ * ことを確認済みなので、非ストリーミング経路では一字一句そのまま維持する。
+ */
+const JSON_OUTPUT_CONTRACT = `# Output format
 Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
 {
   "reply_en": "string - your English response",
@@ -142,7 +165,23 @@ Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
 - example: optional within vocabulary items.
 - The "mode" field in your JSON MUST match the input mode shown above. Do not change it.
 - reply_ja is always required — Japanese translation or instruction.`
-}
+
+/**
+ * ストリーミング経路の出力契約。
+ *
+ * JSON の指示を **完全に外す** のが要点。JSON を書かせながら
+ * 「reply_en の中身だけ喋る」ことはできない(トークンが届いた時点では
+ * まだ文字列リテラルの途中かどうかも分からない)し、JSON を指示すること自体が
+ * 小型モデルに「``` や { から書き始める」癖を付けている。
+ * 日本語訳・添削・単語は英文の生成が終わってから enrich で別途取る。
+ */
+const TEXT_OUTPUT_CONTRACT = `# Output format — READ THIS CAREFULLY
+Write ONLY your spoken English reply, as plain text.
+- No JSON. No curly braces. No key names like "reply_en".
+- No markdown, no code fences, no bullet points, no quotation marks around the whole reply.
+- No Japanese. No translation. No corrections. No vocabulary list. Someone else handles those.
+- No labels like "Reply:" or "Emma:". Just the words you would say out loud.
+- Keep it to the length described in your level rules above.`
 
 /**
  * 会話経路(normal モード)の最優先指示ブロック。
@@ -166,6 +205,17 @@ The user spoke in English. Respond naturally as their conversation partner. Foll
 - feedback: only if they made a real English mistake. Otherwise null.`
 
 /**
+ * ストリーミング経路(プレーンテキスト出力)の最優先指示ブロック。
+ * NORMAL_MODE_BLOCK の JSON フィールドへの言及をすべて落としたもの。
+ */
+const TEXT_MODE_BLOCK = `# CURRENT INPUT MODE: normal — CONVERSATION
+
+The user spoke in English. Respond naturally as their conversation partner. Follow the conversation style and level rules below.
+
+- Write only what YOU would say back, in English, out loud.
+- Do not translate, do not correct the user, do not list vocabulary. Those are handled separately.`
+
+/**
  * 会話開始時に AI から最初の挨拶+話題を切り出してもらうための合成プロンプト。
  * /api/chat/opening で使う(userText の代わりにこれを user role で渡す)。
  *
@@ -186,6 +236,11 @@ export function buildOpeningUserPrompt(input: BuildPromptInput = {}): string {
       : "You don't know much about the user yet — keep it open."
 
   const { toneHint, examples } = buildOpeningStyle(personality, topic)
+  // JSON 経路では出力フィールドの指定、テキスト経路では「英文だけ」を念押しする。
+  const closing =
+    (input.outputFormat ?? 'json') === 'text'
+      ? 'Write only the greeting itself, in plain English. No JSON, no translation, no labels.'
+      : 'Set mode="normal", feedback=null, vocabulary=[] for this opening turn.'
 
   return `(SYSTEM_INTERNAL: This is the very first turn of a new conversation. There is no user message yet. You (${aiName}) should speak first.
 
@@ -196,7 +251,7 @@ ${continuityHint}
 Vary your greeting — DON'T just say "Hi! Let's talk about X." Be creative. Example opening styles for this personality (don't copy verbatim — invent your own):
 ${examples.map((e) => `- ${e}`).join('\n')}
 
-Set mode="normal", feedback=null, vocabulary=[] for this opening turn.)`
+${closing})`
 }
 
 /**

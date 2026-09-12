@@ -5,11 +5,17 @@ import type { Message } from '../db/types'
 import {
   ApiError,
   chat,
+  chatEnrich,
   chatOpening,
+  chatOpeningStream,
+  chatStream,
   extractFacts,
+  probeBackendFeatures,
   summarize,
   transcribeAudio,
   type ChatHistoryItem,
+  type ChatRequestContext,
+  type ChatStreamHandle,
 } from '../services/api'
 import { useConversationStore } from '../stores/conversation'
 import { useProfileStore } from '../stores/profile'
@@ -20,7 +26,20 @@ import {
   looksLikeHallucination,
   looksLikeWrongLanguage,
 } from '../utils/language-detection'
-import { splitIntoSpeechSegments } from '../utils/sentence-stream'
+import {
+  FEATURE_CHAT_ENRICH,
+  FEATURE_CHAT_OPENING_STREAM,
+  FEATURE_CHAT_STREAM,
+  hasFeature,
+  NO_FEATURES,
+  type BackendFeatures,
+} from '../utils/backend-features'
+import type {
+  ChatEnrichment,
+  ChatStreamEffect,
+  ChatStreamError,
+} from '../utils/chat-stream-reducer'
+import { SentenceAccumulator, splitIntoSpeechSegments } from '../utils/sentence-stream'
 import { useAudioRecorder } from './useAudioRecorder'
 import { useSpeechQueue } from './useSpeechQueue'
 import { getDefaultVoicePreference, useTextToSpeech, type SpeakOptions } from './useTextToSpeech'
@@ -132,6 +151,307 @@ export function useConversationLoop() {
   }
 
   const errorMessage = ref<string | null>(null)
+
+  // ---- ストリーミング(Tier2 Stage2) ----
+
+  /**
+   * バックエンドが申告した機能。**会話画面のマウント時に 1 回だけ取りに行く**。
+   * 起動時に取ると Electron の起動と backend の listen が競合するため。
+   */
+  const backendFeatures = ref<BackendFeatures>(NO_FEATURES)
+
+  /** 生成途中の英文(まだ DB に無い擬似メッセージとして画面に出す)。 */
+  const streamingReplyEn = ref<string>('')
+
+  /** 日本語訳などの enrich がまだ届いていないメッセージ ID。 */
+  const enrichPendingIds = ref<Set<string>>(new Set())
+  /** enrich が失敗した(= 再取得ボタンを出す)メッセージ ID。 */
+  const enrichFailedIds = ref<Set<string>>(new Set())
+
+  function markEnrichPending(id: string): void {
+    const pending = new Set(enrichPendingIds.value)
+    pending.add(id)
+    enrichPendingIds.value = pending
+    if (enrichFailedIds.value.has(id)) {
+      const failed = new Set(enrichFailedIds.value)
+      failed.delete(id)
+      enrichFailedIds.value = failed
+    }
+  }
+
+  function clearEnrichPending(id: string): void {
+    if (enrichPendingIds.value.has(id)) {
+      const pending = new Set(enrichPendingIds.value)
+      pending.delete(id)
+      enrichPendingIds.value = pending
+    }
+    if (enrichFailedIds.value.has(id)) {
+      const failed = new Set(enrichFailedIds.value)
+      failed.delete(id)
+      enrichFailedIds.value = failed
+    }
+  }
+
+  function markEnrichFailed(id: string): void {
+    // pending でないもの(= そもそも enrich を待っていない)は触らない。
+    if (!enrichPendingIds.value.has(id)) return
+    const pending = new Set(enrichPendingIds.value)
+    pending.delete(id)
+    enrichPendingIds.value = pending
+    const failed = new Set(enrichFailedIds.value)
+    failed.add(id)
+    enrichFailedIds.value = failed
+  }
+
+  /** ストリーミングを使ってよいか。設定のキルスイッチ AND 機能の肯定的検出。 */
+  function canStream(feature: string): boolean {
+    return settings.settings.streaming && hasFeature(backendFeatures.value, feature)
+  }
+
+  function canRetryEnrich(): boolean {
+    return hasFeature(backendFeatures.value, FEATURE_CHAT_ENRICH)
+  }
+
+  function buildRequestContext(input: StartLoopInput, mode?: Message['mode']): ChatRequestContext {
+    return {
+      aiName: settings.settings.aiCharacter.name,
+      level: conversation.level,
+      topic: conversation.topic,
+      ...(mode ? { mode } : {}),
+      vocabFocus: input.vocabFocusWords,
+      userProfile: recentProfileFacts(),
+      lastConversationSummary: input.lastConversationSummary,
+      model: settings.settings.llmModel,
+      personality: settings.settings.aiCharacter.personality,
+    }
+  }
+
+  /** enrich の結果を DB とストアへ反映する(保存する形は現行リリースと同一)。 */
+  async function applyEnrichment(messageId: string, enrichment: ChatEnrichment): Promise<void> {
+    const updated = await messagesRepo.update(messageId, {
+      replyJa: enrichment.replyJa || null,
+      feedback: enrichment.feedback
+        ? {
+            userSaid: enrichment.feedback.user_said,
+            corrected: enrichment.feedback.corrected,
+            explanation: enrichment.feedback.explanation,
+          }
+        : null,
+      vocabulary: enrichment.vocabulary,
+    })
+    if (updated) conversation.updateMessage(updated)
+    clearEnrichPending(messageId)
+  }
+
+  /** そのメッセージの直前のユーザー発話(enrich の添削材料)。 */
+  function previousUserText(messageId: string): string | null {
+    const idx = conversation.messages.findIndex((m) => m.id === messageId)
+    if (idx <= 0) return null
+    for (let i = idx - 1; i >= 0; i--) {
+      const m = conversation.messages[i]!
+      if (m.role === 'user') return m.userText
+    }
+    return null
+  }
+
+  /** 日本語訳が届かなかったメッセージについて、ユーザー操作で再取得する。 */
+  async function retryEnrich(messageId: string): Promise<void> {
+    const message = conversation.messages.find((m) => m.id === messageId)
+    if (!message?.replyEn) return
+    markEnrichPending(messageId)
+    try {
+      const enrichment = await chatEnrich(message.replyEn, previousUserText(messageId), {
+        aiName: settings.settings.aiCharacter.name,
+        level: conversation.level,
+        topic: conversation.topic,
+        model: settings.settings.llmModel,
+      })
+      await applyEnrichment(messageId, enrichment)
+    } catch (e) {
+      console.warn('[loop] enrich retry failed:', e)
+      markEnrichFailed(messageId)
+    }
+  }
+
+  type StreamTurnOutcome =
+    | { status: 'done'; message: Message }
+    | { status: 'aborted' }
+    /** 1 文字も読み上げていないので、非ストリーミング経路でやり直してよい。 */
+    | { status: 'fallback'; error: unknown }
+    /** 既に読み上げてしまった後の失敗。やり直すと二重に喋るので、このターンは失敗扱い。 */
+    | { status: 'failed'; message: string }
+
+  interface StreamTurnInput {
+    kind: 'chat' | 'opening'
+    userText: string | null
+    context: ChatRequestContext
+    signal: AbortSignal
+    ttsOverrides: SpeakOptions
+    inputMode: Message['mode']
+  }
+
+  /**
+   * ストリーミング 1 ターン。
+   *
+   * 体感速度のすべてがここに懸かっているので、以下は意図的にこの順序にしてある:
+   *  - セグメントは **溜めずに** 届いた順でキューへ流す(先読みバッファは作らない)
+   *  - メッセージの永続化は **done で 1 回だけ**(デルタごとに書かない /
+   *    中断したターンの空行を残さない)
+   *  - ターンの終了条件は「done が来た」AND「読み上げキューが空になった」。
+   *    enrich は待たない(マイクが日本語訳を待つのが元々の遅さの正体)。
+   */
+  async function runStreamingTurn(input: StreamTurnInput): Promise<StreamTurnOutcome> {
+    const { kind, userText, context, signal, ttsOverrides, inputMode } = input
+    const accumulator = new SentenceAccumulator()
+    const messageId = crypto.randomUUID()
+
+    /**
+     * コールバック(onEffect)から書き換わる状態はオブジェクトにまとめる。
+     * ローカル変数にすると TypeScript が「クロージャの中でしか代入されない」と見て
+     * null に絞り込んでしまい、読み出し側が never になる。
+     */
+    const turn = {
+      spokeAnything: false,
+      error: null as ChatStreamError | null,
+      replyJa: null as string | null,
+      persistedId: null as string | null,
+      stashedEnrichment: null as ChatEnrichment | null,
+      enrichApplied: false,
+      streamFinished: false,
+    }
+
+    streamingReplyEn.value = ''
+
+    function enqueueSegments(segments: string[]): void {
+      for (const segment of segments) {
+        if (!turn.spokeAnything) {
+          turn.spokeAnything = true
+          conversation.setMode('aiSpeaking')
+        }
+        speechQueue.enqueue(segment, ttsOverrides)
+      }
+    }
+
+    const onEffect = (effect: ChatStreamEffect): void => {
+      switch (effect.type) {
+        case 'speak':
+          streamingReplyEn.value += effect.text
+          enqueueSegments(accumulator.push(effect.text))
+          break
+        case 'done':
+          enqueueSegments(accumulator.flush())
+          streamingReplyEn.value = effect.text
+          turn.replyJa = effect.replyJa
+          break
+        case 'enrich': {
+          turn.enrichApplied = true
+          const persistedId = turn.persistedId
+          if (persistedId) {
+            void applyEnrichment(persistedId, effect.enrichment).catch((e) => {
+              console.warn('[loop] applying enrichment failed:', e)
+            })
+          } else {
+            // done の直後・永続化の途中に来た場合。保存できてから反映する。
+            turn.stashedEnrichment = effect.enrichment
+          }
+          break
+        }
+        case 'error':
+          turn.error = effect.error
+          break
+      }
+    }
+
+    let handle: ChatStreamHandle
+    try {
+      handle =
+        kind === 'opening'
+          ? await chatOpeningStream(context, { signal, onEffect })
+          : await chatStream(userText ?? '', context, { signal, onEffect })
+    } catch (e) {
+      // ヘッダー検証の段階で弾かれた(res.ok でない / Content-Type が SSE でない /
+      // ネットワーク失敗)。まだ 1 文字も喋っていないので安全に落とせる。
+      streamingReplyEn.value = ''
+      if (isAbortError(e) || signal.aborted) return { status: 'aborted' }
+      return { status: 'fallback', error: e }
+    }
+
+    // enrich は done の後に同じストリームで届く。ここは待たずに背後で回す。
+    // ⚠️ ストリームは「永続化より先に」閉じ得る(enrich を出せずに終わったケース)。
+    // その順序では下の markEnrichFailed が空振りするので、永続化側でも再判定する。
+    void handle.finished
+      .then(() => {
+        turn.streamFinished = true
+        if (turn.persistedId && !turn.enrichApplied && !signal.aborted) {
+          markEnrichFailed(messageId)
+        }
+      })
+      .catch(() => undefined)
+
+    const done = await handle.done
+
+    if (signal.aborted || stopRequested.value) {
+      streamingReplyEn.value = ''
+      return { status: 'aborted' }
+    }
+
+    if (!done) {
+      streamingReplyEn.value = ''
+      const message = turn.error?.message ?? 'AIの返答生成に失敗しました。'
+      // フォールバックしない条件が 2 つある:
+      //  1) 既に読み上げてしまった後 — やり直すと同じ返答を二度聞かせることになる。
+      //  2) TIMEOUT(first-token 60 秒 / ストール 15 秒)— これはモデルが遅い or
+      //     詰まっているという意味なので、非ストリーミング(90 秒予算)でやり直すと
+      //     最悪 150 秒マイクが開かないまま待たせることになる。ここは諦めた方が速い。
+      //     MALFORMED / EMPTY / TRUNCATED は「小型モデルが変な出力をした」ケースで、
+      //     JSON 経路のリトライ梯子なら通ることがあるのでフォールバックする。
+      const shouldFallback = !turn.spokeAnything && turn.error?.code !== 'TIMEOUT'
+      return shouldFallback
+        ? { status: 'fallback', error: turn.error }
+        : { status: 'failed', message }
+    }
+
+    if (!conversation.id) {
+      streamingReplyEn.value = ''
+      return { status: 'aborted' }
+    }
+
+    // 永続化は done の 1 回だけ。保存する形は現行リリースと完全に同じで、
+    // 「enrich 待ち」のような一時状態は **DB に書かない**(メモリ上の Set で持つ)。
+    const aiMsg = await messagesRepo.create({
+      id: messageId,
+      conversationId: conversation.id,
+      timestamp: new Date(),
+      role: 'ai',
+      userText: null,
+      inputLanguage: null,
+      replyEn: done.text,
+      replyJa: turn.replyJa,
+      feedback: null,
+      vocabulary: [],
+      mode: inputMode,
+    })
+    turn.persistedId = aiMsg.id
+    conversation.appendMessage(aiMsg)
+    streamingReplyEn.value = ''
+
+    if (turn.stashedEnrichment) {
+      await applyEnrichment(messageId, turn.stashedEnrichment).catch((e) => {
+        console.warn('[loop] applying stashed enrichment failed:', e)
+      })
+    } else if (!turn.replyJa) {
+      // 日本語訳はこの後 enrich で届く。それまで UI にはプレースホルダを出す。
+      markEnrichPending(messageId)
+      // 既にストリームが閉じていた(= enrich は永遠に来ない)なら、その場で
+      // 「取得できませんでした + 再取得」に切り替える。準備中のまま固まらせない。
+      if (turn.streamFinished && !turn.enrichApplied) markEnrichFailed(messageId)
+    }
+
+    // ターンの終わりは「done」AND「読み上げ終わり」の両方。
+    await speechQueue.drained()
+    return { status: 'done', message: aiMsg }
+  }
+
   const consecutiveTranscribeFailures = ref(0)
   const consecutiveChatFailures = ref(0)
   const stopRequested = ref(false)
@@ -172,6 +492,13 @@ export function useConversationLoop() {
     consecutiveChatFailures.value = 0
     errorMessage.value = null
     lastAiReplyEn.value = ''
+    streamingReplyEn.value = ''
+    enrichPendingIds.value = new Set()
+    enrichFailedIds.value = new Set()
+
+    // 機能検出はここ(= 会話画面のマウント時)。アプリ起動時ではない。
+    // 失敗しても例外は投げず「機能なし」= 非ストリーミング経路になる。
+    backendFeatures.value = await probeBackendFeatures()
 
     await profile.load().catch(() => undefined)
     await playOpening(input)
@@ -189,22 +516,49 @@ export function useConversationLoop() {
 
     // Phase 1: 挨拶生成(API失敗時は完全にスキップしてユーザー主導の会話に)
     conversation.setMode('thinking')
+    const openingContext = buildRequestContext(input)
+    const openingTtsOverrides: SpeakOptions = (() => {
+      const opts = buildTtsOptions()
+      return {
+        rate: speakRateForLevel(),
+        pitch: opts.pitch,
+        voiceName: opts.voiceName,
+        voicePreference: opts.voicePreference,
+      }
+    })()
+
+    // ストリーミング経路。ここが会話を始めて最初に音が出るまでの時間を決める。
+    if (canStream(FEATURE_CHAT_OPENING_STREAM)) {
+      const signal = beginTurn()
+      const outcome = await runStreamingTurn({
+        kind: 'opening',
+        userText: null,
+        context: openingContext,
+        signal,
+        ttsOverrides: openingTtsOverrides,
+        inputMode: 'normal',
+      })
+      if (outcome.status === 'aborted') return
+      if (outcome.status === 'done') {
+        lastAiReplyEn.value = outcome.message.replyEn ?? ''
+        if (speechQueue.lastError.value && !stopRequested.value) {
+          console.warn('[loop] opening TTS failed:', speechQueue.lastError.value)
+          errorMessage.value =
+            'AI挨拶の音声合成に失敗しました。上の英文を読んでから話しかけてください。'
+        }
+        return
+      }
+      if (outcome.status === 'failed') {
+        console.warn('[loop] opening stream failed after speaking:', outcome.message)
+        return
+      }
+      console.warn('[loop] opening stream unavailable, falling back:', outcome.error)
+    }
+
     let reply
     try {
       const signal = beginTurn()
-      reply = await chatOpening(
-        {
-          aiName: settings.settings.aiCharacter.name,
-          level: conversation.level,
-          topic: conversation.topic,
-          vocabFocus: input.vocabFocusWords,
-          userProfile: recentProfileFacts(),
-          lastConversationSummary: input.lastConversationSummary,
-          model: settings.settings.llmModel,
-          personality: settings.settings.aiCharacter.personality,
-        },
-        { signal },
-      )
+      reply = await chatOpening(openingContext, { signal })
     } catch (e) {
       // 会話終了による中断はエラーではない(ユーザーには何も見せない)
       if (!isAbortError(e)) {
@@ -327,25 +681,64 @@ export function useConversationLoop() {
         conversation.appendMessage(userMsg)
 
         conversation.setMode('thinking')
+        const turnContext: ChatRequestContext = {
+          ...buildRequestContext(input, inputMode),
+          conversationHistory: buildHistory().slice(-20),
+        }
+        const turnTtsOverrides: SpeakOptions = (() => {
+          const opts = buildTtsOptions()
+          return {
+            rate: speakRateForLevel(),
+            pitch: opts.pitch,
+            voiceName: opts.voiceName,
+            voicePreference: opts.voicePreference,
+          }
+        })()
+
+        // --- ストリーミング経路(最初の一文が出来た時点で喋り始める) ---
+        if (canStream(FEATURE_CHAT_STREAM)) {
+          const signal = beginTurn()
+          const outcome = await runStreamingTurn({
+            kind: 'chat',
+            userText: trans.text,
+            context: turnContext,
+            signal,
+            ttsOverrides: turnTtsOverrides,
+            inputMode,
+          })
+          if (outcome.status === 'aborted') break
+          if (outcome.status === 'done') {
+            if (consecutiveChatFailures.value > 0) {
+              consecutiveChatFailures.value = 0
+              errorMessage.value = null
+            }
+            lastAiReplyEn.value = outcome.message.replyEn ?? ''
+            if (stopRequested.value) break
+            if (inputMode === 'japanese_help' || inputMode === 'mixed') {
+              promptedAttempts.value = 1
+              conversation.setMode('awaitingPromptedSpeech')
+            }
+            continue
+          }
+          if (outcome.status === 'failed') {
+            // 既に読み上げてしまった後の失敗。やり直すと二重に喋るのでこのターンは諦める。
+            consecutiveChatFailures.value += 1
+            errorMessage.value = outcome.message
+            if (consecutiveChatFailures.value >= MAX_CHAT_FAILURES) {
+              errorMessage.value = chatFailureLimitMessage(errorMessage.value)
+              stop()
+              break
+            }
+            continue
+          }
+          // status === 'fallback': まだ 1 文字も喋っていないので旧経路でやり直す。
+          console.warn('[loop] chat stream unavailable, falling back:', outcome.error)
+        }
+
         let reply
         try {
           const signal = beginTurn()
-          reply = await chat(
-            trans.text,
-            {
-              aiName: settings.settings.aiCharacter.name,
-              level: conversation.level,
-              topic: conversation.topic,
-              mode: inputMode,
-              vocabFocus: input.vocabFocusWords,
-              userProfile: recentProfileFacts(),
-              lastConversationSummary: input.lastConversationSummary,
-              conversationHistory: buildHistory().slice(-20),
-              model: settings.settings.llmModel,
-              personality: settings.settings.aiCharacter.personality,
-            },
-            { signal },
-          )
+          reply = await chat(trans.text, turnContext, { signal })
         } catch (e) {
           // 会話終了による中断はエラー扱いしない(ユーザーには何も見せずに抜ける)
           if (isAbortError(e) || stopRequested.value) break
@@ -356,10 +749,7 @@ export function useConversationLoop() {
               ? e.message
               : 'AIの返答生成に失敗しました。もう一度話しかけてみてください。'
           if (consecutiveChatFailures.value >= MAX_CHAT_FAILURES) {
-            errorMessage.value =
-              `${errorMessage.value}\n` +
-              `AIの返答が${MAX_CHAT_FAILURES}回続けて失敗したため、会話を停止しました。\n` +
-              '「会話を終わる」で終了し、設定画面で軽いモデル(llama3.2:3b など)に切り替えてから会話を始め直してください。'
+            errorMessage.value = chatFailureLimitMessage(errorMessage.value)
             stop()
             break
           }
@@ -466,6 +856,15 @@ export function useConversationLoop() {
     }
   }
 
+  /** AI 返答が連続で失敗して会話を止めたときの文面(ストリーミング / 旧経路で共通)。 */
+  function chatFailureLimitMessage(base: string | null): string {
+    return (
+      `${base ?? 'AIの返答生成に失敗しました。'}\n` +
+      `AIの返答が${MAX_CHAT_FAILURES}回続けて失敗したため、会話を停止しました。\n` +
+      '「会話を終わる」で終了し、設定画面で軽いモデル(llama3.2:3b など)に切り替えてから会話を始め直してください。'
+    )
+  }
+
   function speakRateForLevel(): number {
     // 連動 OFF: ユーザー設定の ttsRate をそのまま使う
     if (!settings.settings.ttsRateConnectedToLevel) {
@@ -485,6 +884,8 @@ export function useConversationLoop() {
 
   function stop() {
     stopRequested.value = true
+    // 生成途中の擬似メッセージは保存しない。画面からも消す。
+    streamingReplyEn.value = ''
     // 生成中の LLM リクエストを中断する(放置すると会話を終えた後も
     // Ollama が生成を続けてマシンが重いままになる)
     abortTurn()
@@ -580,6 +981,12 @@ export function useConversationLoop() {
     tts,
     speechQueue,
     errorMessage,
+    backendFeatures,
+    streamingReplyEn,
+    enrichPendingIds,
+    enrichFailedIds,
+    canRetryEnrich,
+    retryEnrich,
     consecutiveTranscribeFailures,
     consecutiveChatFailures,
     consecutiveSilent,

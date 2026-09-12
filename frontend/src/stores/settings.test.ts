@@ -222,4 +222,23 @@ describe('loadSettings schema migration persistence', () => {
     expect(loaded.ttsRate).toBe(1.5) // TTS_RATE_MAX に clamp
     expect(persisted()).toEqual(stored) // storage は素通り
   })
+
+  it('streaming は既定で有効、保存済み設定に無ければ既定で補完する', () => {
+    // v1.1.0 までの保存内容(streaming キーが存在しない)
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, silenceDurationMs: 2000 }),
+    )
+    const loaded = loadSettings()
+    expect(loaded.streaming).toBe(true)
+    // スキーマ版は上げない(値の形は変わっていない)
+    expect(loaded.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+  })
+
+  it('streaming を OFF にすると保存され、読み直しても OFF のまま(キルスイッチ)', async () => {
+    const s = useSettingsStore()
+    s.update({ streaming: false })
+    await Promise.resolve()
+    expect(loadSettings().streaming).toBe(false)
+  })
 })

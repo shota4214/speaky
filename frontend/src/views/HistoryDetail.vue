@@ -92,7 +92,11 @@ function replay(text: string) {
                 class="max-w-[75%] rounded-2xl rounded-bl-md bg-surface px-4 py-3 shadow-sm ring-1 ring-border"
               >
                 <div class="text-sm">{{ m.replyEn }}</div>
-                <div class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
+                <!--
+                  日本語訳は後追い(enrich)で入るため、届かないまま保存された行が
+                  ありうる。無条件に出すと空行だけが残るので、あるときだけ描画する。
+                -->
+                <div v-if="m.replyJa" class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
                 <button
                   class="mt-2 text-[10px] text-text-muted hover:text-text"
                   @click="replay(m.replyEn ?? '')"

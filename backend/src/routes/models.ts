@@ -4,6 +4,7 @@ import { createWriteStream, existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { adminAuth } from '../services/admin-token.js'
 import { ollamaConfig } from '../services/ollama.js'
+import { setupSSE, sseSend } from '../services/sse.js'
 import { findWhisperCppDir, findWhisperModelsDir } from '../services/whisper-paths.js'
 
 interface OllamaTag {
@@ -14,18 +15,6 @@ interface OllamaTag {
 
 interface OllamaTagsResponse {
   models?: OllamaTag[]
-}
-
-function setupSSE(res: Response): void {
-  res.setHeader('Content-Type', 'text/event-stream')
-  res.setHeader('Cache-Control', 'no-cache')
-  res.setHeader('Connection', 'keep-alive')
-  res.setHeader('X-Accel-Buffering', 'no')
-  ;(res as Response & { flushHeaders?: () => void }).flushHeaders?.()
-}
-
-function sseSend(res: Response, obj: unknown): void {
-  res.write(`data: ${JSON.stringify(obj)}\n\n`)
 }
 
 export const modelsRouter = Router()

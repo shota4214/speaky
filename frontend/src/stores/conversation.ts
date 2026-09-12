@@ -43,6 +43,20 @@ export const useConversationStore = defineStore('conversation', () => {
     messages.value = [...messages.value, msg]
   }
 
+  /**
+   * 既存メッセージを差し替える(enrich の後追い反映用)。
+   *
+   * ⚠️ 配列要素を **その場で書き換えず、配列ごと作り直す**。
+   * appendMessage と同じやり方に揃えておかないと Vue が再描画しない。
+   */
+  function updateMessage(msg: Message) {
+    const idx = messages.value.findIndex((m) => m.id === msg.id)
+    if (idx === -1) return
+    const next = messages.value.slice()
+    next[idx] = msg
+    messages.value = next
+  }
+
   function setMode(newMode: ConversationMode) {
     mode.value = newMode
   }
@@ -80,6 +94,7 @@ export const useConversationStore = defineStore('conversation', () => {
     turnCount,
     start,
     appendMessage,
+    updateMessage,
     setMode,
     pause,
     resume,

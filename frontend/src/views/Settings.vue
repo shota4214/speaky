@@ -374,6 +374,9 @@ function updateTtsRateLink(e: Event) {
 function updateShowJapanese(e: Event) {
   settings.update({ showJapanese: (e.target as HTMLInputElement).checked })
 }
+function updateStreaming(e: Event) {
+  settings.update({ streaming: (e.target as HTMLInputElement).checked })
+}
 
 // アプリが実際に使う Whisper モデルのファイル名(例: small → ggml-small.bin)。
 // インストール済み一覧の「使用中」バッジ・削除保護の判定に使う。
@@ -540,6 +543,21 @@ async function handleDeleteAll() {
           />
           AIの話速をレベルと連動させる
         </label>
+        <div>
+          <label class="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              class="h-4 w-4 rounded accent-primary"
+              :checked="settings.settings.streaming"
+              @change="updateStreaming"
+            />
+            AIの返答を文ができた順に読み上げる(推奨)
+          </label>
+          <p class="ml-6 mt-1 text-[11px] text-text-muted">
+            OFF にすると返答全体が出来上がってから読み上げます。読み上げがおかしいときの
+            切り戻し用です。
+          </p>
+        </div>
         <div>
           <label class="block text-sm">
             話す速度:

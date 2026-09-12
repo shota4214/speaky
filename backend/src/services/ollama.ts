@@ -27,6 +27,11 @@ type OllamaChatRequest = {
   messages: OllamaChatMessage[]
   format?: 'json'
   stream?: boolean
+  /**
+   * モデルをメモリに保持する時間。省略すると Ollama の既定 5 分で unload され、
+   * 会話が少し途切れただけで次ターンがフルのコールドロードになる。
+   */
+  keep_alive?: string
   options?: {
     temperature?: number
     top_p?: number
@@ -34,8 +39,27 @@ type OllamaChatRequest = {
     seed?: number
     repeat_penalty?: number
     num_predict?: number
+    num_ctx?: number
   }
 }
+
+/**
+ * モデルをロードしたままにする時間。electron/src/main.ts の OLLAMA_KEEP_ALIVE と
+ * 揃えているが、リクエストごとの指定の方が強いのでこちらが実効値になる。
+ */
+const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE ?? '30m'
+
+/**
+ * コンテキスト長。ここ 1 箇所で調整する。
+ * system prompt が約 900 トークン + 履歴最大 20 メッセージあるため、
+ * 既定(2048)だと静かに溢れて JSON 崩れの一因になっていた疑いがある。
+ * 計測せずにこれ以上下げないこと(RAM と品質のトレードオフ)。
+ */
+const DEFAULT_NUM_CTX = 4096
+const NUM_CTX = (() => {
+  const fromEnv = Number(process.env.OLLAMA_NUM_CTX)
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_NUM_CTX
+})()
 
 export type OllamaChatResponse = {
   model: string
@@ -115,7 +139,9 @@ export async function chatWithOllama(
       model,
       messages,
       stream: false,
+      keep_alive: KEEP_ALIVE,
       options: {
+        num_ctx: NUM_CTX,
         temperature,
         top_p: topP,
         top_k: topK,

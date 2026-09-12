@@ -82,14 +82,21 @@ export function buildSystemPrompt(input: BuildPromptInput = {}): string {
 
   const summaryBlock = lastSummary ?? '(no previous conversation)'
 
-  // モード分岐: 小型モデル(Llama 3.2 3B 等)が誤って会話継続してしまうのを防ぐため、
-  // 該当しないモードの説明は LLM に渡さず、現モードの指示だけを最上位に置く。
-  const modeBlock = buildModeBlock(mode)
+  // このプロンプトは normal(英語入力での会話)専用。
+  // japanese_help / mixed は routes/chat.ts が専用の翻訳経路へ早期 return するため、
+  // ここには到達しない(詳細は NORMAL_MODE_BLOCK のコメント)。
+  // 到達したら翻訳指示ではなく会話指示を渡してしまうので、気付けるよう警告を出す。
+  if (mode !== 'normal') {
+    console.warn(
+      `[conversation-prompt] buildSystemPrompt called with mode='${mode}'. ` +
+        `翻訳モードは routes/chat.ts の専用経路で処理される想定。normal として扱う。`,
+    )
+  }
   const personalityBlock = buildPersonalityBlock(personality)
 
   return `You are a native English-speaking friend helping a Japanese learner practice English conversation. Your name is ${aiName}.
 
-${modeBlock}
+${NORMAL_MODE_BLOCK}
 
 ${personalityBlock}
 
@@ -138,64 +145,18 @@ Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
 }
 
 /**
- * 現在のモードに応じた最優先指示ブロックを生成する。
- * 該当しないモードの説明を出さないことで、小型モデル(3B 等)の誤動作を抑制する。
+ * 会話経路(normal モード)の最優先指示ブロック。
+ *
+ * かつてここには japanese_help / mixed 用のブロック(合計 2815 文字)もあったが、
+ * 両モードは routes/chat.ts が buildSystemPrompt を呼ぶ前に専用の翻訳経路へ
+ * 早期 return するようになったため、到達不能なまま残っていたので削除した。
+ * (モード別に切り替えていたので送信プロンプトが太っていたわけではない。
+ *  あくまで「実際の挙動を読み違えさせる死んだコード」の除去である)
+ *
+ * buildSystemPrompt の呼び出し元は /chat(japanese_help / mixed を処理した後)と
+ * /chat/opening(mode を normal にハードコード)の 2 箇所だけ。
  */
-function buildModeBlock(mode: Mode): string {
-  if (mode === 'japanese_help') {
-    return `# CURRENT INPUT MODE: japanese_help — TRANSLATION ASSIST (HIGHEST PRIORITY)
-
-The user spoke ONLY in Japanese. You are NOT a conversation partner this turn — you are a translation helper.
-
-**STRICT RULES — follow these exactly:**
-1. DO NOT continue the conversation. DO NOT ask follow-up questions about what they said.
-2. Treat the user's Japanese as what they WANTED to say in English, and translate it.
-3. "reply_en" MUST be the natural English equivalent of what they tried to express — the sentence THEY should say. Not your response to it.
-4. "reply_ja" MUST be a short encouragement in Japanese that quotes the English sentence in 「」 and invites them to try saying it. Examples:
-   - 「I want to go to Tokyo this weekend.」と言えますよ。声に出して言ってみて!
-   - 英語ではこう言います:「Could you pass me the salt?」 一度声に出してみてください。
-5. Set "mode": "japanese_help" in the JSON output.
-6. feedback should be null (they didn't attempt English yet).
-7. vocabulary may include 1-2 useful words from the English translation if natural.
-
-Example — your output MUST be a single JSON object exactly like this (no surrounding text, no code fences):
-{
-  "reply_en": "It's been raining since this morning, and it's bringing my mood down.",
-  "reply_ja": "「It's been raining since this morning, and it's bringing my mood down.」と言えますよ。声に出して言ってみて!",
-  "feedback": null,
-  "vocabulary": [],
-  "mode": "japanese_help"
-}
-(That example is for the input 「今日は朝から雨で気分が下がっています」.)`
-  }
-
-  if (mode === 'mixed') {
-    return `# CURRENT INPUT MODE: mixed — TRANSLATION ASSIST (HIGHEST PRIORITY)
-
-The user mixed Japanese and English. They likely couldn't say part of it in English. You are NOT a conversation partner this turn — you are a translation helper.
-
-**STRICT RULES — follow these exactly:**
-1. DO NOT continue the conversation. DO NOT ask follow-up questions.
-2. Interpret what they were trying to express as a whole, and produce the complete natural English sentence.
-3. "reply_en" MUST be the complete English sentence they should have said — the sentence THEY should say. Not your response to it.
-4. "reply_ja" MUST quote the English sentence in 「」 and invite them to say it out loud.
-5. Set "mode": "mixed" in the JSON output.
-6. feedback may point out the Japanese portion they struggled with (in Japanese). Otherwise null.
-7. vocabulary may include 1-2 words from the translation that were the missing pieces.
-
-Example — your output MUST be a single JSON object exactly like this (no surrounding text, no code fences):
-{
-  "reply_en": "I want to eat sushi for dinner tonight.",
-  "reply_ja": "「sushi」は英語でもそのまま通じます。「I want to eat sushi for dinner tonight.」と言ってみてください!",
-  "feedback": null,
-  "vocabulary": [],
-  "mode": "mixed"
-}
-(That example is for the input "I want to eat 寿司 for dinner tonight".)`
-  }
-
-  // mode === 'normal'
-  return `# CURRENT INPUT MODE: normal — CONVERSATION
+const NORMAL_MODE_BLOCK = `# CURRENT INPUT MODE: normal — CONVERSATION
 
 The user spoke in English. Respond naturally as their conversation partner. Follow the conversation style and level rules below.
 
@@ -203,7 +164,6 @@ The user spoke in English. Respond naturally as their conversation partner. Foll
 - "reply_ja" is the Japanese translation of your English response.
 - Set "mode": "normal" in the JSON output.
 - feedback: only if they made a real English mistake. Otherwise null.`
-}
 
 /**
  * 会話開始時に AI から最初の挨拶+話題を切り出してもらうための合成プロンプト。

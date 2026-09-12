@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
+import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
 import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 
@@ -61,7 +61,7 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
     const summary = raw.trim().slice(0, 240) // safety cap
     return res.json({ summary })
   } catch (e) {
-    if (isAbortedError(e)) return endAborted(res)
+    if (isClientAbort(e, signal)) return endAborted(res)
     if (e instanceof OllamaError) {
       if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
         return res.status(503).json({ error: e.message, code: e.code })

@@ -151,6 +151,11 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 - **userData は `~/Library/Application Support/electron/`** 配下（productName が "electron" のため。`Speaky/` ではない）。
 - **runtime sync は `version.json`（app version）で gate**。リリースごとに version を上げないと同梱物が再同期されない。
 - **Ollama バイナリ同期は version gate と独立**（startOllama 内で isDownloaded 確認 → 無ければコピー。既存 userData 対策）。
+- **同梱 LLM モデルの同期も version gate と独立**（startOllama 内 `ensureBundledOllamaModel`。
+  template の blob / manifest が userData に揃っているかを stat で確認し、欠けていれば
+  `syncOllamaModels`（**足すだけで消さない**）を呼ぶ）。オフライン起動の保証を
+  「リリースのたびに人間が version を上げること」に依存させないため。
+  version bump は引き続き必要（backend コード / Whisper の再同期はそちらが唯一の入口）。
 - **OLLAMA_VERSION pin** = `v0.30.4`（main.ts と scripts/prep-ollama-binary.mjs の両方。必ず一致させる）。`getMetadata('latest')` は使わない（ネット回避）。
 - **会話の翻訳ロジック**（backend/src/routes/chat.ts）: 日本語/英日混在は専用翻訳経路に分離。日本語訳が空なら en→ja 補完（「日本語訳を必ず表示」設定の保証）。
 - **Whisper モデルは実行前に存在チェック**（`backend/src/services/whisper-paths.ts`）。

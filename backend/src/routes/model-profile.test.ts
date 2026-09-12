@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import { modelProfileRouter } from './model-profile.js'
 import { BUNDLED_LLM_MODEL, DEFAULT_LLM_MODEL } from '../shared/llm-models.js'
+import { resolveTurnModelAndProfile } from '../services/model-profile.js'
 
 /**
  * 設定画面の「会話モード」バッジが信じてよい唯一の出典。
@@ -69,6 +70,20 @@ describe('POST /api/model-profile/preview', () => {
     expect(body.requestedModel).toBe('mistral:7b')
     expect(body.modelAccepted).toBe(false)
     expect(body.model).toBe(DEFAULT_LLM_MODEL)
+  })
+
+  it('差し替えが起きたとき、プレビューのプロファイルは **会話が実際に使う** ものと一致する', async () => {
+    // ここが v1.2.0 のレビューで見つかった食い違い。会話側はリクエスト名から
+    // プロファイルを決めていたので、`mistral:7b`(= 7B → standard)を出して
+    // 実際には 1B を standard の長いプロンプトで回していた。一方プレビューは
+    // 差し替え先 1B から決めて「軽量」と表示していた。
+    // **バッジが嘘をつくのは、バッジが暴くために存在する状況だった**。
+    const body = await preview({ model: 'mistral:7b', modelProfile: 'auto' })
+    const turn = resolveTurnModelAndProfile('auto', 'mistral:7b')
+    expect(body.modelAccepted).toBe(false)
+    expect(body.model).toBe(turn.model)
+    expect(body.profile).toBe(turn.profile.level)
+    expect(body.profile).toBe('small')
   })
 
   it('壊れた pref は auto として扱う(400 にしない)', async () => {

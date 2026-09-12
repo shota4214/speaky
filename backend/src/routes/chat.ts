@@ -14,8 +14,8 @@ import {
   type OllamaChatMessage,
 } from '../services/ollama.js'
 import { parseChatReply, salvageChatReply } from '../services/chat-reply.js'
-import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
-import { resolveModelProfile, type ModelProfile } from '../services/model-profile.js'
+import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
+import { resolveTurnModelAndProfile, type ModelProfile } from '../services/model-profile.js'
 import type { ModelProfilePref } from '../shared/llm-models.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
@@ -178,7 +178,11 @@ async function handleChatTurn(
   const mode: Mode = context.mode ?? 'normal'
   // プロファイルはこのターンで 1 回だけ解決する(翻訳経路と会話経路で
   // 別々に解決すると、将来どちらかだけ条件が変わったときに静かに食い違う)。
-  const profile = resolveModelProfile(context.modelProfile, context.model)
+  // ⚠️ **リクエストされた名前ではなく解決後の名前**から決めること。
+  // allowlist で落ちた名前(古い設定に残った mistral:7b 等)をそのまま渡すと、
+  // 実際に走るのは同梱 1B なのに 7B 用の長いプロンプトで回してしまい、
+  // 設定画面のプレビュー(解決後の名前で判定)とも食い違う。
+  const { profile } = resolveTurnModelAndProfile(context.modelProfile, context.model)
 
   // 翻訳モード(japanese_help / mixed)は会話 LLM 経路ではなく専用翻訳経路へ。
   // システムプロンプトで指示してもらうだけだと 3B クラスは無視して会話継続して
@@ -207,7 +211,7 @@ async function handleChatTurn(
       })
     } catch (e) {
       // 中断はユーザー起因の正常系。タイムアウト扱いで 503 を返してはいけない。
-      if (isAbortedError(e)) return endAborted(res)
+      if (isClientAbort(e, signal)) return endAborted(res)
       if (e instanceof OllamaError) {
         if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
           return res.status(503).json({ error: e.message, code: e.code })
@@ -295,7 +299,7 @@ async function handleChatTurn(
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
-      if (isAbortedError(e)) return endAborted(res)
+      if (isClientAbort(e, signal)) return endAborted(res)
       if (e instanceof OllamaError) {
         if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
           return res.status(503).json({ error: e.message, code: e.code })
@@ -330,7 +334,7 @@ async function handleOpeningTurn(
   signal: AbortSignal,
 ): Promise<Response | void> {
   const mode: Mode = 'normal'
-  const profile = resolveModelProfile(context.modelProfile, context.model)
+  const { profile } = resolveTurnModelAndProfile(context.modelProfile, context.model)
 
   const systemPrompt = buildSystemPrompt({
     aiName: context.aiName,
@@ -405,7 +409,7 @@ async function handleOpeningTurn(
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
-      if (isAbortedError(e)) return endAborted(res)
+      if (isClientAbort(e, signal)) return endAborted(res)
       if (e instanceof OllamaError) {
         if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
           return res.status(503).json({ error: e.message, code: e.code })

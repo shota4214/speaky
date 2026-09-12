@@ -282,6 +282,80 @@ function syncOllamaModels(templateOllamaDir: string, targetModelsDir: string): v
 }
 
 /**
+ * template 配下のファイルを再帰的に列挙する(相対パスで返す)。
+ * 同梱モデルの manifest は数ファイルしか無いので、走査コストは無視できる。
+ */
+function listFilesRecursive(dir: string, prefix = ''): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix ? path.join(prefix, entry.name) : entry.name
+    if (entry.isDirectory()) {
+      out.push(...listFilesRecursive(path.join(dir, entry.name), rel))
+    } else if (entry.isFile()) {
+      out.push(rel)
+    }
+  }
+  return out
+}
+
+/**
+ * **同梱モデルが userData に揃っているか**を version gate と独立に確かめる。
+ *
+ * なぜ要るのか:
+ *   `runRuntimeSync`(= 同梱物のコピー)は `version.json` の app version でしか
+ *   走らない。つまり同梱モデルが既存ユーザーの userData に届くかどうかが
+ *   **「人間がリリース時に version を上げ忘れないこと」に懸かっている**。
+ *   v1.1.0 直前に踏んだのはまさにこの形の穴で、しかも今は既定モデルが
+ *   同梱物そのものなので、外すと **毎ターン MODEL_NOT_FOUND** になる。
+ *   Ollama バイナリ側は同じ理由で既に startOllama 内に救済を持っている。
+ *   モデルにも同じ救済を置いて、オフラインの保証を version gate から切り離す。
+ *
+ * 判定:
+ *   template 側の blob(content-addressed / 数個)と manifest(数ファイル)が
+ *   すべて target にあり、blob のサイズが一致すること。**stat を数回するだけ**
+ *   なので、揃っている通常時のコストは実質ゼロ。
+ *   ここで false になっても呼ぶのは {@link syncOllamaModels} で、
+ *   その関数は **足すだけで消さない**(ユーザーが自分で pull した 3B 等は無傷)。
+ */
+function bundledOllamaModelPresent(templateOllamaDir: string, targetModelsDir: string): boolean {
+  const templateBlobsDir = path.join(templateOllamaDir, 'blobs')
+  if (existsSync(templateBlobsDir)) {
+    const targetBlobsDir = path.join(targetModelsDir, 'blobs')
+    for (const entry of readdirSync(templateBlobsDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue
+      const dst = path.join(targetBlobsDir, entry.name)
+      if (!existsSync(dst)) return false
+      // 中途半端な blob(DL 中のクラッシュ等)は「無い」のと同じ扱い。
+      if (statSync(dst).size !== statSync(path.join(templateBlobsDir, entry.name)).size) {
+        return false
+      }
+    }
+  }
+
+  const templateManifestsDir = path.join(templateOllamaDir, 'manifests')
+  if (existsSync(templateManifestsDir)) {
+    const targetManifestsDir = path.join(targetModelsDir, 'manifests')
+    for (const rel of listFilesRecursive(templateManifestsDir)) {
+      if (!existsSync(path.join(targetManifestsDir, rel))) return false
+    }
+  }
+
+  return true
+}
+
+/**
+ * 同梱モデルが userData に無ければコピーする(version gate と独立)。
+ * {@link syncOllamaBinary} の救済と対になるモデル版。
+ * 揃っているときは stat 数回で終わり、**ユーザーのモデルには一切触らない**。
+ */
+function ensureBundledOllamaModel(templateOllamaDir: string, targetModelsDir: string): void {
+  if (!existsSync(templateOllamaDir)) return
+  if (bundledOllamaModelPresent(templateOllamaDir, targetModelsDir)) return
+  console.log('[ollama] bundled model missing in userData; syncing from template')
+  syncOllamaModels(templateOllamaDir, targetModelsDir)
+}
+
+/**
  * 同梱した Ollama ランタイムバイナリ一式を userData の electron-ollama 期待パスにコピーする。
  *
  * 目的:
@@ -445,6 +519,17 @@ async function startOllama(ollamaModelsDir: string | null): Promise<void> {
     if (!(await ollamaManager.isDownloaded(OLLAMA_VERSION)) && existsSync(templateBinDir)) {
       console.log('[ollama] bundled binary missing in userData; syncing from template')
       syncOllamaBinary(templateBinDir, targetBinDir)
+    }
+
+    // 同梱**モデル**にも同じ救済を置く。
+    // バイナリと違って v1.1.0 まではここが無く、同梱モデルが userData に届くかは
+    // 「リリースのたびに人間が version を上げること」だけに懸かっていた。
+    // 既定モデルが同梱物そのものになった今、上げ忘れは **会話の全ターンが
+    // MODEL_NOT_FOUND** という形で出る(v1.1.0 直前に実際に踏んだ穴と同じ形)。
+    // 揃っていれば stat 数回で終わり、足りなければ足すだけ(消さない)。
+    if (ollamaModelsDir) {
+      const templateOllamaDir = path.join(process.resourcesPath, 'backend-template', 'ollama-data')
+      ensureBundledOllamaModel(templateOllamaDir, ollamaModelsDir)
     }
   }
 

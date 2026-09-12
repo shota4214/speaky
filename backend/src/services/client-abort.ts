@@ -38,17 +38,31 @@ export function watchClientAbort(res: Response): { signal: AbortSignal; dispose:
 }
 
 /**
- * 外部 abort(= クライアントが切った)による失敗か。タイムアウトとは別物。
+ * **クライアントが切ったこと**による失敗か。タイムアウトとは別物。
  *
  * 2 つの形を受ける:
  *  - `OllamaError('ABORTED')` … LLM 経路。`chatWithOllama` が自分のデッドラインで
  *    切ったのか外から切られたのかを区別して詰め替えている。
  *  - 名前が `AbortError` の例外 … 転写経路。whisper は Ollama を通らないので
  *    素の `AbortError` がそのまま上がってくる(`routes/transcribe.ts` の Deadline)。
- *    ⚠️ LLM 経路で素の AbortError が漏れてくることは無い(必ず OllamaError に
- *    詰め替わる)ので、ここで名前を見てもタイムアウトを中断と誤認することはない。
+ *
+ * ⚠️ **判定には必ずそのリクエストの client signal を渡すこと**(第 2 引数)。
+ * 名前が `AbortError` というだけで「中断」に倒すと、**将来**このルートが
+ * 自前のデッドラインを持ったり(`AbortSignal.timeout()` は name が `TimeoutError` だが、
+ * 自前の `AbortController` で締め切るなら `AbortError` になる)、abort で
+ * 畳む子プロセスを持った瞬間に、**本物の失敗が静かに 499 になる** —
+ * ユーザーにはエラーも出ず、ログにも何も残らない、いちばん見つけにくい形で。
+ * いまは「この経路の abort は必ず詰め替わっている」から正しいだけで、
+ * それはコードの構造ではなく偶然に支えられた正しさだった。
+ * client signal が立っているときだけ中断と認めれば、内部由来の abort は
+ * 通常のエラー経路(503 / 504 / 500)へ落ちる。
+ *
+ * この関数が false を返しても「タイムアウトだ」とは言っていない。
+ * 呼び出し側は従来どおり TIMEOUT の分岐を続けて評価すること。
  */
-export function isAbortedError(e: unknown): boolean {
+export function isClientAbort(e: unknown, clientSignal: AbortSignal): boolean {
+  // クライアントが切っていないなら、その abort は内部由来(= 障害)。
+  if (!clientSignal.aborted) return false
   if (e instanceof OllamaError) return e.code === 'ABORTED'
   return (e as { name?: string } | null)?.name === 'AbortError'
 }

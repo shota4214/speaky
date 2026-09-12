@@ -23,7 +23,7 @@ import {
   NO_FEATURES,
   type BackendFeatures,
 } from '../utils/backend-features'
-import { chooseOnboardingLlm, ONBOARDING_LLM_CHOICES } from '../utils/onboarding-model'
+import { buildOnboardingLlmOptions, chooseOnboardingLlm } from '../utils/onboarding-model'
 
 const router = useRouter()
 const settings = useSettingsStore()
@@ -109,8 +109,9 @@ onMounted(async () => {
   if (step.value === 4) refreshStep4Status()
 
   backendFeatures.value = await probeBackendFeatures()
+  // refreshInstalledLlms が中で applyAutoLlmSelection まで走らせる
+  // (一覧が変われば選択もやり直す、が唯一の置き場所)。
   await refreshInstalledLlms()
-  applyAutoLlmSelection()
 })
 
 onUnmounted(() => {
@@ -170,6 +171,12 @@ async function refreshInstalledLlms(): Promise<void> {
   } catch {
     installedLlms.value = []
   }
+  // ⚠️ **一覧を取り直したら自動選択もやり直す**。
+  // 最初のプローブは Ollama がまだ応答しない段階で走ることがあり、そのときは
+  // 「1 つも入っていない」= 同梱モデル + 「3B の取得を薦める」案内 で確定していた。
+  // あとから一覧が埋まっても選択と案内は mount 時のまま固定で、3B を持っている
+  // 16GB 機が最後まで 1B のまま & 不要な DL 案内を出し続けていた。
+  applyAutoLlmSelection()
 }
 
 /**
@@ -181,14 +188,20 @@ async function refreshInstalledLlms(): Promise<void> {
  * 行き止まりになっていた。ユーザーが自分で選び直していたら尊重する。
  */
 function applyAutoLlmSelection(): void {
-  if (userPickedLlm.value) return
+  // 自分で選び直した人の選択は絶対に動かさない。
+  // DL 中も動かさない(いま引いているモデルの足元を変えないため)。
+  if (userPickedLlm.value || llmPulling.value) return
   const selection = chooseOnboardingLlm({
     installed: installedLlms.value,
     lowMemory: lowMemory.value,
     memoryKnown: backendFeatures.value.totalMemoryBytes !== null,
   })
-  llmModel.value = selection.model
+  // 案内は毎回更新する(3B が入った瞬間に消えるべき)。
   recommendedDownload.value = selection.recommendedDownload
+  if (llmModel.value === selection.model) return
+  llmModel.value = selection.model
+  // 選択が動いたらステップ 4 の「取得済みか」も引き直す。
+  llmPulled.value = installedLlms.value.includes(selection.model)
 }
 
 /**
@@ -204,16 +217,14 @@ const recommendedDownloadLabel = computed(() => {
   return entry ? `${entry.label}(${entry.sizeLabel})` : tag
 })
 
-/** 選択肢はカタログから作る(設定画面の取得フォームと同じ出典)。 */
+/**
+ * 選択肢はカタログから作る(設定画面の取得フォームと同じ出典)。
+ * ただし **いま選ばれているモデルは必ず入れる** — カタログに無いモデルが
+ * 選ばれることがある(この Mac に入っているのがそれだけ、という場合)。
+ * 詳細は utils/onboarding-model.ts の注記。
+ */
 const llmOptions = computed(() =>
-  ONBOARDING_LLM_CHOICES.map((e) => {
-    const installed = installedLlms.value.includes(e.tag)
-    const badge = e.bundled ? '同梱' : installed ? '取得済み' : '要ダウンロード'
-    return {
-      value: e.tag,
-      label: `${e.icon} ${e.label} — ${badge} / ${e.sizeLabel} / ${e.note}`,
-    }
-  }),
+  buildOnboardingLlmOptions({ selected: llmModel.value, installed: installedLlms.value }),
 )
 
 /** 今選ばれているモデルがディスクにあるか(= このまま会話を始められるか)。 */

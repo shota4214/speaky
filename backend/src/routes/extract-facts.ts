@@ -11,7 +11,7 @@ import {
   matchJsonStringField,
   matchJsonStringArrayField,
 } from '../services/json-salvage.js'
-import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
+import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 
 interface TranscriptItem {
@@ -224,7 +224,7 @@ async function runExtraction(
         )
       }
     } catch (e) {
-      if (isAbortedError(e)) return endAborted(res)
+      if (isClientAbort(e, signal)) return endAborted(res)
       if (e instanceof OllamaError) {
         if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
           return res.status(503).json({ error: e.message, code: e.code })

@@ -1,5 +1,6 @@
 import {
   BUNDLED_LLM_MODEL,
+  findCatalogEntry,
   isAllowedLlmModel,
   LLM_CATALOG,
   RECOMMENDED_DOWNLOAD_LLM_MODEL,
@@ -100,4 +101,53 @@ export function chooseOnboardingLlm(input: OnboardingLlmInput): OnboardingLlmSel
   // 何も入っていない = 同梱物の展開に失敗しているか、dev 環境。
   // 同梱モデルを選んで DL ステップに取得させる(そこが唯一の出口)。
   return { model: BUNDLED_LLM_MODEL, installed: false, recommendedDownload }
+}
+
+export interface OnboardingLlmOption {
+  value: string
+  label: string
+  /**
+   * ディスクにあるか。**選べなくするためのフラグではない**
+   * (未取得でもステップ 4 で DL できるので選択自体は許す)。
+   */
+  installed: boolean
+}
+
+/**
+ * オンボーディングの <select> に流す選択肢。
+ *
+ * ⚠️ **選択中のモデルは必ず選択肢に含める**。
+ * 選択肢はカタログ(`offerForDownload` のもの)から作るのに、
+ * {@link chooseOnboardingLlm} は「インストール済みなら何でも」選ぶ
+ * (それがオフラインで先へ進める唯一の道だから)。この 2 つの範囲がズレると、
+ * 自分で `qwen2.5:3b-instruct-q5_K_M` だけを pull してある Mac では
+ * **select が空白で描画される**。ユーザーは行き止まりにはならないが、
+ * 「何も選ばれていない」画面を見て select に触った瞬間、
+ * 実際に動く選択が黙って別のモデルに置き換わる。
+ * 設定画面の Whisper / LLM の select が未インストールの保存値を
+ * 印付きで差し込んでいるのと同じ手当て。
+ */
+export function buildOnboardingLlmOptions(input: {
+  selected: string
+  installed: readonly string[]
+}): OnboardingLlmOption[] {
+  const options = ONBOARDING_LLM_CHOICES.map((e) => {
+    const installed = input.installed.includes(e.tag)
+    const badge = e.bundled ? '同梱' : installed ? '取得済み' : '要ダウンロード'
+    return {
+      value: e.tag,
+      label: `${e.icon} ${e.label} — ${badge} / ${e.sizeLabel} / ${e.note}`,
+      installed,
+    }
+  })
+  if (options.some((o) => o.value === input.selected)) return options
+
+  // カタログに無いモデルが選ばれている = この Mac に入っていたから選ばれた。
+  // 先頭に差し込んで「いま何で動くのか」を画面に出す。
+  const entry = findCatalogEntry(input.selected)
+  const installed = input.installed.includes(input.selected)
+  const label = entry
+    ? `${entry.icon} ${entry.label} — ${installed ? '取得済み' : '要ダウンロード'} / ${entry.sizeLabel} / ${entry.note}`
+    : `🧩 ${input.selected} — ${installed ? 'この Mac にあるモデル' : '未取得'}`
+  return [{ value: input.selected, label, installed }, ...options]
 }

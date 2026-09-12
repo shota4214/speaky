@@ -12,7 +12,7 @@ import {
   type Feedback,
   type VocabItem,
 } from '../services/chat-reply.js'
-import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
+import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
 import {
   containsJsonScaffoldPattern,
   extractJsonObjectSlice,
@@ -24,11 +24,10 @@ import {
 import {
   chatWithOllama,
   OllamaError,
-  resolveLlmModel,
   startOllamaChatStream,
   type OllamaChatMessage,
 } from '../services/ollama.js'
-import { resolveModelProfile, type ModelProfile } from '../services/model-profile.js'
+import { resolveTurnModelAndProfile, type ModelProfile } from '../services/model-profile.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 import { setupSSE, sseComment, sseSend } from '../services/sse.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
@@ -197,7 +196,8 @@ interface EnrichInput {
  */
 export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentResult> {
   const { replyEn, userText, context, signal } = input
-  const profile = input.profile ?? resolveModelProfile(context.modelProfile, context.model)
+  const profile =
+    input.profile ?? resolveTurnModelAndProfile(context.modelProfile, context.model).profile
 
   // small プロファイルは日本語訳だけを作る。1B クラスの添削は正しい文を
   // 「間違い」と言い切ることがあり、単語抽出も学習者が既に知っている語を
@@ -356,7 +356,7 @@ chatStreamRouter.post('/chat/enrich', async (req: Request, res: Response) => {
   }
   const { signal, dispose } = watchClientAbort(res)
   try {
-    const profile = resolveModelProfile(context.modelProfile, context.model)
+    const { profile } = resolveTurnModelAndProfile(context.modelProfile, context.model)
     const enrichment = await buildEnrichment({
       replyEn,
       userText: typeof userText === 'string' ? userText : null,
@@ -380,7 +380,7 @@ async function streamTranslationTurn(
   mode: Mode,
   signal: AbortSignal,
 ): Promise<Response | void> {
-  const profile = resolveModelProfile(context.modelProfile, context.model)
+  const { model, profile } = resolveTurnModelAndProfile(context.modelProfile, context.model)
   let translated: string
   try {
     translated = await translateToNaturalEnglish(userText, {
@@ -402,7 +402,7 @@ async function streamTranslationTurn(
   safeSend(res, {
     type: 'meta',
     mode,
-    model: resolveLlmModel(context.model),
+    model,
     speakDeltas: false,
     profile: profile.level,
   })
@@ -430,7 +430,8 @@ async function streamConversationTurn(
   input: ConversationStreamInput,
 ): Promise<Response | void> {
   const { context, userText, signal, firstTokenTimeoutMs, tag } = input
-  const profile = resolveModelProfile(context.modelProfile, context.model)
+  // ⚠️ プロファイルは **解決後のモデル名**から決める(resolveTurnModelAndProfile の注記)。
+  const { profile } = resolveTurnModelAndProfile(context.modelProfile, context.model)
 
   const systemPrompt = buildSystemPrompt({
     aiName: context.aiName,
@@ -647,7 +648,7 @@ async function streamConversationTurn(
     }
   } catch (e) {
     // 中断は失敗ではない(ユーザーが会話を終えただけ)。ログを汚さない。
-    if (!isAbortedError(e)) {
+    if (!isClientAbort(e, signal)) {
       console.warn(`${tag} enrichment failed (stream ends without enrich):`, e)
     }
   } finally {

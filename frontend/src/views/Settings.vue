@@ -350,7 +350,9 @@ async function handleBuildWhisperCpp() {
 async function handleDeleteOllama(name: string) {
   if (!confirm(`LLM モデル "${name}" を削除しますか?`)) return
   try {
-    await deleteOllamaModel(name)
+    // いま使っているモデル名を申告する。backend は設定を持っていないので、
+    // これが無いと既定モデル以外はサーバー側で守られない。
+    await deleteOllamaModel(name, settings.settings.llmModel)
     await loadInstalledModels()
   } catch (e) {
     alert(`削除に失敗しました: ${(e as Error).message}`)
@@ -420,9 +422,27 @@ const installedLlmOptions = computed(() =>
     .filter((m) => isAllowedLlmModel(m.name))
     .map((m) => {
       const d = describeLlm(m.name)
-      return { value: m.name, label: `${d.icon} ${m.name} — ${d.note}` }
+      return { value: m.name, label: `${d.icon} ${m.name} — ${d.note}`, installed: true }
     }),
 )
+
+/**
+ * 実際に <select> へ流す選択肢。**Whisper 側とまったく同じ理由**で必要
+ * (下の whisperSelectOptions の注記を参照)。
+ *
+ * 保存されている llmModel がインストール済み一覧に無いと、ブラウザは先頭の
+ * option を選択状態として描画するのに保存値は変わらず、change も飛ばない。
+ * 画面は A を選んでいるように見えて、会話と「会話モード」バッジは B の話を
+ * している — バッジが backend に問い合わせるようになった分、この食い違いは
+ * かえって目立つ(バッジだけが正しい)。現在値を必ず表現できるよう、
+ * 未インストールなら先頭に印付きで差し込む。
+ */
+const llmSelectOptions = computed(() => {
+  const current = settings.settings.llmModel
+  const options = installedLlmOptions.value
+  if (options.some((o) => o.value === current)) return options
+  return [{ value: current, label: `⚠️ ${current} — 未インストール`, installed: false }, ...options]
+})
 
 // --- 会話プロファイル ---
 //
@@ -851,7 +871,12 @@ async function handleDeleteAll() {
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateLlm"
           >
-            <option v-for="o in installedLlmOptions" :key="o.value" :value="o.value">
+            <option
+              v-for="o in llmSelectOptions"
+              :key="o.value"
+              :value="o.value"
+              :disabled="!o.installed"
+            >
               {{ o.label }}
             </option>
           </select>

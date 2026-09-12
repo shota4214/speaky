@@ -13,7 +13,7 @@ import {
   whisperModelExists,
   whisperModelPath,
 } from '../services/whisper-paths.js'
-import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
+import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
 import { TRANSCRIBE_BUDGET_MS } from '../shared/request-budget.js'
 
 const execFileAsync = promisify(execFile)
@@ -445,7 +445,7 @@ transcribeRouter.post(
       return res.json({ text, language, durationMs, model: modelName })
     } catch (e) {
       // 会話を終えただけ / クライアントが切っただけ。エラーとして書き込まない。
-      if (isAbortedError(e)) return endAborted(res)
+      if (isClientAbort(e, signal)) return endAborted(res)
       if (e instanceof TranscribeTimeoutError) {
         console.error('[transcribe] deadline exceeded:', e.message)
         // 504 + TIMEOUT。フロントはこれを「通信が切れたかもしれない」として

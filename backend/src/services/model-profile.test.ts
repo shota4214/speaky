@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { MODEL_PROFILES, resolveModelProfile } from './model-profile.js'
+import { MODEL_PROFILES, resolveModelProfile, resolveTurnModelAndProfile } from './model-profile.js'
+import { DEFAULT_LLM_MODEL } from '../shared/llm-models.js'
 
 /**
  * プロファイルは「小型モデルを実用にする」ための束なので、
@@ -100,5 +101,53 @@ describe('resolveModelProfile', () => {
   it('未指定(古いフロント)は auto 相当', () => {
     expect(resolveModelProfile(undefined, 'llama3.2:1b').level).toBe('small')
     expect(resolveModelProfile(undefined, undefined).level).toBe('standard')
+  })
+})
+
+/**
+ * **プロファイルは必ず「実際に走るモデル名」から決める**。
+ *
+ * 会話ルートは v1.2.0 の途中まで **リクエストされた名前**から決めていて、
+ * プレビュー(`/api/model-profile/preview`)だけが解決後の名前から決めていた。
+ * 一致するのは名前が allowlist を通るときだけで、通らないとき —
+ * 設定に古い `mistral:7b` が残っている人 — は
+ *   プレビュー: 差し替え先 1B のプロファイル(軽量)
+ *   会話:       1B を 7B 用の長いプロンプトで回す(標準)
+ * と割れる。バッジが嘘になるのは、まさにバッジが暴くために存在する状況だった。
+ */
+describe('resolveTurnModelAndProfile', () => {
+  it('allowlist を通る名前はそのまま使い、その名前でプロファイルを決める', () => {
+    const r = resolveTurnModelAndProfile('auto', 'llama3.2:3b')
+    expect(r.model).toBe('llama3.2:3b')
+    expect(r.profile.level).toBe('standard')
+  })
+
+  it('allowlist を通らない 7B は、差し替え先(既定 = 1B)のプロファイルになる', () => {
+    // ここが本題。リクエスト名から決めていた頃は standard になっていた
+    // (7B は 2B 超なので)が、実際に走るのは既定の 1B である。
+    const r = resolveTurnModelAndProfile('auto', 'mistral:7b')
+    expect(r.model).toBe(DEFAULT_LLM_MODEL)
+    expect(r.profile.level).toBe('small')
+    // 「リクエスト名から決める」旧実装との差が出ていることを明示する。
+    expect(resolveModelProfile('auto', 'mistral:7b').level).toBe('standard')
+    expect(r.profile.level).not.toBe(resolveModelProfile('auto', 'mistral:7b').level)
+  })
+
+  it('壊れた名前(書式 NG)も差し替え先のプロファイルになる', () => {
+    const r = resolveTurnModelAndProfile('auto', 'llama3.2:3b; echo hi')
+    expect(r.model).toBe(DEFAULT_LLM_MODEL)
+    expect(r.profile.level).toBe('small')
+  })
+
+  it('未指定(モデル名なし)は既定モデルとそのプロファイル', () => {
+    const r = resolveTurnModelAndProfile('auto', undefined)
+    expect(r.model).toBe(DEFAULT_LLM_MODEL)
+    expect(r.profile.level).toBe('small')
+  })
+
+  it('明示指定(standard 固定)は差し替えが起きても尊重される', () => {
+    const r = resolveTurnModelAndProfile('standard', 'mistral:7b')
+    expect(r.model).toBe(DEFAULT_LLM_MODEL)
+    expect(r.profile.level).toBe('standard')
   })
 })

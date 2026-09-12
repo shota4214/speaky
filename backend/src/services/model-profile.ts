@@ -3,6 +3,7 @@ import {
   type ModelProfileLevel,
   type ModelProfilePref,
 } from '../shared/llm-models.js'
+import { resolveLlmModel } from './ollama.js'
 
 /**
  * 会話プロファイル。**「どのモデルでも同じ設定で回す」のをやめるための束**。
@@ -112,10 +113,44 @@ export const MODEL_PROFILES: Record<ModelProfileLevel, ModelProfile> = {
  * 設定値(auto/standard/small)とモデル名からプロファイルを 1 つ決める。
  * 推定ロジックは shared/llm-models.ts にあり、frontend も同じ関数を読む
  * (設定画面で「今どちらで動くか」を表示するため)。
+ *
+ * ⚠️ ここに渡す `model` は **allowlist を通した後の名前**でなければならない。
+ * 会話ルートから直接呼ばず、{@link resolveTurnModelAndProfile} を使うこと。
  */
 export function resolveModelProfile(
   pref: ModelProfilePref | undefined,
   model: string | undefined,
 ): ModelProfile {
   return MODEL_PROFILES[resolveProfileLevel(pref, model)]
+}
+
+/** 1 ターンで実際に使うモデル名とプロファイルの組。 */
+export interface ResolvedTurnModel {
+  /** 実際に Ollama へ投げる名前(allowlist で落ちたら既定モデル)。 */
+  model: string
+  /** その **解決後の名前** から決めたプロファイル。 */
+  profile: ModelProfile
+}
+
+/**
+ * リクエストされたモデル名から「実際に使う名前」と「そのプロファイル」を同時に決める。
+ *
+ * ⚠️ **プロファイルは必ず解決後の名前から導く**。
+ * v1.2.0 の途中まで、会話ルート(`/api/chat`, `/api/chat/stream`, enrich)は
+ * **リクエストされた名前**からプロファイルを決めていて、プレビュー
+ * (`/api/model-profile/preview`)だけが解決後の名前から決めていた。
+ * 両者が一致するのは「リクエストされた名前が allowlist を通るとき」だけで、
+ * 通らないとき — たとえば設定に古い `mistral:7b` が残っている人 — は
+ *   - プレビュー: 差し替え先(同梱 1B)のプロファイル = 軽量
+ *   - 会話:       同梱 1B を **7B 用の長いプロンプト** で回す = 標準
+ * という食い違いが出る。**バッジが嘘になるのは、まさにこのバッジが
+ * 暴くために存在する状況**(黙ってモデルが差し替わったとき)だった。
+ * 解決とプロファイル決定を 1 つの関数に閉じ込めて、呼び分けの余地を無くす。
+ */
+export function resolveTurnModelAndProfile(
+  pref: ModelProfilePref | undefined,
+  requestedModel: string | undefined,
+): ResolvedTurnModel {
+  const model = resolveLlmModel(requestedModel)
+  return { model, profile: resolveModelProfile(pref, model) }
 }

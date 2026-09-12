@@ -676,8 +676,17 @@ export async function listOllamaModels(): Promise<OllamaModelsResponse> {
   return asJson<OllamaModelsResponse>(res)
 }
 
-export async function deleteOllamaModel(name: string): Promise<void> {
-  const res = await fetch(`/api/models/ollama/${encodeURIComponent(name)}`, {
+/**
+ * LLM を削除する。
+ *
+ * `activeModel` は「いまアプリが使っているモデル」の申告。backend は設定を
+ * 持っていないので、これを渡さないとサーバー側の削除保護は **backend の既定
+ * モデル(同梱の 1B)しか守れない** — 3B へ乗り換えた人は画面の disabled
+ * だけが頼りになる。省略しても従来どおり動く(古い backend は無視する)。
+ */
+export async function deleteOllamaModel(name: string, activeModel?: string): Promise<void> {
+  const query = activeModel ? `?activeModel=${encodeURIComponent(activeModel)}` : ''
+  const res = await fetch(`/api/models/ollama/${encodeURIComponent(name)}${query}`, {
     method: 'DELETE',
     headers: await adminHeaders(),
   })

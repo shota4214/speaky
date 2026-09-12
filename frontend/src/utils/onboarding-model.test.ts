@@ -4,7 +4,11 @@ import {
   RECOMMENDED_DOWNLOAD_LLM_MODEL,
   isAllowedLlmModel,
 } from '../storage/settings'
-import { chooseOnboardingLlm, ONBOARDING_LLM_CHOICES } from './onboarding-model'
+import {
+  buildOnboardingLlmOptions,
+  chooseOnboardingLlm,
+  ONBOARDING_LLM_CHOICES,
+} from './onboarding-model'
 
 /**
  * オンボーディングの LLM 自動選択。
@@ -137,5 +141,67 @@ describe('ONBOARDING_LLM_CHOICES', () => {
 
   it('同梱モデルは必ず選択肢に含まれる(オフラインの唯一の出口)', () => {
     expect(ONBOARDING_LLM_CHOICES.some((e) => e.tag === BUNDLED_LLM_MODEL)).toBe(true)
+  })
+})
+
+/**
+ * 選択肢と選択の範囲がズレると、**select が空白で描画される**。
+ * 自動選択は「インストール済みなら何でも選ぶ」(オフラインで先へ進める唯一の道)
+ * のに、選択肢はカタログ(offerForDownload)だけから作っていた。
+ * 自分で pull した型番しか入っていない Mac がそれに当たる。
+ */
+describe('buildOnboardingLlmOptions', () => {
+  it('カタログのモデルを選んでいるときは選択肢を増やさない', () => {
+    const options = buildOnboardingLlmOptions({
+      selected: BUNDLED_LLM_MODEL,
+      installed: [BUNDLED_LLM_MODEL],
+    })
+    expect(options).toHaveLength(ONBOARDING_LLM_CHOICES.length)
+    expect(options.map((o) => o.value)).toContain(BUNDLED_LLM_MODEL)
+  })
+
+  it('⭐ カタログに無いモデルが選ばれていても、必ず選択肢に出る', () => {
+    const selected = 'qwen2.5:3b-instruct-q5_K_M'
+    const options = buildOnboardingLlmOptions({ selected, installed: [selected] })
+    expect(options[0]?.value).toBe(selected)
+    expect(options[0]?.installed).toBe(true)
+    expect(options[0]?.label).toContain(selected)
+  })
+
+  it('自動選択が返す model は、どんなインストール状況でも必ず選択肢にある(不変条件)', () => {
+    const installedSets = [
+      [],
+      [BUNDLED_LLM_MODEL],
+      ['qwen2.5:3b-instruct-q5_K_M'],
+      ['gemma2:2b'],
+      ['llama3.1:8b-instruct-q8_0', 'qwen2.5:1.5b'],
+      [RECOMMENDED_DOWNLOAD_LLM_MODEL],
+    ]
+    for (const installed of installedSets) {
+      for (const lowMemory of [true, false]) {
+        for (const memoryKnown of [true, false]) {
+          const selection = chooseOnboardingLlm({ installed, lowMemory, memoryKnown })
+          const options = buildOnboardingLlmOptions({
+            selected: selection.model,
+            installed,
+          })
+          expect(
+            options.map((o) => o.value),
+            JSON.stringify({ installed, lowMemory, memoryKnown }),
+          ).toContain(selection.model)
+        }
+      }
+    }
+  })
+
+  it('取得済みかどうかを正直に出す(未取得を「取得済み」と書かない)', () => {
+    const options = buildOnboardingLlmOptions({
+      selected: BUNDLED_LLM_MODEL,
+      installed: [],
+    })
+    for (const o of options) {
+      expect(o.installed).toBe(false)
+      expect(o.label).not.toContain('取得済み')
+    }
   })
 })

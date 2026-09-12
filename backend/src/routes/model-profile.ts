@@ -1,6 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { resolveLlmModel } from '../services/ollama.js'
-import { resolveModelProfile } from '../services/model-profile.js'
+import { resolveTurnModelAndProfile } from '../services/model-profile.js'
 import { isModelProfilePref, type ModelProfilePref } from '../shared/llm-models.js'
 
 /**
@@ -40,10 +39,11 @@ modelProfileRouter.post('/model-profile/preview', (req: Request, res: Response) 
   const requestedModel = typeof body.model === 'string' ? body.model : null
   const pref: ModelProfilePref = isModelProfilePref(body.modelProfile) ? body.modelProfile : 'auto'
 
-  // 会話ルートとまったく同じ 2 つの解決関数を通す。ここで別の判定を書くと
-  // 「プレビューは正しいのに本番が違う」という、いちばん質の悪いズレになる。
-  const model = resolveLlmModel(requestedModel ?? undefined)
-  const profile = resolveModelProfile(pref, model)
+  // 会話ルートと **同じ 1 つの関数** を通す。ここで解決の順番を書き分けると
+  // 「プレビューは正しいのに本番が違う」という、いちばん質の悪いズレになる
+  // (実際 v1.2.0 の途中まで、会話側だけがリクエスト名からプロファイルを
+  //  決めていて、allowlist で落ちた名前のときだけ両者が食い違っていた)。
+  const { model, profile } = resolveTurnModelAndProfile(pref, requestedModel ?? undefined)
 
   return res.json({
     requestedModel,

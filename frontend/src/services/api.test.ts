@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, chat, chatEnrich, chatOpening, chatStream, transcribeAudio } from './api'
+import {
+  ApiError,
+  chat,
+  chatEnrich,
+  chatOpening,
+  chatStream,
+  deleteOllamaModel,
+  transcribeAudio,
+} from './api'
 import {
   BACKEND_WORST_CASE_MS,
   CHAT_ROUTE_WORST_CASE_MS,
@@ -395,5 +403,49 @@ describe('非ストリーミング経路: 本文の読み取りも締め切り�
     const error = await promise
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).code).toBe('TIMEOUT')
+  })
+})
+
+/**
+ * 削除の保護は **backend にも効いていること**。
+ *
+ * backend はユーザーの設定を持っていないので、「いま使っているモデル」を
+ * 申告しないと守れるのは backend の既定(= 同梱の 1B)だけになる。
+ * 同梱を 1B に変えた v1.2.0 では、3B に乗り換えた人のサーバー側の保護が
+ * そこで抜け落ちていた(残っていたのは画面の disabled だけ)。
+ */
+describe('deleteOllamaModel', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function stubFetch(): { urls: string[] } {
+    const urls: string[] = []
+    const fakeFetch = ((url: unknown) => {
+      const u = String(url)
+      urls.push(u)
+      const body = u.includes('/api/auth/admin-token')
+        ? JSON.stringify({ token: 'test-token' })
+        : JSON.stringify({ ok: true })
+      return Promise.resolve(
+        new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      )
+    }) as typeof fetch
+    vi.stubGlobal('fetch', fakeFetch)
+    return { urls }
+  }
+
+  it('使用中のモデル名を activeModel として送る', async () => {
+    const { urls } = stubFetch()
+    await deleteOllamaModel('llama3.2:1b', 'llama3.2:3b')
+    const del = urls.find((u) => u.includes('/api/models/ollama/'))
+    expect(del).toBe('/api/models/ollama/llama3.2%3A1b?activeModel=llama3.2%3A3b')
+  })
+
+  it('申告が無いときは従来どおりのパス(古い backend でも壊れない)', async () => {
+    const { urls } = stubFetch()
+    await deleteOllamaModel('gemma2:2b')
+    const del = urls.find((u) => u.includes('/api/models/ollama/'))
+    expect(del).toBe('/api/models/ollama/gemma2%3A2b')
   })
 })

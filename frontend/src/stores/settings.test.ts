@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS } from '../storage/settings'
+import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../storage/settings'
 import { useSettingsStore } from './settings'
 
 describe('useSettingsStore', () => {
@@ -90,6 +90,50 @@ describe('useSettingsStore', () => {
     const s = useSettingsStore()
     expect(s.settings.ttsRate).toBe(1.5) // TTS_RATE_MAX
     expect(s.settings.ttsPitch).toBe(0.7) // TTS_PITCH_MIN
+  })
+
+  // スキーマ v1(schemaVersion 欠落)で旧デフォルトの 5000 が保存されている場合、
+  // 新デフォルト(1500)へ一度だけ移行されることを確認する。
+  it('migrates legacy default silenceDurationMs (5000) to the new default', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        silenceDurationMs: 5000,
+        schemaVersion: undefined,
+      }),
+    )
+    const s = useSettingsStore()
+    expect(s.settings.silenceDurationMs).toBe(DEFAULT_SETTINGS.silenceDurationMs)
+    expect(s.settings.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+  })
+
+  // 自分で 5000 以外に変更していた値は移行対象外(尊重する)。
+  it('keeps a user-customized silenceDurationMs during schema migration', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        silenceDurationMs: 8000,
+        schemaVersion: undefined,
+      }),
+    )
+    const s = useSettingsStore()
+    expect(s.settings.silenceDurationMs).toBe(8000)
+  })
+
+  // 移行済み(schemaVersion=2)なら、たまたま 5000 でも書き換えない。
+  it('does not re-apply the migration once schemaVersion is current', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        silenceDurationMs: 5000,
+        schemaVersion: SETTINGS_SCHEMA_VERSION,
+      }),
+    )
+    const s = useSettingsStore()
+    expect(s.settings.silenceDurationMs).toBe(5000)
   })
 
   it('persists personality changes', async () => {

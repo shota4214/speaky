@@ -2,6 +2,20 @@ import type { Gender, Level, PersonalityPreset } from '../db/types'
 
 const STORAGE_KEY = 'speaky:settings'
 
+/**
+ * 設定スキーマのバージョン。
+ * 「デフォルト値を変えたときに、旧デフォルトのまま保存されている既存ユーザーへ
+ *  新デフォルトを一度だけ適用する」ためだけに使う(値の形は変えない)。
+ *
+ * - 1 (= schemaVersion 欠落): v1.0.0 以前
+ * - 2: silenceDurationMs のデフォルトを 5000 → 1500 に変更。
+ *      旧デフォルト(5000)のまま保存されているものを新デフォルトへ移行する。
+ */
+export const SETTINGS_SCHEMA_VERSION = 2
+
+/** v1 時点の silenceDurationMs デフォルト。移行判定にのみ使う。 */
+const LEGACY_DEFAULT_SILENCE_MS = 5000
+
 // nodejs-whisper の MODELS_LIST に含まれ、かつ Hugging Face で実在する
 // `ggml-${name}.bin` を持つ名前のみ許可する。
 // - `large-v3` は nodejs-whisper の MODELS_LIST に無いため拒否される
@@ -85,6 +99,8 @@ export interface AppSettings {
   showJapanese: boolean
   lastCleanupAt: number | null
   defaultLevel: Level
+  /** 保存済み設定のスキーマ版。欠落 = 1(v1.0.0 以前)として扱う。 */
+  schemaVersion: number
 }
 
 /** 無音自動送信の間隔(ミリ秒)の許容範囲。UI のスライダー範囲と一致させる。 */
@@ -98,8 +114,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     voiceName: null,
     personality: 'friendly',
   },
-  // 5秒: 話し終わってから送信されるまでの猶予。設定画面で 1-15 秒に調整可能。
-  silenceDurationMs: 5000,
+  // 1.5秒: 話し終わってから送信されるまでの猶予。設定画面で 1-15 秒に調整可能。
+  // 5秒だと毎ターン無言の待ち時間が乗って体感が大幅に悪化するため短縮した。
+  silenceDurationMs: 1500,
   llmModel: 'llama3.2:3b',
   // small(多言語・約488MB): 8GB Mac でも現実的な速度/RAM。日本語入力を扱うので `.en` は不可。
   whisperModel: 'small',
@@ -110,6 +127,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showJapanese: true,
   lastCleanupAt: null,
   defaultLevel: 'intermediate',
+  schemaVersion: SETTINGS_SCHEMA_VERSION,
 }
 
 const VALID_PERSONALITIES = new Set<PersonalityPreset>([
@@ -172,6 +190,14 @@ export function loadSettings(): AppSettings {
       TTS_PITCH_MIN,
       TTS_PITCH_MAX,
     )
+    // --- スキーマ移行(1 → 2): silenceDurationMs の旧デフォルト 5000 を新デフォルトへ ---
+    // 旧デフォルトのまま使っていた人だけが対象。自分で値を変えていた人の設定は尊重する。
+    const storedVersion = typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 1
+    if (storedVersion < 2 && merged.silenceDurationMs === LEGACY_DEFAULT_SILENCE_MS) {
+      merged.silenceDurationMs = DEFAULT_SETTINGS.silenceDurationMs
+    }
+    merged.schemaVersion = SETTINGS_SCHEMA_VERSION
+
     // showJapanese は旧バージョンに無いので欠落時はデフォルト(表示)に
     if (typeof merged.showJapanese !== 'boolean') {
       merged.showJapanese = DEFAULT_SETTINGS.showJapanese

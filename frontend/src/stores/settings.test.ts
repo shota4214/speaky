@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from '../storage/settings'
+import { DEFAULT_SETTINGS, loadSettings, SETTINGS_SCHEMA_VERSION } from '../storage/settings'
 import { useSettingsStore } from './settings'
 
 describe('useSettingsStore', () => {
@@ -159,5 +159,67 @@ describe('useSettingsStore', () => {
     const raw = localStorage.getItem('speaky:settings')
     expect(raw).toBeTruthy()
     expect(JSON.parse(raw!).aiCharacter.personality).toBe('teacher')
+  })
+})
+
+// スキーマ移行は「一度きり」であることが契約なので、移行が走った時点で
+// localStorage に書き戻されていること（= 次回起動では走らないこと）を検証する。
+// ストアは値が変わったときにしか保存しないため、in-memory の状態だけを見ていると
+// この抜けを検出できない。
+describe('loadSettings schema migration persistence', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  function persisted(): Record<string, unknown> {
+    const raw = localStorage.getItem('speaky:settings')
+    expect(raw).toBeTruthy()
+    return JSON.parse(raw!) as Record<string, unknown>
+  }
+
+  it('persists the migrated result immediately (schemaVersion is written back)', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        silenceDurationMs: 5000,
+        whisperModel: 'medium',
+        schemaVersion: undefined,
+      }),
+    )
+
+    const loaded = loadSettings()
+    expect(loaded.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+
+    const stored = persisted()
+    expect(stored.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+    expect(stored.silenceDurationMs).toBe(DEFAULT_SETTINGS.silenceDurationMs)
+    expect(stored.whisperModel).toBe(DEFAULT_SETTINGS.whisperModel)
+  })
+
+  it('a second load sees the migrated value and does not migrate again', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ ...DEFAULT_SETTINGS, silenceDurationMs: 5000, schemaVersion: undefined }),
+    )
+    loadSettings()
+
+    // 移行後にユーザーが 5000 へ戻したケース: 2 回目の load で書き換えられてはいけない
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ ...persisted(), silenceDurationMs: 5000 }),
+    )
+    expect(loadSettings().silenceDurationMs).toBe(5000)
+    expect(persisted().silenceDurationMs).toBe(5000)
+  })
+
+  it('does not write to storage when the stored schema is already current', () => {
+    // ttsRate は範囲外なので in-memory では clamp されるが、保存はされない
+    const stored = { ...DEFAULT_SETTINGS, silenceDurationMs: 5000, ttsRate: 5.0 }
+    localStorage.setItem('speaky:settings', JSON.stringify(stored))
+
+    const loaded = loadSettings()
+    expect(loaded.ttsRate).toBe(1.5) // TTS_RATE_MAX に clamp
+    expect(persisted()).toEqual(stored) // storage は素通り
   })
 })

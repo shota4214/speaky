@@ -195,6 +195,7 @@ export function loadSettings(): AppSettings {
     // --- スキーマ移行(1 → 2): silenceDurationMs の旧デフォルト 5000 を新デフォルトへ ---
     // 旧デフォルトのまま使っていた人だけが対象。自分で値を変えていた人の設定は尊重する。
     const storedVersion = typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 1
+    const needsMigration = storedVersion < SETTINGS_SCHEMA_VERSION
     if (storedVersion < 2) {
       if (merged.silenceDurationMs === LEGACY_DEFAULT_SILENCE_MS) {
         merged.silenceDurationMs = DEFAULT_SETTINGS.silenceDurationMs
@@ -220,6 +221,13 @@ export function loadSettings(): AppSettings {
       SILENCE_MS_MIN,
       SILENCE_MS_MAX,
     )
+    // 移行が走ったらその場で永続化する。ストアは「変更されたとき」しか保存しないので、
+    // ここで書かないと設定を一度も触らないユーザーは schemaVersion が保存されないまま
+    // 毎回起動のたびに移行が再実行される(= 一度きりの移行という契約が嘘になる)。
+    // 今の v1→v2 は冪等なので実害は無いが、冪等でない v2→v3 を足した瞬間に壊れる。
+    if (needsMigration) {
+      saveSettings(merged)
+    }
     return merged
   } catch {
     return { ...DEFAULT_SETTINGS }

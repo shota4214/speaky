@@ -4,6 +4,7 @@ import { createWriteStream, existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { adminAuth } from '../services/admin-token.js'
 import { ollamaConfig } from '../services/ollama.js'
+import { findWhisperCppDir, findWhisperModelsDir } from '../services/whisper-paths.js'
 
 interface OllamaTag {
   name: string
@@ -13,37 +14,6 @@ interface OllamaTag {
 
 interface OllamaTagsResponse {
   models?: OllamaTag[]
-}
-
-/**
- * nodejs-whisper パッケージのインストール先(writable な場所)を解決する。
- * 優先順位:
- *  1. SPEAKY_WHISPER_BASE_DIR env(Electron が writable な userData を指定)
- *  2. cwd + './node_modules/nodejs-whisper'   (packaged: backend-runtime cwd)
- *  3. cwd + '../node_modules/nodejs-whisper'  (backend/dist 内 + 隣の node_modules)
- *  4. cwd + '../../node_modules/nodejs-whisper' (workspace dev: backend/dist + root hoist)
- */
-function getWhisperPackageDir(): string {
-  const fromEnv = process.env.SPEAKY_WHISPER_BASE_DIR
-  if (fromEnv && existsSync(fromEnv)) return fromEnv
-
-  const candidates = [
-    path.resolve(process.cwd(), 'node_modules', 'nodejs-whisper'),
-    path.resolve(process.cwd(), '..', 'node_modules', 'nodejs-whisper'),
-    path.resolve(process.cwd(), '..', '..', 'node_modules', 'nodejs-whisper'),
-  ]
-  for (const c of candidates) {
-    if (existsSync(c)) return c
-  }
-  return candidates[0]!
-}
-
-function findWhisperModelsDir(): string {
-  return path.join(getWhisperPackageDir(), 'cpp', 'whisper.cpp', 'models')
-}
-
-function findWhisperCppDir(): string {
-  return path.join(getWhisperPackageDir(), 'cpp', 'whisper.cpp')
 }
 
 function setupSSE(res: Response): void {

@@ -580,6 +580,10 @@ function createMainWindow(): BrowserWindow {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      // 非フォーカス / 非表示時に Chromium がタイマーを間引かないようにする。
+      // 録音中の無音検出と maxRecordingMs の強制停止は setInterval で回っているため、
+      // スロットリングされると「録音が止まらない」状態になる。
+      backgroundThrottling: false,
     },
   })
 

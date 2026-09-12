@@ -47,7 +47,7 @@ Tier2 で入ったもの（すべてこのブランチ内）:
 - **小型モデル（1B / 1.5B）を実用にする会話プロファイル**（下記）
 - 履歴詳細画面の日本語訳の再取得、**全ての HTTP 呼び出しにクライアント締め切り**
   （転写を含む。予算は `backend/src/shared/request-budget.ts` が唯一の出典）
-- **同梱 LLM を Llama 3.2 3B → 1B に変更**（DMG 約 2.67GB → 約 1.5GB）
+- **同梱 LLM を Llama 3.2 3B → 1B に変更**（DMG 約 2.67GB → 約 1.9GB(v1.2.0 実測)）
 - 設定画面の「会話モード」バッジを backend への問い合わせ結果に変更
 
 ### 残っているのは 1 つだけ: リリースビルド + **M1 MacBook Air 実機検証**
@@ -64,7 +64,7 @@ Tier2 で入ったもの（すべてこのブランチ内）:
 npm run prep:vendor:whisper-cli -w backend   # -DGGML_NATIVE=OFF で作り直す
 npm run prep:vendor:llama-model -w electron  # 1B を vendor + 旧 3B の残骸を掃除
 npm run verify:arm64 -w backend              # ここが OK になってから dist
-npm run dist                                 # DMG ~1.5GB、5〜10分 + 公証で計 15〜40分
+npm run dist                                 # DMG ~1.9GB、5〜10分 + 公証で計 15〜40分
 
 # vendor 後に「3B が残っていないこと」を目で確認する（DMG が太る）
 ls electron/build-resources/ollama-data/manifests/registry.ollama.ai/library/llama3.2/

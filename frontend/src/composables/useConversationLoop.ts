@@ -128,6 +128,27 @@ export function useConversationLoop() {
   }
 
   /**
+   * 過去のメッセージをもう一度読み上げる(「もう一度聞く」)。
+   *
+   * **必ずキュー経由**にする。tts.speak(interrupt:true) を直接呼ぶと、
+   * キューが 4 セグメント中 2 つ目を喋っている最中に世代カウンタだけが進み、
+   * キューは中断を「1 文読み終わった」と解釈して 3 つ目・4 つ目を流し続ける。
+   * その結果、再生し直した音声と残りのセグメントが重なって同時に鳴る。
+   * speakNow はキューを空にしてから積むので、この競合が起こらない。
+   */
+  function replay(text: string): void {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    const opts = buildTtsOptions()
+    speechQueue.speakNow(trimmed, {
+      rate: speakRateForLevel(),
+      pitch: opts.pitch,
+      voiceName: opts.voiceName,
+      voicePreference: opts.voicePreference,
+    })
+  }
+
+  /**
    * ターンごとの AbortController。
    * 会話を終わっても LLM の生成が走り続けると、8GB マシンではそのまま
    * 次の操作(要約・履歴表示)まで重くなるので、停止時に必ず中断させる。
@@ -890,10 +911,10 @@ export function useConversationLoop() {
     // Ollama が生成を続けてマシンが重いままになる)
     abortTurn()
     recorder.stop()
-    // 待機中のセグメントを捨ててから TTS を止める(順序が逆だと
-    // キューが次のセグメントを積み直してしまう)
+    // 読み上げの停止はキューに任せる(cancelAll が待機中を捨て、
+    // 再生中も backend.cancel で止める)。ここで tts.cancel() を重ねると
+    // 世代カウンタが二度進むだけで、止まり方は何も変わらない。
     speechQueue.cancelAll()
-    tts.cancel()
     // 会話が終わったらマイクは手放す。画面に留まったままでも OS の
     // マイク使用インジケータが点きっぱなしにならないようにする。
     recorder.release()
@@ -993,6 +1014,7 @@ export function useConversationLoop() {
     promptedAttempts,
     start,
     stop,
+    replay,
     endAndPersist,
   }
 }

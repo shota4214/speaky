@@ -57,26 +57,82 @@ export function matchJsonStringField(raw: string, field: string): string | null 
   return decodeJsonStringLiteral(m[1])
 }
 
+export interface JsonStringArrayMatch {
+  /** 最後まで生成されていた(閉じ引用符が揃っている)要素だけ。 */
+  items: string[]
+  /**
+   * 配列の閉じ括弧 `]` まで出力に含まれていたか。
+   *
+   * **これが救済の可否を決める**。false は「num_predict 上限で配列の途中で
+   * 切れた」= 残りが何件あったのか誰にも分からない状態で、拾えた分を成功として
+   * 返すと、欠けたことに気付かないまま確定保存されてしまう(事実抽出は
+   * 1 ターンの取りこぼしと違って永久に失われる)。
+   */
+  closed: boolean
+}
+
 /**
  * 壊れた JSON テキストから `"<field>": ["...", "..."]` の文字列要素を拾う。
- * 配列が閉じていなくても、そこまでに完結している要素は拾う。
- * フィールド自体が見つからなければ null(= 救済不能)、見つかれば配列(空もあり得る)。
+ * フィールド自体が見つからなければ null(= 救済不能)、見つかれば結果を返す
+ * (要素 0 件もあり得る)。
+ *
+ * 文字列リテラルを 1 つずつ読み進めることで、
+ *  - 要素の中に `]` や `}` が含まれていても配列の終わりと誤認しない
+ *  - ネストした配列 / オブジェクトの中身を要素として混ぜない(深さ 1 だけ拾う)
+ *  - 途中で切れた(閉じ引用符が無い)最後の要素は捨てる
+ * を同時に満たす。
  */
-export function matchJsonStringArrayField(raw: string, field: string): string[] | null {
+export function matchJsonStringArrayField(raw: string, field: string): JsonStringArrayMatch | null {
   const head = new RegExp(`"${field}"\\s*:\\s*\\[`).exec(raw)
   if (!head) return null
-  const start = head.index + head[0].length
-  // 要素の中に `]` が含まれると早めに切ってしまうが、救済用途では許容する
-  // (ここで拾いすぎて別フィールドの文字列を混ぜる方が有害)。
-  const close = raw.indexOf(']', start)
-  const body = close === -1 ? raw.slice(start) : raw.slice(start, close)
+  return scanJsonStringArray(raw, head.index + head[0].length)
+}
 
-  const out: string[] = []
-  const re = /"((?:[^"\\]|\\.)*)"/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(body)) !== null) {
-    const decoded = m[1] === undefined ? null : decodeJsonStringLiteral(m[1])
-    if (decoded && decoded.trim().length > 0) out.push(decoded.trim())
+/** `[` の直後から配列を走査する。深さ 1 の文字列要素と、配列が閉じたかを返す。 */
+function scanJsonStringArray(raw: string, start: number): JsonStringArrayMatch {
+  const items: string[] = []
+  let depth = 1
+  let closed = false
+  let i = start
+
+  while (i < raw.length) {
+    const ch = raw[i]!
+    if (ch === '"') {
+      // 文字列リテラルを読み切る。エスケープ(\" \\ 等)は 2 文字まとめて飛ばす。
+      let j = i + 1
+      let terminated = false
+      for (; j < raw.length; j++) {
+        const c = raw[j]!
+        if (c === '\\') {
+          j++
+          continue
+        }
+        if (c === '"') {
+          terminated = true
+          break
+        }
+      }
+      // 閉じ引用符が無い = 出力がこの要素の途中で切れた。捨てて走査も終える。
+      if (!terminated) break
+      if (depth === 1) {
+        const decoded = decodeJsonStringLiteral(raw.slice(i + 1, j))
+        if (decoded && decoded.trim().length > 0) items.push(decoded.trim())
+      }
+      i = j + 1
+      continue
+    }
+    if (ch === '[' || ch === '{') {
+      depth++
+    } else if (ch === ']' || ch === '}') {
+      depth--
+      if (depth === 0) {
+        // `]` で閉じたときだけ「完結した配列」とみなす。
+        closed = ch === ']'
+        break
+      }
+    }
+    i++
   }
-  return out
+
+  return { items, closed }
 }

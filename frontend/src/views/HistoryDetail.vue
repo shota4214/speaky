@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import BaseCard from '../components/BaseCard.vue'
 import LevelBadge from '../components/LevelBadge.vue'
 import TopicChip from '../components/TopicChip.vue'
+import { useSpeechQueue } from '../composables/useSpeechQueue'
 import { useTextToSpeech } from '../composables/useTextToSpeech'
 import { conversationsRepo } from '../db/repos/conversations'
 import { messagesRepo } from '../db/repos/messages'
@@ -11,6 +12,13 @@ import type { Conversation, Message } from '../db/types'
 
 const route = useRoute()
 const tts = useTextToSpeech()
+/**
+ * 読み上げはキュー経由に統一する。この画面には会話ループが無いので
+ * 単独で tts.speak を呼んでも壊れないが、「割り込み再生の入口は speakNow だけ」
+ * という約束を画面ごとに破ると、会話画面で潰したばかりの二重再生が
+ * コピペで戻ってくる。
+ */
+const speechQueue = useSpeechQueue(tts)
 
 const conversation = ref<Conversation | null>(null)
 const messages = ref<Message[]>([])
@@ -42,7 +50,9 @@ function formatTime(d: Date): string {
 }
 
 function replay(text: string) {
-  tts.speak(text)
+  const trimmed = text.trim()
+  if (!trimmed) return
+  speechQueue.speakNow(trimmed)
 }
 </script>
 

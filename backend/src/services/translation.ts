@@ -5,7 +5,7 @@
  * services へ切り出した。**中身は routes/chat.ts にあった時点から変えていない。**
  */
 import type { Level } from './conversation-prompt.js'
-import { chatWithOllama, type OllamaChatMessage } from './ollama.js'
+import { chatWithOllama, OllamaError, RETRY_SEED, type OllamaChatMessage } from './ollama.js'
 
 /**
  * japanese_help / mixed モードは LLM のシステムプロンプトに「翻訳して」と書くだけでは
@@ -139,15 +139,22 @@ export function stripTranslationPreamble(raw: string): string {
 
 export async function translateToNaturalEnglish(
   userText: string,
-  options: { model?: string; level?: Level },
+  options: { model?: string; level?: Level; signal?: AbortSignal },
 ): Promise<string> {
   const messages: OllamaChatMessage[] = [
     { role: 'system', content: buildTranslationSystemPrompt(options.level) },
     { role: 'user', content: userText },
   ]
-  // 1 回失敗したら温度を上げて 1 回だけリトライ。会話経路ほどタフな
-  // リトライは不要だが、瞬時の空応答で 502 を返さないための保険。
-  const attempts: { temperature: number }[] = [{ temperature: 0.3 }, { temperature: 0.6 }]
+  // 1 回失敗したら 1 回だけリトライ。瞬時の空応答で 502 を返さないための保険。
+  //
+  // 2 回目は温度を **下げて** seed を固定する。かつてはここだけ温度を上げていたが、
+  // それは「同じ分布からの引き直し」= 独立した宝くじで、(a) 失敗が再現できない
+  // (b) 運が悪ければ同じ壊れ方を繰り返す、という会話経路で潰したのと同じ欠陥。
+  // 翻訳は決定的な 1 本が欲しい処理なので、なおさら上げる理由が無い。
+  const attempts: { temperature: number; seed?: number }[] = [
+    { temperature: 0.3 },
+    { temperature: 0.1, seed: RETRY_SEED },
+  ]
   let lastTranslated = ''
   for (const a of attempts) {
     const ollamaRes = await chatWithOllama(messages, {
@@ -155,12 +162,14 @@ export async function translateToNaturalEnglish(
       firstTokenTimeoutMs: 60_000,
       // 翻訳は再現性重視で低温度(会話経路の 0.85 より低い)。
       temperature: a.temperature,
+      ...(a.seed !== undefined && { seed: a.seed }),
       topP: 0.9,
       numPredict: 300,
       // 自然文を返してほしいので Ollama の JSON モードを必ず OFF にする。
       // ここを忘れると format:'json' が送られてモデルが {"sentence":"..."}
       // のような JSON を返し、reply_en にそのまま入って UI 表示が壊れる。
       jsonFormat: false,
+      signal: options.signal,
     })
     const raw = ollamaRes.message?.content ?? ''
     lastTranslated = stripTranslationPreamble(raw)
@@ -182,7 +191,7 @@ Rules:
 
 export async function translateEnglishToJapanese(
   englishText: string,
-  options: { model?: string },
+  options: { model?: string; signal?: AbortSignal },
 ): Promise<string> {
   const messages: OllamaChatMessage[] = [
     { role: 'system', content: EN_TO_JA_SYSTEM_PROMPT },
@@ -196,9 +205,13 @@ export async function translateEnglishToJapanese(
       topP: 0.9,
       numPredict: 300,
       jsonFormat: false,
+      signal: options.signal,
     })
     return stripTranslationPreamble(ollamaRes.message?.content ?? '')
   } catch (e) {
+    // 中断は「失敗」ではない。空文字を返して先へ進むと、切れたソケットへ
+    // レスポンスを組み立てる無駄な処理が続くので、呼び出し元へ投げ返す。
+    if (e instanceof OllamaError && e.code === 'ABORTED') throw e
     console.warn('[chat] en→ja fallback translation failed:', e)
     return ''
   }

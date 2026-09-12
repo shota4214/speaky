@@ -168,6 +168,60 @@ describe('useSpeechQueue', () => {
     expect(backend.finished).toEqual(['slow sentence', 'next sentence'])
   })
 
+  it('speakNow は再生中のキューを捨てて、その 1 件だけを読む(二重再生の防止)', async () => {
+    const backend = new FakeBackend()
+    backend.manual = true
+    const q = useSpeechQueue(backend)
+
+    // 4 セグメントのターンを流し始め、2 つ目を再生中にする。
+    q.enqueue('segment one')
+    q.enqueue('segment two')
+    q.enqueue('segment three')
+    q.enqueue('segment four')
+    await tick()
+    backend.finishCurrent()
+    await tick()
+    expect(backend.current).toBe('segment two')
+
+    // ここで「もう一度聞く」。残りの 3・4 は鳴らしてはいけない。
+    q.speakNow('replay of the whole reply')
+    await tick()
+    expect(q.pendingCount()).toBe(0)
+    expect(backend.current).toBe('replay of the whole reply')
+
+    backend.finishCurrent()
+    await q.drained()
+
+    expect(backend.calls).toEqual(['segment one', 'segment two', 'replay of the whole reply'])
+    expect(backend.finished).toContain('replay of the whole reply')
+    expect(backend.calls).not.toContain('segment three')
+    expect(backend.calls).not.toContain('segment four')
+  })
+
+  it('speakNow は何も再生していない時でも読み上げる', async () => {
+    const backend = new FakeBackend()
+    const q = useSpeechQueue(backend)
+    q.speakNow('standalone replay', { rate: 0.9 })
+    await q.drained()
+    expect(backend.finished).toEqual(['standalone replay'])
+    expect(backend.optionsSeen[0]?.rate).toBe(0.9)
+    expect(backend.optionsSeen[0]?.interrupt).toBe(false)
+  })
+
+  it('再生中に cancelAll されたら、そのあと積まれていない限り次へ進まない', async () => {
+    const backend = new FakeBackend()
+    backend.manual = true
+    const q = useSpeechQueue(backend)
+
+    q.enqueue('first of two')
+    await tick()
+    // cancelAll のあとに(他所から)積まれたセグメントが、止めたはずの
+    // drain に拾われて鳴り出さないことを確認する。
+    q.cancelAll()
+    await q.drained()
+    expect(backend.calls).toEqual(['first of two'])
+  })
+
   it('drained は積んでいない時も即座に解決する', async () => {
     const backend = new FakeBackend()
     const q = useSpeechQueue(backend)

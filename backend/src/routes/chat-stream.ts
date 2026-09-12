@@ -12,6 +12,7 @@ import {
   type Feedback,
   type VocabItem,
 } from '../services/chat-reply.js'
+import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
 import { extractJsonObjectSlice, matchJsonStringField } from '../services/json-salvage.js'
 import {
   chatWithOllama,
@@ -187,7 +188,7 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
   // opening(ユーザー発話が無い)は添削も単語も出さない契約なので、
   // 日本語訳だけを取る。LLM 呼び出しが 1 回で済むぶん速い。
   if (!userText?.trim()) {
-    const replyJa = await translateEnglishToJapanese(replyEn, { model: context.model })
+    const replyJa = await translateEnglishToJapanese(replyEn, { model: context.model, signal })
     return { replyJa, feedback: null, vocabulary: [] }
   }
 
@@ -218,7 +219,7 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
 
   const result: EnrichmentResult = parsed ?? { replyJa: '', feedback: null, vocabulary: [] }
   if (!result.replyJa.trim()) {
-    result.replyJa = await translateEnglishToJapanese(replyEn, { model: context.model })
+    result.replyJa = await translateEnglishToJapanese(replyEn, { model: context.model, signal })
   }
   return result
 }
@@ -240,7 +241,7 @@ function sendOllamaErrorJson(res: Response, e: unknown, tag: string): Response {
     }
     if (e.code === 'ABORTED') {
       // クライアントが切ったので返す相手がいない。ステータスだけ付けて終わる。
-      return res.status(499).end()
+      return endAborted(res)
     }
   }
   console.error(`${tag} unexpected error:`, e)
@@ -343,34 +344,6 @@ chatStreamRouter.post('/chat/enrich', async (req: Request, res: Response) => {
   }
 })
 
-/**
- * クライアントが切断したら AbortSignal を発火させる。
- *
- * ⚠️ ここは `req.on('close')` ではなく **`res.on('close')`** を使う。
- * express.json() がボディを読み切った時点で `req` は完了扱いになり、
- * リクエスト直後に `req` の 'close' が発火してしまう(= 全ターンが即 abort する)。
- * 切断の観測点はレスポンス側にしかない。
- *
- * 正常終了後に close が来ても発火しないよう、ハンドラの finally で dispose して
- * リスナーを外す(dispose はレスポンスの flush より前に走る)。
- */
-function watchClientAbort(res: Response): { signal: AbortSignal; dispose: () => void } {
-  const ctrl = new AbortController()
-  let done = false
-  const onClose = () => {
-    if (done || res.writableFinished) return
-    ctrl.abort()
-  }
-  res.on('close', onClose)
-  return {
-    signal: ctrl.signal,
-    dispose: () => {
-      done = true
-      res.off('close', onClose)
-    },
-  }
-}
-
 /** japanese_help / mixed: 完成した翻訳を meta + done だけで返す(enrich 無し)。 */
 async function streamTranslationTurn(
   res: Response,
@@ -384,6 +357,7 @@ async function streamTranslationTurn(
     translated = await translateToNaturalEnglish(userText, {
       model: context.model,
       level: context.level,
+      signal,
     })
   } catch (e) {
     return sendOllamaErrorJson(res, e, '[chat:stream:translate]')
@@ -577,7 +551,10 @@ async function streamConversationTurn(
       })
     }
   } catch (e) {
-    console.warn(`${tag} enrichment failed (stream ends without enrich):`, e)
+    // 中断は失敗ではない(ユーザーが会話を終えただけ)。ログを汚さない。
+    if (!isAbortedError(e)) {
+      console.warn(`${tag} enrichment failed (stream ends without enrich):`, e)
+    }
   }
 
   return res.end()

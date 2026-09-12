@@ -100,8 +100,14 @@ export class OllamaError extends Error {
  * 最初のトークンが返るまでの既定の許容時間。
  * メモリ逼迫した 8GB Air ではモデルのコールドロード + prompt eval だけで
  * 20〜40 秒かかることが普通にあるため、ここは意図的に寛容に取る。
+ *
+ * ⚠️ ここは **安全側(長い方)を既定にする**。現在の呼び出し元はすべて
+ * firstTokenTimeoutMs を明示しているので既定値は実効しないが、
+ * 予算を書き忘れた新しい呼び出しが暗黙に厳しい方へ倒れると、
+ * コールドロードだけで落ちる経路が静かに増える。短くしたい経路は
+ * 呼び出し側で明示する(例: ストリーミング経路の 60 秒)。
  */
-export const DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 60_000
+export const DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 90_000
 
 /**
  * トークンとトークンの間が空いてよい既定の時間。
@@ -187,12 +193,44 @@ export async function chatWithOllama(
   const deadlineMs = firstTokenTimeoutMs
 
   const ctrl = new AbortController()
+  /**
+   * 自前のデッドラインで abort したのか、外部(UI キャンセル)で abort されたのか。
+   * この区別が無いと「ユーザーが会話を終えただけ」が TIMEOUT として記録され、
+   * ルートは 503 + 「タイムアウトしました」をユーザーに見せてしまう。
+   */
+  let externalAbort = false
   const timeoutId = deadlineMs > 0 ? setTimeout(() => ctrl.abort(), deadlineMs) : null
 
   // 外部signalがある場合はそれにもチェーン
+  const onExternalAbort = () => {
+    externalAbort = true
+    ctrl.abort()
+  }
   if (options.signal) {
-    if (options.signal.aborted) ctrl.abort()
-    else options.signal.addEventListener('abort', () => ctrl.abort(), { once: true })
+    if (options.signal.aborted) onExternalAbort()
+    else options.signal.addEventListener('abort', onExternalAbort, { once: true })
+  }
+
+  /**
+   * 1 つの signal は 1 ターン分のすべての呼び出し(会話 → 翻訳 → enrich)で
+   * 使い回されるので、終わったリスナーは必ず外す(付けっぱなしは漏れになる)。
+   */
+  function cleanup(): void {
+    if (timeoutId !== null) clearTimeout(timeoutId)
+    options.signal?.removeEventListener('abort', onExternalAbort)
+  }
+
+  function abortError(e: unknown): OllamaError {
+    if (externalAbort) {
+      return new OllamaError('ABORTED', 'リクエストが中断されました', e)
+    }
+    return new OllamaError(
+      'TIMEOUT',
+      `Ollama 呼び出しがタイムアウトしました(${deadlineMs}ms)`,
+      // どちらの予算で落ちたのかを後から切り分けられるよう両方残す
+      // (現状は必ず firstTokenTimeoutMs 側)。
+      { cause: e, firstTokenTimeoutMs, stallTimeoutMs },
+    )
   }
 
   let response: Response
@@ -221,26 +259,18 @@ export async function chatWithOllama(
       signal: ctrl.signal,
     })
   } catch (e) {
-    if ((e as Error).name === 'AbortError') {
-      throw new OllamaError(
-        'TIMEOUT',
-        `Ollama 呼び出しがタイムアウトしました(${deadlineMs}ms)`,
-        // どちらの予算で落ちたのかを後から切り分けられるよう両方残す
-        // (現状は必ず firstTokenTimeoutMs 側)。
-        { cause: e, firstTokenTimeoutMs, stallTimeoutMs },
-      )
-    }
+    cleanup()
+    if ((e as Error).name === 'AbortError') throw abortError(e)
     throw new OllamaError(
       'NOT_RUNNING',
       `Ollamaに接続できませんでした(${OLLAMA_BASE_URL})。'ollama serve' で起動してください。`,
       e,
     )
-  } finally {
-    if (timeoutId !== null) clearTimeout(timeoutId)
   }
 
   if (!response.ok) {
-    const text = await response.text()
+    cleanup()
+    const text = await response.text().catch(() => '')
     const looksLikeModelMissing = response.status === 404 || /model.*not found/i.test(text)
     if (looksLikeModelMissing) {
       throw new OllamaError(
@@ -252,7 +282,17 @@ export async function chatWithOllama(
     throw new OllamaError('UNKNOWN', `Ollama APIエラー: ${response.status} ${text}`, text)
   }
 
-  return (await response.json()) as OllamaChatResponse
+  // ⚠️ 本文の読み取りが終わるまで予算と外部 signal を生かしておく。
+  // stream:false の Ollama はヘッダーだけ先に返すことがあり、そこで
+  // タイマーを止めてしまうと「生成を待っている間だけ中断できない」穴になる。
+  try {
+    return (await response.json()) as OllamaChatResponse
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') throw abortError(e)
+    throw new OllamaError('UNKNOWN', `Ollama レスポンスの読み取りに失敗: ${String(e)}`, e)
+  } finally {
+    cleanup()
+  }
 }
 
 /**

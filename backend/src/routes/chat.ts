@@ -14,6 +14,7 @@ import {
   type OllamaChatMessage,
 } from '../services/ollama.js'
 import { parseChatReply, salvageChatReply } from '../services/chat-reply.js'
+import { endAborted, isAbortedError, watchClientAbort } from '../services/client-abort.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
 
 export const MAX_HISTORY_TURNS = 10 // user + ai pairs to keep in context
@@ -122,6 +123,22 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'userText is required (non-empty string)' })
   }
 
+  // 会話を終えた瞬間に Ollama の生成も止める。signal を渡さないと
+  // ブラウザ側の abort は「backend までの HTTP」しか切らず、生成は走り続ける。
+  const { signal, dispose } = watchClientAbort(res)
+  try {
+    return await handleChatTurn(res, userText, context, signal)
+  } finally {
+    dispose()
+  }
+})
+
+async function handleChatTurn(
+  res: Response,
+  userText: string,
+  context: ChatContext,
+  signal: AbortSignal,
+): Promise<Response | void> {
   const mode: Mode = context.mode ?? 'normal'
 
   // 翻訳モード(japanese_help / mixed)は会話 LLM 経路ではなく専用翻訳経路へ。
@@ -132,6 +149,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
       const translated = await translateToNaturalEnglish(userText, {
         model: context.model,
         level: context.level,
+        signal,
       })
       if (!translated) {
         console.warn('[chat:translate] empty translation result')
@@ -145,6 +163,8 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         mode,
       })
     } catch (e) {
+      // 中断はユーザー起因の正常系。タイムアウト扱いで 503 を返してはいけない。
+      if (isAbortedError(e)) return endAborted(res)
       if (e instanceof OllamaError) {
         if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
           return res.status(503).json({ error: e.message, code: e.code })
@@ -183,6 +203,8 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   let lastRawContent: string | undefined
 
   for (let attempt = 1; attempt <= CHAT_ATTEMPTS.length; attempt++) {
+    // 中断済みならもう 1 本生成を始めない(2 回目の attempt がゾンビ生成になる)。
+    if (signal.aborted) return endAborted(res)
     const sampling = CHAT_ATTEMPTS[attempt - 1]!
     try {
       const ollamaRes = await chatWithOllama(messages, {
@@ -190,6 +212,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         firstTokenTimeoutMs: CHAT_FIRST_TOKEN_TIMEOUT_MS,
         // 倍化しないフラット予算。切断は salvage で拾う。
         numPredict: CHAT_NUM_PREDICT,
+        signal,
         ...sampling,
       })
       lastRawContent = ollamaRes.message?.content ?? ''
@@ -211,6 +234,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
           reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {
             model: context.model,
+            signal,
           })
         }
         return res.json(reply)
@@ -221,6 +245,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
+      if (isAbortedError(e)) return endAborted(res)
       if (e instanceof OllamaError) {
         if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
           return res.status(503).json({ error: e.message, code: e.code })
@@ -235,12 +260,25 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
     error: `Ollama did not return valid JSON after ${CHAT_ATTEMPTS.length} attempts.`,
     rawContent: lastRawContent,
   })
-})
+}
 
 // 会話開始時に AI から最初に話しかけてもらうための endpoint。
 // userText を受け取らず、合成プロンプトで AI に挨拶+話題切り出しを生成させる。
 chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
   const { context = {} } = (req.body ?? {}) as { context?: ChatContext }
+  const { signal, dispose } = watchClientAbort(res)
+  try {
+    return await handleOpeningTurn(res, context, signal)
+  } finally {
+    dispose()
+  }
+})
+
+async function handleOpeningTurn(
+  res: Response,
+  context: ChatContext,
+  signal: AbortSignal,
+): Promise<Response | void> {
   const mode: Mode = 'normal'
 
   const systemPrompt = buildSystemPrompt({
@@ -274,6 +312,7 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
   let lastRawContent: string | undefined
 
   for (let attempt = 1; attempt <= OPENING_ATTEMPTS.length; attempt++) {
+    if (signal.aborted) return endAborted(res)
     const sampling = OPENING_ATTEMPTS[attempt - 1]!
     try {
       const ollamaRes = await chatWithOllama(messages, {
@@ -281,6 +320,7 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
         firstTokenTimeoutMs: OPENING_FIRST_TOKEN_TIMEOUT_MS,
         // 倍化しないフラット予算。切断は salvage で拾う。
         numPredict: OPENING_NUM_PREDICT,
+        signal,
         ...sampling,
       })
       lastRawContent = ollamaRes.message?.content ?? ''
@@ -297,6 +337,7 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
         if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
           reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {
             model: context.model,
+            signal,
           })
         }
         return res.json(reply)
@@ -307,6 +348,7 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
+      if (isAbortedError(e)) return endAborted(res)
       if (e instanceof OllamaError) {
         if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
           return res.status(503).json({ error: e.message, code: e.code })
@@ -321,4 +363,4 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
     error: `Ollama did not return valid JSON after ${OPENING_ATTEMPTS.length} attempts.`,
     rawContent: lastRawContent,
   })
-})
+}

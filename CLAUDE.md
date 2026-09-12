@@ -20,9 +20,13 @@
 3. **コミット前に必ず全 pass させる検証セット**:
    ```bash
    . ~/.nvm/nvm.sh && nvm use 22
-   npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test -w frontend
+   npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （現在テストは frontend 102 件）
+   （`npm test` = frontend → backend の順に vitest。frontend 180 件 / backend 42 件）
+   backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
+   LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
+   `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
+   （`services/ollama.ts`）がここで固定されている。
 4. **main へ直接コミット禁止**。必ずブランチ → PR → マージ。コミットは日本語 `[add]/[fix]/[chore]` プレフィクス。
 
 ## 🔴 次にやるべき最優先タスク（このセッションからの引き継ぎ）

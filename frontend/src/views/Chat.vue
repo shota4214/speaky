@@ -217,7 +217,9 @@ async function saveAllFromMessage(message: Message) {
 }
 
 function replayText(text: string) {
-  loop.tts.speak(text)
+  // 直接 TTS を叩かずキュー経由で割り込む(AI の読み上げ中に押されても
+  // 二重再生にならない)。詳細は useConversationLoop.replay のコメント。
+  loop.replay(text)
 }
 
 function formatTime(d: Date): string {

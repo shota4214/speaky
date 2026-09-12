@@ -147,7 +147,14 @@ ${outputContract}`
  * 非ストリーミング経路(`POST /api/chat` / `POST /api/chat/opening`)の出力契約。
  *
  * Stage 0 の調査で「この 2 ブロックは効いている(外すと小型モデルの JSON が崩れる)」
- * ことを確認済みなので、非ストリーミング経路では一字一句そのまま維持する。
+ * ことを確認済みなので、非ストリーミング経路では原則そのまま維持する。
+ *
+ * 唯一の例外が mode。以前はスキーマに 3 値を並べていたが、japanese_help / mixed は
+ * routes/chat.ts が専用の翻訳経路へ早期 return するため **このプロンプトには
+ * 到達しない**。スキーマだけが 3 値を宣伝していると、モデルがそれを鵜呑みにして
+ * mode:"japanese_help" を返すことがあり、parseChatReply はそれを受け取るので、
+ * ただの英語ターンなのにフロントが「言ってみて」状態に入ってしまう。
+ * 到達可能な唯一の値に絞っておく。
  */
 const JSON_OUTPUT_CONTRACT = `# Output format
 Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
@@ -156,14 +163,14 @@ Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
   "reply_ja": "string - Japanese translation/explanation",
   "feedback": null OR { "user_said": "...", "corrected": "...", "explanation": "..." },
   "vocabulary": [] OR up to 3 items: { "word": "...", "meaning": "...", "example": "..." },
-  "mode": "normal" | "japanese_help" | "mixed"
+  "mode": "normal"
 }
 
 # Rules
 - feedback: only include if the user made a real mistake. Otherwise null. Explanation must be in Japanese.
 - vocabulary: only 1-3 truly useful words/phrases (matching the user's level). Skip easy or trivial words.
 - example: optional within vocabulary items.
-- The "mode" field in your JSON MUST match the input mode shown above. Do not change it.
+- The "mode" field MUST be exactly "normal". No other value is valid.
 - reply_ja is always required — Japanese translation or instruction.`
 
 /**
@@ -201,7 +208,7 @@ The user spoke in English. Respond naturally as their conversation partner. Foll
 
 - "reply_en" is YOUR English response (what you would say back).
 - "reply_ja" is the Japanese translation of your English response.
-- Set "mode": "normal" in the JSON output.
+- Set "mode": "normal" in the JSON output. It is the only allowed value.
 - feedback: only if they made a real English mistake. Otherwise null.`
 
 /**

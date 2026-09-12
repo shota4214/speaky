@@ -1,5 +1,16 @@
 import { Router, type Request, type Response } from 'express'
-import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
+import {
+  chatWithOllama,
+  OllamaError,
+  RETRY_SEED,
+  type ChatWithOllamaOptions,
+  type OllamaChatMessage,
+} from '../services/ollama.js'
+import {
+  extractJsonObjectSlice,
+  matchJsonStringField,
+  matchJsonStringArrayField,
+} from '../services/json-salvage.js'
 
 interface TranscriptItem {
   role: 'user' | 'ai'
@@ -16,6 +27,69 @@ interface ExtractFactsBody {
 interface ExtractFactsResult {
   newFacts: string[]
   updatedName: string | null
+}
+
+/**
+ * 生成トークン上限。**リトライで倍化しない**(フラット予算)。
+ * 旧実装は 700 → 1400 と倍化していたが、倍化は「失敗ターンほど遅い」を作るだけで、
+ * 切断された JSON は下の salvage で拾えばよい。
+ *
+ * 700 の根拠: newFacts は日本語の短文(20〜30 字 ≒ 30〜45 トークン)で、
+ * 1 セッションから実際に取れる新規事実はせいぜい 5〜8 件。
+ * 8 件 × 45 + updatedName + JSON 記号 ≒ 420 トークンで、700 は十分な上限。
+ */
+const EXTRACT_FACTS_NUM_PREDICT = 700
+
+/** 2 回まで。2 回目は温度をさらに下げ、seed を固定して決定的にする。 */
+const EXTRACT_FACTS_ATTEMPTS: Pick<ChatWithOllamaOptions, 'temperature' | 'topP' | 'seed'>[] = [
+  { temperature: 0.2, topP: 0.8 },
+  { temperature: 0.1, topP: 0.7, seed: RETRY_SEED },
+]
+
+/** 1 件の fact として受け入れる最大長(暴走出力よけ)。 */
+const MAX_FACT_LENGTH = 200
+
+function normalizeExtractFactsResult(parsed: ExtractFactsResult): ExtractFactsResult {
+  const newFacts = Array.isArray(parsed.newFacts)
+    ? parsed.newFacts.filter(
+        (f): f is string => typeof f === 'string' && f.length > 0 && f.length <= MAX_FACT_LENGTH,
+      )
+    : []
+  const updatedName =
+    typeof parsed.updatedName === 'string' && parsed.updatedName.length > 0
+      ? parsed.updatedName
+      : null
+  return { newFacts, updatedName }
+}
+
+/**
+ * 厳密 parse に失敗した出力から使える結果を救出する。
+ *  1) コードフェンス / 前置きを剥がして parse し直す
+ *  2) 途中で切れた JSON から newFacts の完結した要素と updatedName を拾う
+ * 何も拾えなければ null を返し、そのときだけリトライする。
+ */
+function salvageExtractFacts(raw: string): ExtractFactsResult | null {
+  if (!raw) return null
+
+  const slice = extractJsonObjectSlice(raw)
+  if (slice) {
+    try {
+      return normalizeExtractFactsResult(JSON.parse(slice) as ExtractFactsResult)
+    } catch {
+      // 次の段へ
+    }
+  }
+
+  const facts = matchJsonStringArrayField(raw, 'newFacts')
+  const updatedName = matchJsonStringField(raw, 'updatedName')
+  // newFacts が 1 件も拾えず名前も無いなら救済できたとは言えない。リトライさせる。
+  // (正常な「収穫ゼロ」は厳密 parse が成功するのでここには来ない)
+  if ((!facts || facts.length === 0) && !updatedName) return null
+
+  return normalizeExtractFactsResult({
+    newFacts: facts ?? [],
+    updatedName: updatedName ?? null,
+  })
 }
 
 const SYSTEM_PROMPT = `You are an assistant that extracts user information from English conversation transcripts.
@@ -65,42 +139,38 @@ Extract new facts the user revealed in this transcript.`
     { role: 'user', content: userPrompt },
   ]
 
-  // 事実が多い会話で JSON が length 切断されないように、
-  // 最初は 700、parse 失敗時は 1400 でリトライする(プロフィール抽出漏れ防止)
-  const ATTEMPT_BUDGETS = [700, 1400]
   let lastRaw = ''
   let lastParseError: unknown = null
 
-  for (let attempt = 0; attempt < ATTEMPT_BUDGETS.length; attempt++) {
-    const numPredict = ATTEMPT_BUDGETS[attempt]!
+  for (let attempt = 0; attempt < EXTRACT_FACTS_ATTEMPTS.length; attempt++) {
+    const sampling = EXTRACT_FACTS_ATTEMPTS[attempt]!
     try {
       const ollamaRes = await chatWithOllama(messages, {
         jsonFormat: true,
         model,
-        timeoutMs: 60_000,
-        temperature: 0.2,
-        topP: 0.8,
-        numPredict,
+        firstTokenTimeoutMs: 60_000,
+        numPredict: EXTRACT_FACTS_NUM_PREDICT,
+        ...sampling,
       })
       lastRaw = ollamaRes.message?.content ?? ''
       try {
-        const parsed = JSON.parse(lastRaw) as ExtractFactsResult
-        const newFacts = Array.isArray(parsed.newFacts)
-          ? parsed.newFacts.filter((f): f is string => typeof f === 'string' && f.length > 0)
-          : []
-        const updatedName =
-          typeof parsed.updatedName === 'string' && parsed.updatedName.length > 0
-            ? parsed.updatedName
-            : null
-        return res.json({ newFacts, updatedName })
+        return res.json(normalizeExtractFactsResult(JSON.parse(lastRaw) as ExtractFactsResult))
       } catch (parseErr) {
         lastParseError = parseErr
+        // リトライの前に salvage を試す(切断 / フェンス包みは拾える)
+        const salvaged = salvageExtractFacts(lastRaw)
+        if (salvaged) {
+          console.warn(
+            `[extract-facts] salvaged ${salvaged.newFacts.length} fact(s) from malformed JSON ` +
+              `(attempt ${attempt + 1}/${EXTRACT_FACTS_ATTEMPTS.length}).`,
+          )
+          return res.json(salvaged)
+        }
         console.warn(
-          `[extract-facts] JSON parse failed (attempt ${attempt + 1}/${ATTEMPT_BUDGETS.length}, numPredict=${numPredict}). ` +
-            `length-truncation の可能性。raw=`,
+          `[extract-facts] JSON parse + salvage failed (attempt ${attempt + 1}/${EXTRACT_FACTS_ATTEMPTS.length}, ` +
+            `numPredict=${EXTRACT_FACTS_NUM_PREDICT}, temperature=${sampling.temperature}). raw=`,
           lastRaw.slice(0, 200),
         )
-        // 次のループで budget を増やしてリトライ
       }
     } catch (e) {
       if (e instanceof OllamaError) {

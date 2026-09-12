@@ -96,6 +96,28 @@ export class OllamaError extends Error {
   }
 }
 
+/**
+ * 最初のトークンが返るまでの既定の許容時間。
+ * メモリ逼迫した 8GB Air ではモデルのコールドロード + prompt eval だけで
+ * 20〜40 秒かかることが普通にあるため、ここは意図的に寛容に取る。
+ */
+export const DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 60_000
+
+/**
+ * トークンとトークンの間が空いてよい既定の時間。
+ * 生成が始まった後に 15 秒も無音なら、それは「遅い」ではなく「壊れている」。
+ */
+export const DEFAULT_STALL_TIMEOUT_MS = 15_000
+
+/**
+ * リトライ時に固定する seed。
+ *
+ * 既定では seed を毎回ランダム化しているため、リトライは「同じ分布からの引き直し」に
+ * なってしまい、(a) 失敗が再現できない (b) 運が悪いと同じ壊れ方を繰り返す。
+ * 2 回目は温度を下げたうえでこの seed に固定し、決定的で再現可能な 1 本にする。
+ */
+export const RETRY_SEED = 7
+
 export interface ChatWithOllamaOptions {
   jsonFormat?: boolean
   temperature?: number
@@ -109,17 +131,36 @@ export interface ChatWithOllamaOptions {
   repeatPenalty?: number
   /**
    * 生成する最大トークン数。短く切ることで応答速度が上がる。
-   * 現在の運用値(routes 側で設定):
-   * - /chat:           初期 500 → リトライで 1000 → 2000(length 切断時の自動倍化)
-   * - /chat/opening:   初期 400 → リトライで 800 → 1600(同上)
+   * 現在の運用値(routes 側で設定)。リトライで倍化はしない(フラット予算):
+   * - /chat:           640(JSON エンベロープ最大構成の実測見積 ≒ 530 トークン + 余裕)
+   * - /chat/opening:   400(feedback / vocabulary が無いぶん小さい)
    * - /summarize:      300(plain text なので切断 = 短い要約)
-   * - /extract-facts:  初期 700 → 失敗時 1400(JSON が事実多数で切れることがあるため大きめ)
+   * - /extract-facts:  700
+   * 切断された JSON は倍化リトライではなく routes 側の salvage で拾う。
    * デフォルトは未指定(モデルの判断、長くなりがち)
    */
   numPredict?: number
   model?: string
-  /** タイムアウト (ms)。0で無効化。デフォルト90秒 */
-  timeoutMs?: number
+  /**
+   * 最初のトークンが返るまでの許容時間 (ms)。0 で無効化。既定 60 秒。
+   *
+   * ⚠️ 現状 Ollama へのリクエストは `stream: false` のため、レスポンスは
+   * 生成が完全に終わってから一括で返ってくる。つまり「最初のトークン」を
+   * 観測する手段がなく、この予算は実質「呼び出し全体のデッドライン」として
+   * 機能する。ストリーミング化後は文字どおり最初のトークンまでの予算になる。
+   */
+  firstTokenTimeoutMs?: number
+  /**
+   * トークン間の無音(ストール)を許容する時間 (ms)。0 で無効化。既定 15 秒。
+   *
+   * ⚠️ 現状の非ストリーミング経路では **発火しない**。トークンの到着を
+   * 観測できないため、判定材料が存在しないからである。
+   * Tier2 の後続ステージで `stream: true` + SSE に移行した時点で
+   * 「最後のチャンク受信から stallTimeoutMs 経過したら abort」として有効になり、
+   * その時 firstTokenTimeoutMs は最初のチャンクまでにのみ適用される。
+   * 先に型と既定値だけ通しておくことで、後続ステージは routes を触らずに済む。
+   */
+  stallTimeoutMs?: number
   /** 外部から渡せる AbortSignal(UIキャンセル用) */
   signal?: AbortSignal
 }
@@ -137,10 +178,17 @@ export async function chatWithOllama(
   // 固定したい場合は呼び出し側で seed を渡す。
   const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31)
   const model = resolveLlmModel(options.model)
-  const timeoutMs = options.timeoutMs ?? 90_000
+  const firstTokenTimeoutMs = options.firstTokenTimeoutMs ?? DEFAULT_FIRST_TOKEN_TIMEOUT_MS
+  const stallTimeoutMs = options.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS
+
+  // 非ストリーミング(stream:false)ではレスポンスが一括で返るため、観測できる
+  // 時間は「リクエスト送出 → 全部入りのレスポンス」の 1 区間しかない。
+  // よって実効デッドラインは firstTokenTimeoutMs のみ。stallTimeoutMs は
+  // ストリーミング化(後続ステージ)でチャンク間タイマーとして有効になる。
+  const deadlineMs = firstTokenTimeoutMs
 
   const ctrl = new AbortController()
-  const timeoutId = timeoutMs > 0 ? setTimeout(() => ctrl.abort(), timeoutMs) : null
+  const timeoutId = deadlineMs > 0 ? setTimeout(() => ctrl.abort(), deadlineMs) : null
 
   // 外部signalがある場合はそれにもチェーン
   if (options.signal) {
@@ -175,7 +223,13 @@ export async function chatWithOllama(
     })
   } catch (e) {
     if ((e as Error).name === 'AbortError') {
-      throw new OllamaError('TIMEOUT', `Ollama 呼び出しがタイムアウトしました(${timeoutMs}ms)`, e)
+      throw new OllamaError(
+        'TIMEOUT',
+        `Ollama 呼び出しがタイムアウトしました(${deadlineMs}ms)`,
+        // どちらの予算で落ちたのかを後から切り分けられるよう両方残す
+        // (現状は必ず firstTokenTimeoutMs 側)。
+        { cause: e, firstTokenTimeoutMs, stallTimeoutMs },
+      )
     }
     throw new OllamaError(
       'NOT_RUNNING',

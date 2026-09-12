@@ -6,16 +6,78 @@ import {
   type Mode,
   type PersonalityPreset,
 } from '../services/conversation-prompt.js'
-import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
+import {
+  chatWithOllama,
+  OllamaError,
+  RETRY_SEED,
+  type ChatWithOllamaOptions,
+  type OllamaChatMessage,
+} from '../services/ollama.js'
+import { extractJsonObjectSlice, matchJsonStringField } from '../services/json-salvage.js'
 
-const MAX_RETRIES = 3
 const MAX_HISTORY_TURNS = 10 // user + ai pairs to keep in context
 
-// reply_en + reply_ja + feedback + 最大3件 vocabulary + JSONオーバーヘッドの上限を
-// 安全側に見積もり、220 では足りないケースが出るので 500 を初期値にする。
-// リトライ時はさらに倍化(500 → 1000 → 2000)し、length 切断による失敗を確実に救う。
-const CHAT_BASE_NUM_PREDICT = 500
-const OPENING_BASE_NUM_PREDICT = 400
+/**
+ * 生成トークン上限。**リトライで倍化しない**(フラット予算)。
+ *
+ * 旧実装は 500 → 1000 → 2000 と倍化していた。倍化は「length 切断で JSON が壊れた」
+ * ケースを救うためのものだったが、
+ *   - 切断された返答も返答としては使える(= salvage で拾える)
+ *   - 倍化は「失敗するターンほど遅くなる」という最悪の性質を持つ
+ * ため廃止した。失敗ターンの最悪生成量は 3500 → 1280 トークンになる。
+ *
+ * 640 の根拠(JSON エンベロープ最大構成の見積り。日本語は 1 文字 ≒ 1.5 トークン):
+ *   reply_en 約 50 / reply_ja 約 120 / feedback(user_said+corrected+日本語 explanation)
+ *   約 135 / vocabulary 3 件 約 180 / JSON のキー・記号 約 45  ≒ 530 トークン。
+ * 旧初期値 500 はこの最大構成にわずかに足りず、それが倍化リトライを常態化させていた。
+ * 640 は最大構成 + 約 20% の余裕で、典型ターン(feedback/vocab なし、約 200 トークン)
+ * の速度には影響しない(num_predict は上限であって目標ではない)。
+ */
+const CHAT_NUM_PREDICT = 640
+
+/** opening は feedback / vocabulary を出さない(= reply_en + reply_ja のみ)ので小さくてよい。 */
+const OPENING_NUM_PREDICT = 400
+
+/**
+ * 1 ターンの試行設定。**2 回まで**。
+ *
+ * 2 回目は「同じ分布からの引き直し」ではなく、意図的に保守的なサンプルにする:
+ * 温度を下げ、top_p / repeat_penalty も絞り、seed を固定する。
+ * こうしないとリトライは独立した宝くじを引き直すだけで、失敗も再現できない。
+ */
+type AttemptSampling = Pick<
+  ChatWithOllamaOptions,
+  'temperature' | 'topP' | 'repeatPenalty' | 'seed'
+>
+
+/** リトライ時の温度。JSON の構造が崩れにくい側に寄せる。 */
+const RETRY_TEMPERATURE = 0.5
+
+const CHAT_ATTEMPTS: AttemptSampling[] = [
+  // 1 回目: バリエーション重視(seed は ollama.ts 側でランダム)
+  { temperature: 0.85, topP: 0.92, repeatPenalty: 1.15 },
+  // 2 回目: 決定的で保守的な 1 本
+  { temperature: RETRY_TEMPERATURE, topP: 0.85, repeatPenalty: 1.05, seed: RETRY_SEED },
+]
+
+const OPENING_ATTEMPTS: AttemptSampling[] = [
+  // 挨拶はバリエーション最重視
+  { temperature: 0.95, topP: 0.95, repeatPenalty: 1.2 },
+  { temperature: RETRY_TEMPERATURE, topP: 0.85, repeatPenalty: 1.05, seed: RETRY_SEED },
+]
+
+/**
+ * 会話経路の first-token 予算。
+ * 会話 2 ターン目以降はモデルが keep_alive でロード済みなので 60 秒で十分。
+ */
+const CHAT_FIRST_TOKEN_TIMEOUT_MS = 60_000
+
+/**
+ * opening だけは別枠で長め。セッション最初の LLM 呼び出しであり、
+ * 8GB 機ではここだけモデルのコールドロード(数十秒)を確実に踏む。
+ * ここを 60 秒にすると「動くはずの初回起動」を落としかねない。
+ */
+const OPENING_FIRST_TOKEN_TIMEOUT_MS = 90_000
 
 interface HistoryItem {
   role: 'user' | 'ai'
@@ -139,6 +201,59 @@ function parseChatReply(content: string, fallbackMode: Mode): ChatReply | null {
     }
   } catch {
     return null
+  }
+}
+
+/** salvage で受け入れる reply_en の最大長(これを超えるものは暴走出力とみなす)。 */
+const MAX_SALVAGED_REPLY_LENGTH = 1200
+
+/**
+ * salvage した英文が「返答として出して恥ずかしくないか」を判定する。
+ * ラテン文字を 1 つも含まない / 極端に短い / 極端に長いものは弾く。
+ */
+function isSaneSalvagedReplyEn(text: string): boolean {
+  const t = text.trim()
+  if (t.length < 2 || t.length > MAX_SALVAGED_REPLY_LENGTH) return false
+  return /[A-Za-z]/.test(t)
+}
+
+/**
+ * 厳密 parse に失敗した出力から、使える返答を救出する。
+ *
+ * リトライ(= もう一度フル生成を待たせる)より圧倒的に安い。小型モデルの失敗の
+ * 大半は「返答自体は出来ているが包装が壊れている」ケースなので、まずここで拾う。
+ *
+ *  1) コードフェンス / 前置き付き → `{...}` を切り出して厳密 parse し直す
+ *     (この経路なら feedback / vocabulary も含めて完全に復元できる)
+ *  2) num_predict 上限で途中切断 → reply_en / reply_ja を正規表現で拾う
+ *     (閉じ引用符まで揃っているものだけ。文の途中で切れた英文は採らない)
+ *
+ * 2) の経路では feedback / vocabulary は捨てて null / [] にする。
+ * これらは JSON の後半に出るため切断時は信用できず、欠けても会話は成立するため。
+ * レスポンスの形(ChatReply)は常に維持する。
+ */
+function salvageChatReply(content: string, fallbackMode: Mode): ChatReply | null {
+  if (!content) return null
+
+  // 1) 包装を剥がして厳密 parse
+  const slice = extractJsonObjectSlice(content)
+  if (slice) {
+    const parsed = parseChatReply(slice, fallbackMode)
+    if (parsed) return parsed
+  }
+
+  // 2) 切断された JSON から本文だけ拾う
+  const replyEn = matchJsonStringField(content, 'reply_en')
+  if (!replyEn || !isSaneSalvagedReplyEn(replyEn)) return null
+
+  const replyJa = matchJsonStringField(content, 'reply_ja') ?? ''
+  return {
+    reply_en: replyEn.trim(),
+    // reply_ja が切断されていれば空になる。呼び出し側の en→ja 補完が埋める。
+    reply_ja: replyJa.trim().slice(0, MAX_SALVAGED_REPLY_LENGTH),
+    feedback: null,
+    vocabulary: [],
+    mode: fallbackMode,
   }
 }
 
@@ -287,7 +402,7 @@ async function translateToNaturalEnglish(
   for (const a of attempts) {
     const ollamaRes = await chatWithOllama(messages, {
       model: options.model,
-      timeoutMs: 60_000,
+      firstTokenTimeoutMs: 60_000,
       // 翻訳は再現性重視で低温度(会話経路の 0.85 より低い)。
       temperature: a.temperature,
       topP: 0.9,
@@ -326,7 +441,7 @@ async function translateEnglishToJapanese(
   try {
     const ollamaRes = await chatWithOllama(messages, {
       model: options.model,
-      timeoutMs: 60_000,
+      firstTokenTimeoutMs: 60_000,
       temperature: 0.3,
       topP: 0.9,
       numPredict: 300,
@@ -408,21 +523,28 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
 
   let lastRawContent: string | undefined
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    // length 切断対策: リトライごとに上限を倍化(500 → 1000 → 2000)
-    const numPredict = CHAT_BASE_NUM_PREDICT * (1 << (attempt - 1))
+  for (let attempt = 1; attempt <= CHAT_ATTEMPTS.length; attempt++) {
+    const sampling = CHAT_ATTEMPTS[attempt - 1]!
     try {
       const ollamaRes = await chatWithOllama(messages, {
         model: context.model,
-        timeoutMs: 90_000,
-        // バリエーション重視: 高め temperature + 繰り返しペナルティ
-        temperature: 0.85,
-        topP: 0.92,
-        repeatPenalty: 1.15,
-        numPredict,
+        firstTokenTimeoutMs: CHAT_FIRST_TOKEN_TIMEOUT_MS,
+        // 倍化しないフラット予算。切断は salvage で拾う。
+        numPredict: CHAT_NUM_PREDICT,
+        ...sampling,
       })
       lastRawContent = ollamaRes.message?.content ?? ''
-      const reply = parseChatReply(lastRawContent, mode)
+      // 厳密 parse → ダメなら salvage。salvage で拾えたらリトライしない
+      // (もう一度フル生成を待たせるより、包装が壊れただけの返答を使う方が速い)。
+      let reply = parseChatReply(lastRawContent, mode)
+      if (!reply) {
+        reply = salvageChatReply(lastRawContent, mode)
+        if (reply) {
+          console.warn(
+            `[chat] salvaged reply from malformed JSON (attempt ${attempt}/${CHAT_ATTEMPTS.length}).`,
+          )
+        }
+      }
       if (reply) {
         // 会話 LLM が reply_ja を省略することがある(特に 3B)。
         // フロントの「日本語訳を必ず表示」を保証するため、reply_en があるのに
@@ -435,7 +557,8 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
         return res.json(reply)
       }
       console.warn(
-        `[chat] JSON parse failed (attempt ${attempt}/${MAX_RETRIES}, numPredict=${numPredict}). raw=`,
+        `[chat] JSON parse + salvage failed (attempt ${attempt}/${CHAT_ATTEMPTS.length}, ` +
+          `numPredict=${CHAT_NUM_PREDICT}, temperature=${sampling.temperature}). raw=`,
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
@@ -450,7 +573,7 @@ chatRouter.post('/chat', async (req: Request, res: Response) => {
   }
 
   return res.status(502).json({
-    error: `Ollama did not return valid JSON after ${MAX_RETRIES} attempts.`,
+    error: `Ollama did not return valid JSON after ${CHAT_ATTEMPTS.length} attempts.`,
     rawContent: lastRawContent,
   })
 })
@@ -491,21 +614,26 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
 
   let lastRawContent: string | undefined
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    // length 切断対策: リトライごとに倍化(400 → 800 → 1600)
-    const numPredict = OPENING_BASE_NUM_PREDICT * (1 << (attempt - 1))
+  for (let attempt = 1; attempt <= OPENING_ATTEMPTS.length; attempt++) {
+    const sampling = OPENING_ATTEMPTS[attempt - 1]!
     try {
       const ollamaRes = await chatWithOllama(messages, {
         model: context.model,
-        timeoutMs: 90_000,
-        // 挨拶はバリエーション最重視
-        temperature: 0.95,
-        topP: 0.95,
-        repeatPenalty: 1.2,
-        numPredict,
+        firstTokenTimeoutMs: OPENING_FIRST_TOKEN_TIMEOUT_MS,
+        // 倍化しないフラット予算。切断は salvage で拾う。
+        numPredict: OPENING_NUM_PREDICT,
+        ...sampling,
       })
       lastRawContent = ollamaRes.message?.content ?? ''
-      const reply = parseChatReply(lastRawContent, mode)
+      let reply = parseChatReply(lastRawContent, mode)
+      if (!reply) {
+        reply = salvageChatReply(lastRawContent, mode)
+        if (reply) {
+          console.warn(
+            `[chat/opening] salvaged reply from malformed JSON (attempt ${attempt}/${OPENING_ATTEMPTS.length}).`,
+          )
+        }
+      }
       if (reply) {
         if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
           reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {
@@ -515,7 +643,8 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
         return res.json(reply)
       }
       console.warn(
-        `[chat/opening] JSON parse failed (attempt ${attempt}/${MAX_RETRIES}, numPredict=${numPredict}). raw=`,
+        `[chat/opening] JSON parse + salvage failed (attempt ${attempt}/${OPENING_ATTEMPTS.length}, ` +
+          `numPredict=${OPENING_NUM_PREDICT}, temperature=${sampling.temperature}). raw=`,
         lastRawContent.slice(0, 200),
       )
     } catch (e) {
@@ -530,7 +659,7 @@ chatRouter.post('/chat/opening', async (req: Request, res: Response) => {
   }
 
   return res.status(502).json({
-    error: `Ollama did not return valid JSON after ${MAX_RETRIES} attempts.`,
+    error: `Ollama did not return valid JSON after ${OPENING_ATTEMPTS.length} attempts.`,
     rawContent: lastRawContent,
   })
 })

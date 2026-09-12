@@ -43,7 +43,7 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
     const ollamaRes = await chatWithOllama(messages, {
       jsonFormat: false,
       model,
-      timeoutMs: 60_000,
+      firstTokenTimeoutMs: 60_000,
       // 要約は安定性重視: 低 temperature
       temperature: 0.3,
       topP: 0.85,

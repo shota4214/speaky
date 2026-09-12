@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process'
 import { createWriteStream, existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { adminAuth } from '../services/admin-token.js'
-import { ollamaConfig } from '../services/ollama.js'
+import { ollamaConfig, resolveLlmModel } from '../services/ollama.js'
+import { isValidModelName } from '../shared/llm-models.js'
+import { setupSSE, sseSend } from '../services/sse.js'
 import { findWhisperCppDir, findWhisperModelsDir } from '../services/whisper-paths.js'
 
 interface OllamaTag {
@@ -14,18 +16,6 @@ interface OllamaTag {
 
 interface OllamaTagsResponse {
   models?: OllamaTag[]
-}
-
-function setupSSE(res: Response): void {
-  res.setHeader('Content-Type', 'text/event-stream')
-  res.setHeader('Cache-Control', 'no-cache')
-  res.setHeader('Connection', 'keep-alive')
-  res.setHeader('X-Accel-Buffering', 'no')
-  ;(res as Response & { flushHeaders?: () => void }).flushHeaders?.()
-}
-
-function sseSend(res: Response, obj: unknown): void {
-  res.write(`data: ${JSON.stringify(obj)}\n\n`)
 }
 
 export const modelsRouter = Router()
@@ -54,14 +44,38 @@ modelsRouter.get('/models/ollama', async (_req, res) => {
   }
 })
 
+/**
+ * 「いま会話に使われているモデル」を求める。
+ *
+ * ⚠️ backend はユーザーの設定を持っていない(設定は frontend の localStorage)。
+ * そのため削除の保護を `ollamaConfig.model`(= backend の既定 = 同梱の 1B)
+ * だけで書くと、**3B へ乗り換えたアップグレード組を誰も守らない**。
+ * その人が守られていたのは画面側の disabled だけで、サーバー側は素通しだった
+ * (同梱モデルを 1B に変えた v1.2.0 で、既定 = 使用中 という前提が崩れた)。
+ * そこでクライアントが「いま使っているモデル名」を `?activeModel=` で申告し、
+ * ここで **allowlist を通したうえで**(申告どおりの名前が会話に使われるとは
+ * 限らないため)既定モデルと合わせて保護する。
+ *
+ * 申告が無い場合(古い frontend / curl)は既定モデルだけを守る従来の挙動。
+ * 申告は自己申告なので厳密な保証ではないが、守りたいのは
+ * 「使っているモデルをうっかり消してしまう」事故であって攻撃者ではない。
+ */
+export function modelsInUse(activeModel: unknown): string[] {
+  const inUse = [ollamaConfig.model]
+  if (typeof activeModel === 'string' && activeModel.length > 0) {
+    inUse.push(resolveLlmModel(activeModel))
+  }
+  return inUse
+}
+
 modelsRouter.delete('/models/ollama/:name', adminAuth, async (req: Request, res: Response) => {
   const name = decodeURIComponent(req.params.name)
   if (!name || name.includes('..') || name.includes('/')) {
     return res.status(400).json({ error: 'Invalid model name' })
   }
-  if (name === ollamaConfig.model) {
+  if (modelsInUse(req.query.activeModel).includes(name)) {
     return res.status(400).json({
-      error: `現在のデフォルトモデル(${name})は削除できません。先に別のモデルに切り替えてから削除してください。`,
+      error: `使用中のモデル(${name})は削除できません。先に別のモデルに切り替えてから削除してください。`,
     })
   }
   try {
@@ -137,6 +151,32 @@ modelsRouter.post('/models/ollama/pull', adminAuth, async (req: Request, res: Re
   const { name } = (req.body ?? {}) as { name?: string }
   if (!name || typeof name !== 'string') {
     return res.status(400).json({ error: 'name is required' })
+  }
+  const requestedName: string = name
+  // 書式チェック(shared/llm-models.ts の isValidModelName)。ここだけ素通しだったので揃えた。
+  //
+  // ⚠️ **ファミリー allowlist は掛けない**。allowlist は「会話に使ってよいモデル」の
+  // 一覧であって「取得してよいモデル」の一覧ではない。掛けると gemma2:2b のような
+  // 一覧に無い型番を自分で取れなくなる(退行)。
+  //
+  // ⚠️ ただし `isValidModelName` は空白・制御文字・`..` に加えて
+  // **名前空間付き(`library/llama3.2:3b`, `hf.co/...`)も弾く**。これは
+  // Ollama が受け付ける形なので「意味の無い文字列」ではなく、**意図的な制限**である:
+  // ファミリー判定は `:` の手前を丸ごと見るので、名前空間付きで取得できても
+  // ファミリーが `library/llama3.2` になって会話の allowlist に当たらず、
+  // 「取得はできたのに選ぶと黙って既定モデルに差し替わる」という、
+  // このリリースで潰したはずの穴をそのまま再現してしまう。
+  // 取得だけ通して使えないモデルを増やすより、入口で断る方が正直。
+  // 名前空間付きを扱うなら `isValidModelName` と `llmFamilyOf` を一緒に直すこと。
+  //
+  // 繰り返すが shared/llm-models.ts の注意書きどおり
+  // **これはセキュリティ境界ではない**(backend は 127.0.0.1 のみ / admin token 必須 /
+  // モデル名は Ollama への JSON ボディに入るだけでシェルにもパスにも渡らない)。
+  // それでも掛けるのは、コード全体で「入口で形を確かめる」を例外なく成立させるため。
+  if (!isValidModelName(name)) {
+    // `name` はこの分岐で never に絞られる(isValidModelName が型述語のため)。
+    // 元の文字列をログ/メッセージに出したいので別の束縛から取る。
+    return res.status(400).json({ error: `invalid model name: ${requestedName.slice(0, 64)}` })
   }
 
   setupSSE(res)

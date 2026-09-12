@@ -222,4 +222,131 @@ describe('loadSettings schema migration persistence', () => {
     expect(loaded.ttsRate).toBe(1.5) // TTS_RATE_MAX に clamp
     expect(persisted()).toEqual(stored) // storage は素通り
   })
+
+  it('streaming は既定で有効、保存済み設定に無ければ既定で補完する', () => {
+    // v1.1.0 までの保存内容(streaming キーが存在しない)
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, silenceDurationMs: 2000 }),
+    )
+    const loaded = loadSettings()
+    expect(loaded.streaming).toBe(true)
+    // スキーマ版は上げない(値の形は変わっていない)
+    expect(loaded.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+  })
+
+  it('streaming を OFF にすると保存され、読み直しても OFF のまま(キルスイッチ)', async () => {
+    const s = useSettingsStore()
+    s.update({ streaming: false })
+    await Promise.resolve()
+    expect(loadSettings().streaming).toBe(false)
+  })
+})
+
+/**
+ * スキーマ v2 → v3(modelProfile の新設)。
+ *
+ * キーが増えただけなら版を上げる必要は無い(merge が欠落を埋める)。
+ * 上げているのは 1 点だけのため: **既に `gemma2:2b` を選んでいる人**は
+ * 新設の 'auto' だと small プロファイルへ落ちて挙動が変わるので、
+ * その人にだけ 'standard' を書き込んで据え置く。
+ * これは冪等でない移行なので、「一度きり」が本当に守られているかも見る。
+ */
+describe('設定スキーマ v3(会話プロファイル)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  function persisted(): Record<string, unknown> {
+    const raw = localStorage.getItem('speaky:settings')
+    expect(raw).toBeTruthy()
+    return JSON.parse(raw!) as Record<string, unknown>
+  }
+
+  it('新規ユーザーの既定は auto', () => {
+    expect(DEFAULT_SETTINGS.modelProfile).toBe('auto')
+    expect(loadSettings().modelProfile).toBe('auto')
+  })
+
+  it('v2 で 2B を使っていた人は standard に固定される(挙動を変えない)', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ ...DEFAULT_SETTINGS, llmModel: 'gemma2:2b', schemaVersion: 2 }),
+    )
+    const loaded = loadSettings()
+    expect(loaded.modelProfile).toBe('standard')
+    expect(loaded.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+    // 移行はその場で永続化される(次回起動では走らない)
+    expect(persisted().modelProfile).toBe('standard')
+    expect(persisted().schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+  })
+
+  it('v2 で 3B 以上を使っていた人は auto のまま(自動判定で standard になる)', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ ...DEFAULT_SETTINGS, llmModel: 'llama3.2:3b', schemaVersion: 2 }),
+    )
+    expect(loadSettings().modelProfile).toBe('auto')
+  })
+
+  it('schemaVersion 欠落(v1)からでも 1 回で v3 まで移行する', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        llmModel: 'gemma2:2b',
+        silenceDurationMs: 5000,
+        whisperModel: 'medium',
+        schemaVersion: undefined,
+      }),
+    )
+    const loaded = loadSettings()
+    // v1→v2 と v2→v3 の両方が適用される
+    expect(loaded.silenceDurationMs).toBe(DEFAULT_SETTINGS.silenceDurationMs)
+    expect(loaded.whisperModel).toBe(DEFAULT_SETTINGS.whisperModel)
+    expect(loaded.modelProfile).toBe('standard')
+    expect(loaded.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+  })
+
+  // ここが「版を上げた理由」そのもの。移行は冪等でないので、
+  // 2 回目の load で再実行されるとユーザーの選び直しを踏み潰す。
+  it('2 回目の load では再実行されない(ユーザーが auto へ戻した設定を守る)', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ ...DEFAULT_SETTINGS, llmModel: 'gemma2:2b', schemaVersion: 2 }),
+    )
+    expect(loadSettings().modelProfile).toBe('standard')
+
+    // 移行後にユーザーが自分で 'auto' を選んだ
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ ...persisted(), modelProfile: 'auto' }),
+    )
+    expect(loadSettings().modelProfile).toBe('auto')
+    expect(persisted().modelProfile).toBe('auto')
+  })
+
+  it('壊れた modelProfile は既定へ戻す', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        modelProfile: 'tiny',
+        schemaVersion: SETTINGS_SCHEMA_VERSION,
+      }),
+    )
+    expect(loadSettings().modelProfile).toBe(DEFAULT_SETTINGS.modelProfile)
+  })
+
+  it('v3 済みの設定は素通しする(書き戻さない)', () => {
+    const stored = {
+      ...DEFAULT_SETTINGS,
+      llmModel: 'gemma2:2b',
+      modelProfile: 'small',
+      schemaVersion: SETTINGS_SCHEMA_VERSION,
+    }
+    localStorage.setItem('speaky:settings', JSON.stringify(stored))
+    expect(loadSettings().modelProfile).toBe('small')
+    expect(persisted()).toEqual(stored)
+  })
 })

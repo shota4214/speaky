@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from 'express'
+import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
 import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
+import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 
 interface TranscriptItem {
   role: 'user' | 'ai'
@@ -39,21 +41,27 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
     { role: 'user', content: userPrompt },
   ]
 
+  // 要約は「会話を終わる」を押した直後に走る。ユーザーが結果を待たずに
+  // 画面を離れたら生成も止める(NUM_PARALLEL=1 なので、残すと次の操作が詰まる)。
+  const { signal, dispose } = watchClientAbort(res)
   try {
     const ollamaRes = await chatWithOllama(messages, {
       jsonFormat: false,
       model,
-      timeoutMs: 60_000,
+      // 予算は shared/request-budget.ts が出典(クライアント締め切りがここから導かれる)。
+      firstTokenTimeoutMs: OLLAMA_BUDGET_MS.summarize,
       // 要約は安定性重視: 低 temperature
       temperature: 0.3,
       topP: 0.85,
       // 1-2 文 + 安全マージン。plain text なので length 切断されても短いサマリーになるだけ。
       numPredict: 300,
+      signal,
     })
     const raw = ollamaRes.message?.content ?? ''
     const summary = raw.trim().slice(0, 240) // safety cap
     return res.json({ summary })
   } catch (e) {
+    if (isClientAbort(e, signal)) return endAborted(res)
     if (e instanceof OllamaError) {
       if (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND' || e.code === 'TIMEOUT') {
         return res.status(503).json({ error: e.message, code: e.code })
@@ -61,5 +69,7 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
     }
     console.error('[summarize] error:', e)
     return res.status(500).json({ error: (e as Error).message })
+  } finally {
+    dispose()
   }
 })

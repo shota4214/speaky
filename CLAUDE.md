@@ -20,65 +20,102 @@
 3. **コミット前に必ず全 pass させる検証セット**:
    ```bash
    . ~/.nvm/nvm.sh && nvm use 22
-   npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test -w frontend
+   npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （現在テストは frontend 102 件）
+   （`npm test` = frontend → backend の順に vitest。**frontend 245 件 / backend 207 件**）
+   backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
+   LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
+   `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
+   （`services/ollama.ts`）、モデル名の許可判定とプロファイル推定
+   （`shared/llm-models.ts` / `services/model-profile.ts`）がここで固定されている。
 4. **main へ直接コミット禁止**。必ずブランチ → PR → マージ。コミットは日本語 `[add]/[fix]/[chore]` プレフィクス。
 
 ## 🔴 次にやるべき最優先タスク（このセッションからの引き継ぎ）
 
-現在地: **v1.1.0（低スペック機向けパフォーマンス対応）をブランチ `perf/low-spec-tier1` で作業中**。
-v1.0.0 は一般公開済み（DMG 配布済み・Ollama バイナリ同梱も v0.0.6 でマージ完了）。
+現在地: **v1.1.0（低スペック機向けパフォーマンス対応）をブランチ `perf/low-spec-tier2` で作業中**。
+v1.0.0 は一般公開済み。Tier1（Whisper 既定の縮小・無音検出短縮・whisper.cpp の
+`-DGGML_NATIVE=OFF` ビルド・`verify:arm64` 拡張）は `perf/low-spec-tier1` でマージ済み。
 
-v1.1.0 の中身（Tier1）:
+Tier2 で入ったもの（すべてこのブランチ内）:
 
-- Whisper デフォルト `medium` → `small`（多言語のまま。日本語入力があるので `.en` 不可）
-- 無音検出 5000ms → 1500ms（設定スキーマ v1 → v2 で一度だけ移行、保存も即時）
-- whisper.cpp を `-DGGML_NATIVE=OFF` でビルド（M1/M2 での SIGILL 回避）
-- Ollama の `keep_alive` / `num_ctx` 調整、プロフィール事実の送信上限
-- `verify:arm64` を拡張して i8mm/bf16/SME 命令混入を検出（`scripts/verify-arm64.mjs`）
+- Whisper 既定の縮小／録音・描画コストの削減
+- LLM 失敗ターンの高速フェイル（リトライ 2 回・フラット予算・salvage）
+- 文単位の発話キュー + ウォッチドッグ
+- **英語返答の SSE ストリーミング**（最初の 1 文が出来た時点で読み上げ開始）
+- **日本語訳 / 添削 / 単語の後追い生成（enrich）** — マイクは enrich を待たない
+- クライアントの中断を Ollama まで伝播
+- **小型モデル（1B / 1.5B）を実用にする会話プロファイル**（下記）
+- 履歴詳細画面の日本語訳の再取得、**全ての HTTP 呼び出しにクライアント締め切り**
+  （転写を含む。予算は `backend/src/shared/request-budget.ts` が唯一の出典）
+- **同梱 LLM を Llama 3.2 3B → 1B に変更**（DMG 約 2.67GB → 約 1.5GB）
+- 設定画面の「会話モード」バッジを backend への問い合わせ結果に変更
 
-### 1. whisper-cli の再ビルド（**verify:arm64 が現状 FAIL する**）
+### 残っているのは 1 つだけ: リリースビルド + **M1 MacBook Air 実機検証**
 
-vendor 済みの `whisper-cli` は M5 上で native ビルドされた古い成果物で、
-**M1 に存在しない `smmla`（i8mm）命令を 108 個含む** = M1 実機で SIGILL。
-`npm run dist` はこの検証で止まるので、先に作り直すこと（数分かかる）:
+コードは完成していて全検証が pass しているが、**実機で確かめていない**。
 
 ```bash
 . ~/.nvm/nvm.sh && nvm use 22
-npm run prep:vendor:whisper-cli -w backend   # -DGGML_NATIVE=OFF 付きで build/ を作り直す
+# ⚠️ 最初に root と electron の package.json を 1.2.0 に bump すること。
+#    このリリースは **version bump が必須**。同梱 LLM を 3B → 1B に差し替えたが、
+#    runtime sync（同梱物を userData にコピーする処理）は version.json の
+#    app version で gate されている。据え置くと既存 userData に 1B が
+#    コピーされず、既定モデル（= 1B）を指した瞬間に MODEL_NOT_FOUND になる。
+npm run prep:vendor:whisper-cli -w backend   # -DGGML_NATIVE=OFF で作り直す
+npm run prep:vendor:llama-model -w electron  # 1B を vendor + 旧 3B の残骸を掃除
 npm run verify:arm64 -w backend              # ここが OK になってから dist
+npm run dist                                 # DMG ~1.5GB、5〜10分 + 公証で計 15〜40分
+
+# vendor 後に「3B が残っていないこと」を目で確認する（DMG が太る）
+ls electron/build-resources/ollama-data/manifests/registry.ollama.ai/library/llama3.2/
+#   → 1b だけが出ること
+du -sh electron/build-resources/ollama-data/
 ```
 
-### 2. v1.1.0 リリースビルド + **非 M5 実機での検証**（未完了の核心）
+検証は **M1（8GB）実機で**。M5 では絶対に再現しない項目が混ざっている。
+**⑵〜⑷ は必ず Wi-Fi を切って（機内モードで）行うこと**。
 
-```bash
-. ~/.nvm/nvm.sh && nvm use 22
-# version は既に 1.1.0 に bump 済み（root / electron/package.json）
-#   ※ リリースごとに app version を上げないと runtime sync が走らない（重要）
-npm run dist   # DMG ~2.7GB（Whisper small 化で約 1GB 減）、5〜10分 + 公証
-```
-
-検証（最重要・**M1/M2 など古い Apple Silicon の実機で**）:
-
-```bash
-# Speaky を Cmd+Q → userData 削除で初回起動を再現
-rm -rf "$HOME/Library/Application Support/electron"
-# Wi-Fi を切る（機内モード）→ /Applications/Speaky.app を起動
-```
-
-確認点:
-
-- whisper-cli が SIGILL せずに転写できる（← Tier1 の一番の目的。M5 では絶対に再現しない）
-- 8GB 機で会話が成立する速度か（Whisper small + Llama 3.2 3B + num_ctx 4096）
-- 無音 1.5 秒の自動送信が早すぎないか（既存ユーザーは v1→v2 移行で 1500 に変わる）
-- ネット無しで Ollama 起動 → 会話開始まで到達する（`isDownloaded('v0.30.4')=true`）
+1. whisper-cli が SIGILL せずに転写できる（Tier1 の一番の目的）
+2. ネット無しで Ollama が起動し会話開始まで到達する（`isDownloaded('v0.30.4')=true`）
+3. **オフラインで初回起動を最後まで通せる**（今回の一番の変更点）:
+   `rm -rf "$HOME/Library/Application Support/electron"` → 機内モードで起動 →
+   オンボーディングが「この Mac のメモリは 8GB です」と表示し、
+   LLM が **同梱の `llama3.2:1b`**（選択肢に「同梱」と出る）に**あらかじめ選ばれていて**、
+   ステップ 4 の「次へ」が**最初から押せる**（DL ボタンが出ない = 取得済み）。
+   ⚠️ ここが v1.1.0 直前の release blocker だった（1B が選ばれるのに 3B しか同梱が無く、
+   オフラインだと「次へ」が永久に押せなかった）。
+4. **オフラインの 16GB 機でも初回起動を最後まで通せる**（16GB 機があれば）:
+   「3B を取得すると添削が出ます」という案内は出るが、**選択は同梱の 1B のまま**で、
+   案内を無視して「次へ」が押せる（案内が行き止まりを作らない）。
+5. `llama3.2:1b` で会話が成立する（軽量モード）:
+   返答が 1〜2 文に収まる / 日本語訳が必ず出る / **添削と単語カードは出ない**。
+   「出ないのは壊れているからではない」ことが会話画面の 🪶 バッジで分かる。
+6. 最初の音が出るまでの時間（ストリーミングの効き）と、ターン間の待ち時間
+7. 設定画面の「会話モード」バッジが **`(backend 確認済み)` 付き**で表示され、
+   会話画面のバッジと一致する（推測ではなく `/api/model-profile/preview` の結果）
+8. **アップグレードで既存ユーザーの 3B が消えない**（`~/Library/Application Support/electron`
+   を **消さずに** 上書き起動）:
+   - `llama3.2:3b` を選んで保存していた人が、そのまま 3B で会話できる
+   - `ls "$HOME/Library/Application Support/electron/ollama-data/models/manifests/registry.ollama.ai/library/llama3.2/"`
+     に `1b` と `3b` の両方がある
+   - `gemma2:2b` を選んでいた人が **標準モードのまま**である（設定スキーマ v3 の移行）
+   - 設定画面で LLM を選び直すと、会話モードの固定が「自動」に戻る
+9. **オンラインで 3B を取得すると標準モードに戻る**: 設定画面 →「+ 取得」→ `llama3.2:3b` →
+   選択 → バッジが「標準モードで動作します（backend 確認済み）」になり、添削と単語カードが出る
+10. スリープ復帰直後のターンが固まらない:
+    - 会話ターン（`/api/chat`）はクライアント締め切り **270 秒**で必ず畳まれる
+    - **転写（`/api/transcribe`）も 210 秒で畳まれる**（v1.1.0 までここだけ締め切りが無く、
+      「認識中」のままマイクが閉じて二度と戻らなかった）
+    - 畳まれた後、同じ会話のまま次のターンが始められる（3 回連続で失敗すると録音を止める）
+11. 遅いターンが**通信エラーにされない**: 8GB 機でモデルのコールドロードが乗った重いターンが、
+    エラー表示ではなくちゃんと返答になる（クライアント締め切りは backend の梯子より必ず長い）
 
 ## 同梱物の事実（実機ビルドで確認済み）
 
 DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべて同梱**（初回 DL 不要）:
 
-- LLM: Llama 3.2 3B（`ollama-data/blobs/` + manifest）
+- LLM: **Llama 3.2 1B**（`ollama-data/blobs/` + manifest）。v1.1.0 までは 3B だった。
+  同梱を 1B にした理由と、既存ユーザーの 3B が消えない理由は下の「同梱 LLM」節を参照。
 - Whisper small（`ggml-small.bin` 約488MB。低スペック機対策で medium から変更）
 - whisper-cli / ffmpeg-static
 - **Ollama ランタイム本体**（`ollama-bin/electron-ollama/v0.30.4/darwin/arm64/`）← feat/bundle-ollama-binary で追加
@@ -114,6 +151,11 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 - **userData は `~/Library/Application Support/electron/`** 配下（productName が "electron" のため。`Speaky/` ではない）。
 - **runtime sync は `version.json`（app version）で gate**。リリースごとに version を上げないと同梱物が再同期されない。
 - **Ollama バイナリ同期は version gate と独立**（startOllama 内で isDownloaded 確認 → 無ければコピー。既存 userData 対策）。
+- **同梱 LLM モデルの同期も version gate と独立**（startOllama 内 `ensureBundledOllamaModel`。
+  template の blob / manifest が userData に揃っているかを stat で確認し、欠けていれば
+  `syncOllamaModels`（**足すだけで消さない**）を呼ぶ）。オフライン起動の保証を
+  「リリースのたびに人間が version を上げること」に依存させないため。
+  version bump は引き続き必要（backend コード / Whisper の再同期はそちらが唯一の入口）。
 - **OLLAMA_VERSION pin** = `v0.30.4`（main.ts と scripts/prep-ollama-binary.mjs の両方。必ず一致させる）。`getMetadata('latest')` は使わない（ネット回避）。
 - **会話の翻訳ロジック**（backend/src/routes/chat.ts）: 日本語/英日混在は専用翻訳経路に分離。日本語訳が空なら en→ja 補完（「日本語訳を必ず表示」設定の保証）。
 - **Whisper モデルは実行前に存在チェック**（`backend/src/services/whisper-paths.ts`）。
@@ -128,9 +170,109 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   （KEEP_ALIVE=30m / NUM_PARALLEL=1 / MAX_LOADED_MODELS=1 / FLASH_ATTENTION=1）と
   `backend/src/services/ollama.ts` のリクエスト（`keep_alive` / `options.num_ctx`= DEFAULT_NUM_CTX 4096）。
   リクエスト側の指定が実効値。
-- **設定スキーマ版** `SETTINGS_SCHEMA_VERSION`（`frontend/src/storage/settings.ts`）。
+- **設定スキーマ版** `SETTINGS_SCHEMA_VERSION`（`frontend/src/storage/settings.ts`）= **3**。
   デフォルト値を変えて既存ユーザーにも適用したいときは版を上げて移行処理を足す。
-- **モデル選択**は「インストール済み AND backend allowlist 内」のみ。allowlist は frontend(`storage/settings.ts` の `ALLOWED_LLM_MODELS` / `VALID_WHISPER_MODELS`)と backend(`services/ollama.ts` の `ALLOWED_LLM_MODELS`)の両方にあり**手動同期が必要**。
+  キーが増えるだけなら版は上げない（merge が欠落を埋める）。上げるのは
+  「既存の保存値を書き換える必要がある」ときだけ。移行が走ったら**その場で保存する**
+  （`needsMigration → saveSettings`）。これが無いと冪等でない移行が毎起動走る。
+  - v1→v2: 無音間隔 5000→1500 / Whisper medium→small（旧デフォルトのままの人だけ）
+  - v2→v3: `modelProfile` の新設。**`gemma2:2b` を選んでいた人だけ** `'standard'` を
+    明示的に書き込んで据え置く（'auto' だと small に落ちて挙動が変わるため）。
+- **会話プロファイル**（`backend/src/services/model-profile.ts`）= `standard` / `small` の 2 段。
+  - `small` は 1B〜2B 向け: system prompt を **約 900 → 約 200〜250 トークン**に圧縮
+    （会話スタイル節を削除 / レベル説明は該当 1 行だけ / 人格は 1 行 / プロフィール事実は 6 件まで）、
+    履歴 10 往復→4 往復、生成予算を約半分、温度を下げ repeat_penalty を上げ、
+    **enrich は日本語訳だけ**（1B の添削は誤りが多く、学習者を間違った方へ引っ張るため）。
+  - **`num_ctx` は small でも 4096 のまま**。計測できる実機が無いうちは下げない
+    （プロファイル駆動にはしたので、M1 で測ってから下げること）。
+  - 選択は設定の `modelProfile`（`auto` / `standard` / `small`、既定 `auto`）。
+    `auto` は **タグのパラメータ数**から推定（2B 以下 = small）。ファミリー部分は見ない
+    （`llama3.2` の "3.2" を拾うと 1B が small にならない）。
+  - 推定は backend が出典。解決結果は `/api/chat` のレスポンスと SSE の `meta` に
+    `profile` として載る（会話画面の「🪶 軽量モード」バッジの根拠）。
+  - **設定画面のバッジも backend に聞く**（`POST /api/model-profile/preview`、
+    機能名 `model-profile-preview`）。v1.1.0 はここだけ frontend が
+    `resolveProfileLevel()` を自分で呼んで推測していた。Electron は
+    「frontend だけ新しい」組み合わせが普通に起こるので、プロファイル未対応かつ
+    allowlist が完全一致の旧 backend に対して「軽量モードで動作中」と表示し、
+    しかもその backend は `llama3.2:1b` を黙って既定モデルへ差し替えていた
+    （= モデルもモードも両方嘘）。機能申告が無い / 応答しない場合は
+    **何も言い切らず「確認できません」と出す**こと。
+    プレビューは `modelAccepted: false` で「差し替える」ことも申告する。
+  - 設定画面で **LLM を選び直したら `modelProfile` を `'auto'` に戻す**。
+    v3 移行が `gemma2:2b` の人に書き込んだ `'standard'` が残り続けると、
+    その人が 1B に乗り換えたときに「小さいモデルに長いプロンプト」という、
+    この一連の作業がまさに潰そうとしている組み合わせに静かに戻る。
+- **同梱 LLM は `llama3.2:1b` ただ 1 つ**（v1.1.0 までは 3B）。
+  - 出典は `backend/src/shared/llm-models.ts` の `BUNDLED_LLM_MODEL`。
+    `DEFAULT_LLM_MODEL` も frontend の `DEFAULT_SETTINGS.llmModel` もここを読む。
+    `scripts/prep-llama-model.mjs` だけは .mjs なので import できず二重化しているが、
+    **ズレたら `shared/llm-models.test.ts` が落とす**（prep スクリプトを読んで照合している）。
+  - **既定は必ず同梱物であること**。v1.1.0 直前は「12GB 未満なら 1B を自動選択」なのに
+    同梱が 3B だけで、オフラインの 8GB 機は初回起動が行き止まりになっていた
+    （選ばれたモデルが取得できず「次へ」が押せない）。完全ローカルが売りである以上、
+    ここが崩れると製品の一番の主張が嘘になる。
+  - **副作用**: 素の初回インストールは自動判定で `small` プロファイルになり、
+    **添削と単語カードが出ない**。意図した結果で、オンボーディングと設定画面の両方で
+    明示し、メモリ 12GB 以上には `RECOMMENDED_DOWNLOAD_LLM_MODEL`（= `llama3.2:3b`）の
+    取得を案内する。取得すれば標準モードに戻る。
+  - **オンボーディングの自動選択は `frontend/src/utils/onboarding-model.ts`**。
+    不変条件は「**インストール済みのモデルが 1 つでもあれば必ずその中から選ぶ**」。
+    薦めるのと選ぶのは別で、メモリに余裕があっても未取得の 3B は選択状態にしない
+    （オフラインで先へ進めなくなるため）。選択肢もカタログから作る（手書きしない）。
+  - ⚠️ **アップグレードで既存ユーザーの 3B を消さないこと**。
+    `electron/src/main.ts` の `syncOllamaModels` は **追加のみで削除しない**設計
+    （blob は content-addressed なので「無ければコピー / サイズ違いなら上書き」、
+    manifest は template 側のものだけ上書き）。ここに「template に無いものを消す」
+    掃除を足すと、アップグレードした瞬間に使用中の 3B が消えて MODEL_NOT_FOUND になる。
+    Whisper 側（`syncRuntime`）がユーザー DL 分を退避 → 復元しているのと同じ意図を、
+    こちらは「そもそも消さない」形で満たしている。`ollama-data` は毎回 rmSync する
+    `backend-runtime` の**外**（`userData/ollama-data`）にあるので巻き込まれない。
+  - ビルド機の `electron/build-resources/ollama-data/` に前のモデルが残ると DMG が太る。
+    prep スクリプトが毎回 `pruneStaleVendored()` で今回の同梱物以外を消す（冪等）。
+- **モデル選択**は「インストール済み AND backend が受け付ける名前」のみ。
+  判定は **`backend/src/shared/llm-models.ts` が唯一の出典**で、frontend は
+  `storage/settings.ts` からこのファイルを直接 import している（相対パスで backend 側を読む）。
+  v1.1.0 までは同じ一覧を両側に手書きしていて「手動同期が必要」と書いてあったが、
+  二重化そのものを消した。**JSON ではなく .ts** にしてあるのは、backend が
+  `module: NodeNext` で JSON import に import attributes が要り、
+  tsc / esbuild / Vite で扱いが食い違うため（依存ゼロの .ts なら 3 つとも同じ）。
+  - 判定は **ファミリー一致**（`llama3.2` / `llama3.1` / `gemma2` / `qwen2.5`）+ 書式チェック。
+    完全一致だった頃は `llama3.2:3b-instruct-q4_K_M` のような量子化タグが
+    静かに既定へ落とされ、設定画面の一覧からも消えていた。
+  - ⚠️ **ここはセキュリティ境界ではない**。backend は 127.0.0.1 にしか bind せず、
+    モデル名は Ollama への JSON ボディに入るだけでシェルにもパスにも渡らない。
+    「Ollama にゴミを投げない」ための入口ガードである（緩めても退行ではない）。
+  - Whisper 側の allowlist（`VALID_WHISPER_MODELS`）は frontend にのみある（変更なし）。
+- **ストリーミング**（`backend/src/routes/chat-stream.ts` / `frontend/src/services/api.ts`）:
+  英語の返答は SSE で流れ、**最初の 1 文が出来た時点で読み上げが始まる**。
+  日本語訳 / 添削 / 単語は `done` の後に `enrich` イベントで後追いする（マイクは待たない）。
+  フロントは `/api/health` の `features` を**肯定的に確認**したときだけ新経路を使う
+  （Electron は frontend を app bundle から、backend を userData から読むため
+  「frontend だけが新しい」組み合わせが普通に起こる）。
+  非ストリーミング経路は**フォールバックとして残してある**ので削らないこと。
+- **クライアント側の締め切り**は 2 系統ある。どちらも「半開きソケット（スリープ復帰）」
+  対策で、backend が死んでいると backend の予算は効かないために要る。
+  - ストリーミング: ヘッダーまで 180 秒 / ヘッダー後は無通信 45 秒（keepalive が 10 秒間隔）
+  - 非ストリーミング: **値は `backend/src/shared/request-budget.ts` が唯一の出典**。
+    手で置かず、backend のリトライ梯子から**計算**する（frontend もこのファイルを import する）。
+    現在値: `/api/chat` `/api/chat/opening` **270 秒** / `/api/chat/enrich`
+    `/api/extract-facts` **150 秒** / `/api/summarize` **90 秒** / `/api/transcribe` **210 秒**。
+  - ⚠️ **クライアントの締め切りは backend の最悪値より必ず長いこと**。v1.1.0 は
+    手置きの 120 / 90 秒で、backend の梯子（`/api/chat` は 90×2 + 翻訳 60 = **240 秒**、
+    enrich と extract-facts は **120 秒**、日本語入力経路は **120 秒でクライアントと同値**）
+    より短かった。そうなると「遅いだけで健全なターン」がクライアント側で打ち切られて
+    通信エラーになり、会話ループの連続失敗カウンタ（3 回で会話停止）を積み上げる。
+    リトライ回数や first-token 予算を触ったら request-budget.ts も直すこと。
+    ズレは `shared/request-budget.test.ts` が落とす（実際の attempts 配列の長さも見ている）。
+  - ⚠️ **締め切り切れとユーザーの中断はどちらも AbortError**。区別せずに変換すると
+    「会話を終えただけ」がエラー表示になる（`fetchWithDeadline` が区別している）。
+  - **転写にも締め切りがある**（v1.1.0 まで唯一存在しなかった）。backend 側は
+    `TRANSCRIBE_BUDGET_MS`（180 秒。ffmpeg + 最大 3 パス分）で、超えたら 504 + `TIMEOUT`。
+    クライアント側は 210 秒 + `beginTranscribe()` の signal（会話終了で切れる）。
+    ⚠️ **whisper の子プロセス自体は kill できない**（nodejs-whisper が `shelljs.exec` の
+    ChildProcess を外に出さない）。畳めるのは「待つのをやめる」ところまで。
+    子まで確実に殺すには whisper-cli を自前で spawn する必要があり、実機検証込みの別作業。
 - **巨大バイナリ/モデルは `.gitignore` 済み**（`electron/build-resources/`、`backend/vendor/node_modules/`、`dist-app/`）。prep スクリプトでビルド時に用意する。
 
 ## prep スクリプト（ビルド時にモデル/バイナリを vendor）
@@ -146,13 +288,27 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
     `-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod` は指定可能だが apple-m1 より基盤が古く
     fp16 ベクタ演算等を落として遅くなるため**付けない**。
 - `prep:vendor:whisper-model`（backend）= ggml-small.bin を HF から DL
-- `prep:vendor:llama-model`（electron）= Llama 3.2 3B を ollama pull して vendor
+- `prep:vendor:llama-model`（electron）= **Llama 3.2 1B** を ollama pull して vendor。
+  今回の同梱物が参照していない blob / manifest は毎回掃除する（`pruneStaleVendored`）。
+  ⚠️ **`BUNDLED_LLM_MODEL` と必ず一致させること**（一致は backend のテストが検証）。
 - `prep:vendor:ollama-binary`（electron）= Ollama v0.30.4 バイナリを vendor（symlink 実ファイル化込み）
 - `verify:arm64`（backend / 実体は `scripts/verify-arm64.mjs`）= 同梱バイナリ検証
   - arm64 Mach-O であること（`file`）に加え、**whisper-cli に i8mm / bf16 / SME 命令が
     含まれないこと**を `otool -tV` で検証する（M1 で SIGILL するビルドの唯一の防波堤。
     署名・公証・staple は素通りするので実機まで誰も気づけない）。
     FAIL したら `npm run prep:vendor:whisper-cli -w backend` で作り直す。
+
+## 動作要件（README と揃える）
+
+- Apple Silicon / メモリ **8GB 以上**（16GB 以上推奨）
+- 同梱の `llama3.2:1b` +「軽量モード」がどの Mac でも最初に動く組み合わせ。
+  オンボーディングは `/api/health` の `totalMemoryBytes` を見る（`os.totalmem()` は
+  backend でしか取れない。ブラウザの `navigator.deviceMemory` は最大 8 に丸められる）。
+  - **12GB 未満**: 同梱の軽量モデルを選んでおく
+  - **12GB 以上**: 3B が入っていればそれを選ぶ。入っていなければ
+    **選択は同梱の 1B のまま**にして、3B の取得を案内するだけにする
+    （案内でオフラインのユーザーを行き止まりにしない）
+  - どちらの場合も **インストール済みの中からしか選ばない**
 
 ## 完了済みの主な機能（〜v0.0.5）
 

@@ -1,6 +1,17 @@
+import type { ModelProfileLevel } from '../shared/llm-models.js'
+
 export type Level = 'beginner' | 'intermediate' | 'advanced'
 export type Mode = 'normal' | 'japanese_help' | 'mixed'
 export type PersonalityPreset = 'friendly' | 'teacher' | 'cool' | 'kohai' | 'colleague'
+
+/**
+ * 出力契約。
+ * - `json`: 従来どおり 1 つの JSON オブジェクト(reply_en / reply_ja / feedback /
+ *   vocabulary / mode)を返させる。非ストリーミング経路(`POST /api/chat`)専用。
+ * - `text`: 英語の返答だけをプレーンテキストで返させる。ストリーミング経路専用で、
+ *   日本語訳・添削・単語は別途 enrich で生成する。
+ */
+export type OutputFormat = 'json' | 'text'
 
 export interface BuildPromptInput {
   aiName?: string
@@ -12,6 +23,13 @@ export interface BuildPromptInput {
   userProfile?: string[]
   lastConversationSummary?: string | null
   personality?: PersonalityPreset
+  /** 既定は 'json'(従来挙動)。ストリーミング経路だけが 'text' を渡す。 */
+  outputFormat?: OutputFormat
+  /**
+   * 会話プロファイル。既定 'standard' は v1.1.0 までと完全に同じプロンプト。
+   * 'small' は 1B〜2B クラス向けに切り詰めた別プロンプトへ分岐する。
+   */
+  profile?: ModelProfileLevel
 }
 
 /**
@@ -58,7 +76,121 @@ export function buildPersonalityBlock(personality: PersonalityPreset = 'friendly
   }
 }
 
+/**
+ * small プロファイル用の人格。standard の 5〜8 行を **1 行**にしたもの。
+ * 1B クラスは「箇条書き 6 行の人格指定」を守るより、指示の総量に押し潰されて
+ * 肝心の「英語で 1〜2 文」を落とす方が先に起きる。
+ */
+const SMALL_PERSONALITY_LINE: Record<PersonalityPreset, string> = {
+  friendly: 'Be warm and friendly, like a close friend.',
+  teacher: 'Be a patient, encouraging teacher.',
+  cool: 'Be calm and understated. Dry humor, never gushing.',
+  kohai: 'Be an excited younger friend. React with energy.',
+  colleague: 'Be a polite, professional colleague. No slang.',
+}
+
+/**
+ * small プロファイル用のレベル指示。
+ * standard は 3 レベルぶんを全部載せているが、**今のターンに関係あるのは 1 つだけ**。
+ * 残り 2 行は小型モデルにとってノイズでしかないので、該当レベルだけを渡す。
+ */
+const SMALL_LEVEL_LINE: Record<Level, string> = {
+  beginner: 'Use very simple words (CEFR A1-A2). No idioms, no slang.',
+  intermediate: 'Use everyday words (CEFR B1-B2). Common idioms are fine.',
+  advanced: 'Use natural, varied English (CEFR C1-C2). Idioms and slang are fine.',
+}
+
+/** small プロファイルの system prompt に載せるユーザープロフィール事実の上限。 */
+const SMALL_MAX_PROFILE_FACTS = 6
+
+/** small プロファイルのプレーンテキスト出力契約。 */
+const SMALL_TEXT_CONTRACT = `# Output
+Write only the words you would say out loud, as plain text.
+No JSON, no braces, no markdown, no labels, no Japanese.`
+
+/**
+ * small プロファイルの JSON 出力契約。
+ *
+ * feedback / vocabulary を **null と [] に固定** しているのは品質の判断。
+ * 1B クラスの添削は正しい文を「間違い」と言い切ることがあり、単語抽出も
+ * 学習者が既に知っている語を並べるだけになりがちで、どちらも
+ * 「あった方がまし」ではなく「無い方がまし」の側にいる。
+ * enrich 側(services/model-profile.ts の enrichment: 'translation-only')と
+ * 揃えてある。スキーマを 1 行に潰しているのは、複数行の擬似 JSON を見せると
+ * 小型モデルが整形しようとして改行やコードフェンスを混ぜ始めるため。
+ */
+const SMALL_JSON_CONTRACT = `# Output
+Respond with ONE JSON object and nothing else. No markdown, no code fences.
+{"reply_en":"your 1-2 sentence English reply","reply_ja":"Japanese translation of reply_en","feedback":null,"vocabulary":[],"mode":"normal"}
+- reply_ja must be written in Japanese.
+- feedback must be null. vocabulary must be []. mode must be "normal".`
+
+/**
+ * 1B〜2B クラス向けの system prompt。**約 300 トークン以内**に収める。
+ *
+ * standard(約 900 トークン)から落としたもの:
+ *  1) "Conversation style — VARIETY IS CRITICAL" の 6 行。
+ *     「毎回違う言い回しで」「違う質問で」「違う出だしで」は
+ *     小型モデルが従える種類の指示ではないうえ、一番文字数を食っていた。
+ *     代わりに「同じ言い回しを繰り返すな」の 1 行だけ残し、
+ *     実効の手当ては repeat_penalty(1.2)に寄せた。
+ *  2) 3 レベルぶんの説明。該当レベルの 1 行だけにした。
+ *  3) 人格ブロック(5〜8 行)。1 行に圧縮した。
+ * 代わりに **最優先の指示を最初に、短く** 置く:
+ *  「英語で 1〜2 文、プレーンテキスト」。
+ */
+function buildSmallSystemPrompt(input: BuildPromptInput): string {
+  const aiName = input.aiName ?? 'Emma'
+  const level = input.level ?? 'intermediate'
+  const topic = input.topic ?? 'casual chat'
+  const personality = input.personality ?? 'friendly'
+  const vocabFocus = input.vocabFocus ?? []
+  const userProfile = input.userProfile ?? []
+  const lastSummary = input.lastConversationSummary ?? null
+  const topicLine = input.topicDescription ? `${topic}: ${input.topicDescription}` : topic
+
+  const sections = [
+    `You are ${aiName}, a native English speaker chatting with a Japanese learner.`,
+    `# Rules — follow every line
+- Reply in ENGLISH only, in ONE or TWO short sentences. Never more.
+- ${SMALL_LEVEL_LINE[level]}
+- ${SMALL_PERSONALITY_LINE[personality]}
+- React to what the user said, then ask one short question about half the time.
+- Do not reuse a phrase you already used in this conversation.`,
+    `# Topic
+${topicLine} (it's fine if the conversation drifts)`,
+  ]
+
+  // 以下は「あるときだけ」載せる。standard は空でも見出しを出していたが、
+  // 小型モデルにとって "(no profile information yet)" は読む価値の無い 5 トークンで、
+  // しかも見出しがあるぶん「何か書かないといけない」と誤解させる。
+  if (vocabFocus.length > 0) {
+    sections.push(`# Try to use these words naturally
+${vocabFocus.join(', ')}`)
+  }
+  if (userProfile.length > 0) {
+    // フロントは直近 20 件まで送ってくる(MAX_PROFILE_FACTS_IN_PROMPT)。
+    // 20 件そのままだと、それだけでこのプロンプトと同じ長さになり
+    // 「300 トークン以内」という設計が会話 3 回目で崩れる。新しい方から 6 件に絞る。
+    sections.push(`# About the user
+${userProfile
+  .slice(-SMALL_MAX_PROFILE_FACTS)
+  .map((f) => `- ${f}`)
+  .join('\n')}`)
+  }
+  if (lastSummary) {
+    sections.push(`# Last conversation
+${lastSummary}`)
+  }
+
+  sections.push(
+    (input.outputFormat ?? 'json') === 'text' ? SMALL_TEXT_CONTRACT : SMALL_JSON_CONTRACT,
+  )
+  return sections.join('\n\n')
+}
+
 export function buildSystemPrompt(input: BuildPromptInput = {}): string {
+  if ((input.profile ?? 'standard') === 'small') return buildSmallSystemPrompt(input)
   const aiName = input.aiName ?? 'Emma'
   const level = input.level ?? 'intermediate'
   const topic = input.topic ?? 'casual chat'
@@ -82,10 +214,20 @@ export function buildSystemPrompt(input: BuildPromptInput = {}): string {
 
   const summaryBlock = lastSummary ?? '(no previous conversation)'
 
-  // モード分岐: 小型モデル(Llama 3.2 3B 等)が誤って会話継続してしまうのを防ぐため、
-  // 該当しないモードの説明は LLM に渡さず、現モードの指示だけを最上位に置く。
-  const modeBlock = buildModeBlock(mode)
+  // このプロンプトは normal(英語入力での会話)専用。
+  // japanese_help / mixed は routes/chat.ts が専用の翻訳経路へ早期 return するため、
+  // ここには到達しない(詳細は NORMAL_MODE_BLOCK のコメント)。
+  // 到達したら翻訳指示ではなく会話指示を渡してしまうので、気付けるよう警告を出す。
+  if (mode !== 'normal') {
+    console.warn(
+      `[conversation-prompt] buildSystemPrompt called with mode='${mode}'. ` +
+        `翻訳モードは routes/chat.ts の専用経路で処理される想定。normal として扱う。`,
+    )
+  }
   const personalityBlock = buildPersonalityBlock(personality)
+  const outputFormat = input.outputFormat ?? 'json'
+  const modeBlock = outputFormat === 'text' ? TEXT_MODE_BLOCK : NORMAL_MODE_BLOCK
+  const outputContract = outputFormat === 'text' ? TEXT_OUTPUT_CONTRACT : JSON_OUTPUT_CONTRACT
 
   return `You are a native English-speaking friend helping a Japanese learner practice English conversation. Your name is ${aiName}.
 
@@ -119,91 +261,87 @@ ${profileBlock}
 # Last conversation summary (if any)
 ${summaryBlock}
 
-# Output format
+${outputContract}`
+}
+
+/**
+ * 非ストリーミング経路(`POST /api/chat` / `POST /api/chat/opening`)の出力契約。
+ *
+ * Stage 0 の調査で「この 2 ブロックは効いている(外すと小型モデルの JSON が崩れる)」
+ * ことを確認済みなので、非ストリーミング経路では原則そのまま維持する。
+ *
+ * 唯一の例外が mode。以前はスキーマに 3 値を並べていたが、japanese_help / mixed は
+ * routes/chat.ts が専用の翻訳経路へ早期 return するため **このプロンプトには
+ * 到達しない**。スキーマだけが 3 値を宣伝していると、モデルがそれを鵜呑みにして
+ * mode:"japanese_help" を返すことがあり、parseChatReply はそれを受け取るので、
+ * ただの英語ターンなのにフロントが「言ってみて」状態に入ってしまう。
+ * 到達可能な唯一の値に絞っておく。
+ */
+const JSON_OUTPUT_CONTRACT = `# Output format
 Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
 {
   "reply_en": "string - your English response",
   "reply_ja": "string - Japanese translation/explanation",
   "feedback": null OR { "user_said": "...", "corrected": "...", "explanation": "..." },
   "vocabulary": [] OR up to 3 items: { "word": "...", "meaning": "...", "example": "..." },
-  "mode": "normal" | "japanese_help" | "mixed"
+  "mode": "normal"
 }
 
 # Rules
 - feedback: only include if the user made a real mistake. Otherwise null. Explanation must be in Japanese.
 - vocabulary: only 1-3 truly useful words/phrases (matching the user's level). Skip easy or trivial words.
 - example: optional within vocabulary items.
-- The "mode" field in your JSON MUST match the input mode shown above. Do not change it.
+- The "mode" field MUST be exactly "normal". No other value is valid.
 - reply_ja is always required — Japanese translation or instruction.`
-}
 
 /**
- * 現在のモードに応じた最優先指示ブロックを生成する。
- * 該当しないモードの説明を出さないことで、小型モデル(3B 等)の誤動作を抑制する。
+ * ストリーミング経路の出力契約。
+ *
+ * JSON の指示を **完全に外す** のが要点。JSON を書かせながら
+ * 「reply_en の中身だけ喋る」ことはできない(トークンが届いた時点では
+ * まだ文字列リテラルの途中かどうかも分からない)し、JSON を指示すること自体が
+ * 小型モデルに「``` や { から書き始める」癖を付けている。
+ * 日本語訳・添削・単語は英文の生成が終わってから enrich で別途取る。
  */
-function buildModeBlock(mode: Mode): string {
-  if (mode === 'japanese_help') {
-    return `# CURRENT INPUT MODE: japanese_help — TRANSLATION ASSIST (HIGHEST PRIORITY)
+const TEXT_OUTPUT_CONTRACT = `# Output format — READ THIS CAREFULLY
+Write ONLY your spoken English reply, as plain text.
+- No JSON. No curly braces. No key names like "reply_en".
+- No markdown, no code fences, no bullet points, no quotation marks around the whole reply.
+- No Japanese. No translation. No corrections. No vocabulary list. Someone else handles those.
+- No labels like "Reply:" or "Emma:". Just the words you would say out loud.
+- Keep it to the length described in your level rules above.`
 
-The user spoke ONLY in Japanese. You are NOT a conversation partner this turn — you are a translation helper.
-
-**STRICT RULES — follow these exactly:**
-1. DO NOT continue the conversation. DO NOT ask follow-up questions about what they said.
-2. Treat the user's Japanese as what they WANTED to say in English, and translate it.
-3. "reply_en" MUST be the natural English equivalent of what they tried to express — the sentence THEY should say. Not your response to it.
-4. "reply_ja" MUST be a short encouragement in Japanese that quotes the English sentence in 「」 and invites them to try saying it. Examples:
-   - 「I want to go to Tokyo this weekend.」と言えますよ。声に出して言ってみて!
-   - 英語ではこう言います:「Could you pass me the salt?」 一度声に出してみてください。
-5. Set "mode": "japanese_help" in the JSON output.
-6. feedback should be null (they didn't attempt English yet).
-7. vocabulary may include 1-2 useful words from the English translation if natural.
-
-Example — your output MUST be a single JSON object exactly like this (no surrounding text, no code fences):
-{
-  "reply_en": "It's been raining since this morning, and it's bringing my mood down.",
-  "reply_ja": "「It's been raining since this morning, and it's bringing my mood down.」と言えますよ。声に出して言ってみて!",
-  "feedback": null,
-  "vocabulary": [],
-  "mode": "japanese_help"
-}
-(That example is for the input 「今日は朝から雨で気分が下がっています」.)`
-  }
-
-  if (mode === 'mixed') {
-    return `# CURRENT INPUT MODE: mixed — TRANSLATION ASSIST (HIGHEST PRIORITY)
-
-The user mixed Japanese and English. They likely couldn't say part of it in English. You are NOT a conversation partner this turn — you are a translation helper.
-
-**STRICT RULES — follow these exactly:**
-1. DO NOT continue the conversation. DO NOT ask follow-up questions.
-2. Interpret what they were trying to express as a whole, and produce the complete natural English sentence.
-3. "reply_en" MUST be the complete English sentence they should have said — the sentence THEY should say. Not your response to it.
-4. "reply_ja" MUST quote the English sentence in 「」 and invite them to say it out loud.
-5. Set "mode": "mixed" in the JSON output.
-6. feedback may point out the Japanese portion they struggled with (in Japanese). Otherwise null.
-7. vocabulary may include 1-2 words from the translation that were the missing pieces.
-
-Example — your output MUST be a single JSON object exactly like this (no surrounding text, no code fences):
-{
-  "reply_en": "I want to eat sushi for dinner tonight.",
-  "reply_ja": "「sushi」は英語でもそのまま通じます。「I want to eat sushi for dinner tonight.」と言ってみてください!",
-  "feedback": null,
-  "vocabulary": [],
-  "mode": "mixed"
-}
-(That example is for the input "I want to eat 寿司 for dinner tonight".)`
-  }
-
-  // mode === 'normal'
-  return `# CURRENT INPUT MODE: normal — CONVERSATION
+/**
+ * 会話経路(normal モード)の最優先指示ブロック。
+ *
+ * かつてここには japanese_help / mixed 用のブロック(合計 2815 文字)もあったが、
+ * 両モードは routes/chat.ts が buildSystemPrompt を呼ぶ前に専用の翻訳経路へ
+ * 早期 return するようになったため、到達不能なまま残っていたので削除した。
+ * (モード別に切り替えていたので送信プロンプトが太っていたわけではない。
+ *  あくまで「実際の挙動を読み違えさせる死んだコード」の除去である)
+ *
+ * buildSystemPrompt の呼び出し元は /chat(japanese_help / mixed を処理した後)と
+ * /chat/opening(mode を normal にハードコード)の 2 箇所だけ。
+ */
+const NORMAL_MODE_BLOCK = `# CURRENT INPUT MODE: normal — CONVERSATION
 
 The user spoke in English. Respond naturally as their conversation partner. Follow the conversation style and level rules below.
 
 - "reply_en" is YOUR English response (what you would say back).
 - "reply_ja" is the Japanese translation of your English response.
-- Set "mode": "normal" in the JSON output.
+- Set "mode": "normal" in the JSON output. It is the only allowed value.
 - feedback: only if they made a real English mistake. Otherwise null.`
-}
+
+/**
+ * ストリーミング経路(プレーンテキスト出力)の最優先指示ブロック。
+ * NORMAL_MODE_BLOCK の JSON フィールドへの言及をすべて落としたもの。
+ */
+const TEXT_MODE_BLOCK = `# CURRENT INPUT MODE: normal — CONVERSATION
+
+The user spoke in English. Respond naturally as their conversation partner. Follow the conversation style and level rules below.
+
+- Write only what YOU would say back, in English, out loud.
+- Do not translate, do not correct the user, do not list vocabulary. Those are handled separately.`
 
 /**
  * 会話開始時に AI から最初の挨拶+話題を切り出してもらうための合成プロンプト。
@@ -213,6 +351,7 @@ The user spoke in English. Respond naturally as their conversation partner. Foll
  * system prompt の personality ブロックが本体で、ここは「最初の一言」用の補助。
  */
 export function buildOpeningUserPrompt(input: BuildPromptInput = {}): string {
+  if ((input.profile ?? 'standard') === 'small') return buildSmallOpeningUserPrompt(input)
   const aiName = input.aiName ?? 'Emma'
   const topic = input.topic ?? 'casual chat'
   const personality = input.personality ?? 'friendly'
@@ -226,6 +365,11 @@ export function buildOpeningUserPrompt(input: BuildPromptInput = {}): string {
       : "You don't know much about the user yet — keep it open."
 
   const { toneHint, examples } = buildOpeningStyle(personality, topic)
+  // JSON 経路では出力フィールドの指定、テキスト経路では「英文だけ」を念押しする。
+  const closing =
+    (input.outputFormat ?? 'json') === 'text'
+      ? 'Write only the greeting itself, in plain English. No JSON, no translation, no labels.'
+      : 'Set mode="normal", feedback=null, vocabulary=[] for this opening turn.'
 
   return `(SYSTEM_INTERNAL: This is the very first turn of a new conversation. There is no user message yet. You (${aiName}) should speak first.
 
@@ -236,7 +380,26 @@ ${continuityHint}
 Vary your greeting — DON'T just say "Hi! Let's talk about X." Be creative. Example opening styles for this personality (don't copy verbatim — invent your own):
 ${examples.map((e) => `- ${e}`).join('\n')}
 
-Set mode="normal", feedback=null, vocabulary=[] for this opening turn.)`
+${closing})`
+}
+
+/**
+ * small プロファイルの挨拶プロンプト。
+ *
+ * standard 版は tone hint + 例文 3〜4 本(約 150 トークン)を載せているが、
+ * 小型モデルに例文を見せると **そのまま丸写しする**(「don't copy verbatim」は
+ * 効かない)。例を全部落として、やることだけを 2 文で指示する。
+ */
+function buildSmallOpeningUserPrompt(input: BuildPromptInput): string {
+  const topic = input.topic ?? 'casual chat'
+  const closing =
+    (input.outputFormat ?? 'json') === 'text'
+      ? 'Plain English text only.'
+      : 'Use the JSON format from the system prompt.'
+  const continuity = input.lastConversationSummary
+    ? ' You may briefly mention what you talked about last time.'
+    : ''
+  return `(SYSTEM_INTERNAL: You speak first — there is no user message yet. Say hello and ask ONE specific question about "${topic}".${continuity} One or two short sentences. ${closing})`
 }
 
 /**

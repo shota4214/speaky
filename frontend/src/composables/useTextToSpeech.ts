@@ -60,6 +60,35 @@ export function isConversationalEnglishVoice(voice: SpeechSynthesisVoice): boole
   return CONVERSATIONAL_VOICE_BASE_NAMES.some((base) => voice.name.startsWith(base))
 }
 
+/**
+ * 1 発話あたりのウォッチドッグ(onend が来なかったときの保険)の係数。
+ *
+ * macOS の Web Speech は稀に onend / onerror をどちらも発火しないことがあり、
+ * その場合 speak() の Promise が永久に解決されず、会話ループが
+ * 「AI が喋っている」表示のまま止まってマイクが二度と開かない。
+ *
+ * 見積り: 英語の合成音声は rate=1.0 でおよそ 12-16 文字/秒。
+ * 安全側に倒して 1 文字 = 120ms (= 約 8 文字/秒) とし、rate で割る。
+ * 実時間のおよそ 2 倍の猶予になるので、正常な発話を途中で切ることはまず無い。
+ * WATCHDOG_BASE_MS は音声エンジンの起動待ち(最初の発話は数百 ms かかる)分。
+ */
+const WATCHDOG_BASE_MS = 3_000
+const WATCHDOG_MS_PER_CHAR = 120
+/** 極端に短い文でも最低これだけは待つ。 */
+const WATCHDOG_MIN_MS = 5_000
+/**
+ * 上限。会話ループのセグメントは最大 180 文字程度なので通常は 30 秒前後で収まる。
+ * 履歴画面の「もう一度聞く」は長文全体を 1 発話で読むため、正常な発話を
+ * 切らないよう上限は大きめに取る(ハング時の最悪待ち時間とのトレードオフ)。
+ */
+const WATCHDOG_MAX_MS = 180_000
+
+export function watchdogTimeoutMs(text: string, rate: number): number {
+  const effectiveRate = rate > 0 ? rate : 1
+  const estimated = WATCHDOG_BASE_MS + (text.length * WATCHDOG_MS_PER_CHAR) / effectiveRate
+  return Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, Math.round(estimated)))
+}
+
 export interface TTSOptions {
   rate?: number
   pitch?: number
@@ -74,6 +103,15 @@ export interface TTSOptions {
    */
   voicePreference?: string[]
   lang?: string
+}
+
+export interface SpeakOptions extends Partial<TTSOptions> {
+  /**
+   * 発話前に既存の発話を打ち切るか。既定は true(従来の挙動)。
+   * 連続してキューから流し込む場合だけ false にする。true のまま並べると
+   * 次の発話が前の発話を cancel してしまい、最後の 1 文しか聞こえない。
+   */
+  interrupt?: boolean
 }
 
 export function useTextToSpeech(options: TTSOptions = {}) {
@@ -129,16 +167,36 @@ export function useTextToSpeech(options: TTSOptions = {}) {
     return undefined
   }
 
-  async function speak(text: string, overrides: Partial<TTSOptions> = {}): Promise<void> {
+  /**
+   * cancel() のたびに進む世代カウンタ。
+   *
+   * speak() は「cancel → voice 読み込み待ち(await) → speak」という順序なので、
+   * await の最中に会話が停止されると、停止後に utterance が積まれて喋り出す
+   * (= 会話を終わったのに AI が喋り続ける)。世代を await のたびに突き合わせ、
+   * 自分より新しい cancel が入っていたら何もせず解決する。
+   */
+  let generation = 0
+
+  async function speak(text: string, overrides: SpeakOptions = {}): Promise<void> {
     if (!supported.value) {
       throw new Error('Web Speech API SpeechSynthesis is not supported')
     }
-    window.speechSynthesis.cancel()
+    const interrupt = overrides.interrupt ?? true
+    if (interrupt) {
+      generation += 1
+      window.speechSynthesis.cancel()
+    }
+    const myGeneration = generation
+
     const voices = await ensureVoicesLoaded()
+    // await 中に cancel() された。ここで積むと「停止後に喋る」ので捨てる。
+    if (myGeneration !== generation) return
+
+    const effectiveRate = overrides.rate ?? rate
 
     return new Promise<void>((resolve, reject) => {
       const utterance = new SpeechSynthesisUtterance(text)
-      utterance.rate = overrides.rate ?? rate
+      utterance.rate = effectiveRate
       utterance.pitch = overrides.pitch ?? pitch
       utterance.lang = overrides.lang ?? lang
 
@@ -148,28 +206,65 @@ export function useTextToSpeech(options: TTSOptions = {}) {
       const v = pickVoice(voices, effectiveName, effectivePreference)
       if (v) utterance.voice = v
 
+      let settled = false
+      let watchdogId: ReturnType<typeof setTimeout> | null = null
+      function clearWatchdog() {
+        if (watchdogId !== null) {
+          clearTimeout(watchdogId)
+          watchdogId = null
+        }
+      }
+      function finish(fn: () => void) {
+        if (settled) return
+        settled = true
+        clearWatchdog()
+        speaking.value = false
+        fn()
+      }
+
       utterance.onstart = () => {
         speaking.value = true
       }
-      utterance.onend = () => {
-        speaking.value = false
-        resolve()
-      }
+      utterance.onend = () => finish(resolve)
       utterance.onerror = (e) => {
-        speaking.value = false
         const err = e.error as string
         if (err === 'canceled' || err === 'interrupted') {
-          resolve()
+          finish(resolve)
         } else {
-          reject(new Error(`Speech synthesis error: ${err}`))
+          finish(() => reject(new Error(`Speech synthesis error: ${err}`)))
         }
       }
+
+      // 積む直前にもう一度世代を確認する(Promise 生成と speak の間に
+      // cancel() が割り込む余地を潰す)。
+      if (myGeneration !== generation) {
+        finish(resolve)
+        return
+      }
+
+      watchdogId = setTimeout(
+        () => {
+          // onend / onerror がどちらも来なかった。ここで reject すると
+          // 1 文の詰まりが会話ターンごと落としてしまうので、必ず resolve する。
+          console.warn('[tts] onend が来なかったためウォッチドッグで打ち切り:', text.slice(0, 40))
+          finish(() => {
+            try {
+              window.speechSynthesis.cancel()
+            } catch {
+              // cancel 自体が投げても無視(どのみち打ち切る)
+            }
+            resolve()
+          })
+        },
+        watchdogTimeoutMs(text, effectiveRate),
+      )
 
       window.speechSynthesis.speak(utterance)
     })
   }
 
   function cancel() {
+    generation += 1
     window.speechSynthesis.cancel()
     speaking.value = false
   }

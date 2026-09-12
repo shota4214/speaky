@@ -1,9 +1,12 @@
 import express from 'express'
 import cors from 'cors'
 import { existsSync } from 'node:fs'
+import { totalmem } from 'node:os'
 import path from 'node:path'
 import { chatRouter } from './routes/chat.js'
+import { chatStreamRouter } from './routes/chat-stream.js'
 import { extractFactsRouter } from './routes/extract-facts.js'
+import { modelProfileRouter } from './routes/model-profile.js'
 import { modelsRouter } from './routes/models.js'
 import { summarizeRouter } from './routes/summarize.js'
 import { transcribeRouter } from './routes/transcribe.js'
@@ -50,8 +53,49 @@ app.use(
 )
 app.use(express.json({ limit: '10mb' }))
 
+/**
+ * バックエンドが持っている機能の宣言。
+ *
+ * Electron パッケージは frontend を app bundle から、backend を userData から
+ * 読み込み、backend の同期は version gate で走る。つまり
+ * **frontend だけが新しい** 状態が普通に起こりうる(前リリースでこの非対称が
+ * 実際に事故になった)。そのためフロントは「機能があること」を **肯定的に**
+ * 確認してからしか新経路を使ってはいけない。
+ * 古いバックエンドはこのキー自体を返さないので、その場合は
+ * 「ストリーミング無し」と解釈される。
+ */
+const API_FEATURES = [
+  'chat-stream',
+  'chat-opening-stream',
+  'chat-enrich',
+  // 会話プロファイル(standard / small)。フロントはこれがあるときだけ
+  // context.modelProfile を送り、UI に「軽量モード」を表示する。
+  'model-profile',
+  // POST /api/model-profile/preview。設定画面が「この設定で backend は実際に
+  // どのモデル・どのモードで動くのか」を **backend に聞く** ためのもの。
+  // これが無い backend に対して設定画面は推測を表示してはいけない
+  // (モデル名を黙って既定へ落とす旧 backend が実在する)。
+  'model-profile-preview',
+] as const
+const API_VERSION = 4
+
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    apiVersion: API_VERSION,
+    features: API_FEATURES,
+    /**
+     * この Mac の搭載メモリ(バイト)。
+     *
+     * ブラウザ側には積んでいる RAM を知る手段が無い(`deviceMemory` は
+     * Chromium でも最大 8 を返す丸め値で、Electron では当てにならない)。
+     * backend は Node なので 1 行で正確に取れる。
+     * オンボーディングが「このマシンは 8GB なので軽いモデルを薦めます」と
+     * 言えるかどうかがこの 1 行に懸かっている。
+     */
+    totalMemoryBytes: totalmem(),
+  })
 })
 
 // 管理 API 用のトークンを同一オリジンの frontend に渡す。
@@ -86,10 +130,12 @@ app.get('/api/health/ollama', async (_req, res) => {
 })
 
 app.use('/api', chatRouter)
+app.use('/api', chatStreamRouter)
 app.use('/api', summarizeRouter)
 app.use('/api', extractFactsRouter)
 app.use('/api', transcribeRouter)
 app.use('/api', modelsRouter)
+app.use('/api', modelProfileRouter)
 
 // Electron パッケージ用: 同じ Express で frontend dist を serve し、
 // SPA fallback で全ルート(/history, /settings 等)を index.html に解決する。

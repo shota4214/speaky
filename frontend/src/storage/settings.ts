@@ -1,3 +1,9 @@
+import {
+  DEFAULT_LLM_MODEL,
+  inferProfileLevel,
+  isModelProfilePref,
+  type ModelProfilePref,
+} from '../../../backend/src/shared/llm-models'
 import type { Gender, Level, PersonalityPreset } from '../db/types'
 
 const STORAGE_KEY = 'speaky:settings'
@@ -11,8 +17,14 @@ const STORAGE_KEY = 'speaky:settings'
  * - 2: silenceDurationMs のデフォルトを 5000 → 1500 に、
  *      whisperModel のデフォルトを 'medium' → 'small' に変更。
  *      旧デフォルトのまま保存されているものだけを新デフォルトへ移行する。
+ * - 3: modelProfile(auto / standard / small)を新設。
+ *      **キーが増えただけなら版を上げる必要は無い**(merge が欠落を埋める)。
+ *      上げているのは 1 点だけのため: 既に `gemma2:2b` を選んでいる人は
+ *      'auto' だと small プロファイル(短いプロンプト・短い生成・添削なし)へ
+ *      落ちて **挙動が変わる**。その人だけ明示的に 'standard' を書き込んで
+ *      据え置く。これは冪等でない移行(= この仕組みが存在する理由そのもの)。
  */
-export const SETTINGS_SCHEMA_VERSION = 2
+export const SETTINGS_SCHEMA_VERSION = 3
 
 /** v1 時点のデフォルト値。移行判定にのみ使う。 */
 const LEGACY_DEFAULT_SILENCE_MS = 5000
@@ -48,19 +60,26 @@ export const VALID_WHISPER_MODELS = new Set<WhisperModel>([
 ])
 
 /**
- * バックエンドが会話に使える LLM の allowlist(backend/src/services/ollama.ts の
- * ALLOWED_LLM_MODELS とミラー)。allowlist 外を指定すると backend が default に
- * フォールバックするため、設定画面の選択肢はこの集合に絞る。
- * ※ backend と手動同期が必要。片方だけ変更しないこと。
+ * 会話に使える LLM の判定は **backend/src/shared/llm-models.ts が唯一の出典**。
+ *
+ * v1.1.0 までは同じ一覧をここに手書きでミラーしていて、CLAUDE.md にも
+ * 「手動同期が必要」と書いてあった。片側だけ足すと「設定画面には出るのに
+ * backend が既定へ落とす」(またはその逆)という、ユーザーからは原因の
+ * 見えない不整合になる。二重化そのものを消したので、ここは再 export だけ。
  */
-export const ALLOWED_LLM_MODELS = new Set<string>([
-  'llama3.2:3b',
-  'llama3.1:8b',
-  'gemma2:9b',
-  'gemma2:2b',
-  'qwen2.5:7b',
-  'qwen2.5:14b',
-])
+export {
+  BUNDLED_LLM_MODEL,
+  DEFAULT_LLM_MODEL,
+  findCatalogEntry,
+  isAllowedLlmModel,
+  LLM_CATALOG,
+  llmParameterBillions,
+  RECOMMENDED_DOWNLOAD_LLM_MODEL,
+  resolveProfileLevel,
+  type LlmCatalogEntry,
+  type ModelProfileLevel,
+  type ModelProfilePref,
+} from '../../../backend/src/shared/llm-models'
 
 export type DarkModePref = 'system' | 'light' | 'dark'
 
@@ -87,6 +106,13 @@ export interface AppSettings {
   }
   silenceDurationMs: number
   llmModel: string
+  /**
+   * 会話プロファイルの指定。
+   * - 'auto'     : モデル名のパラメータ数から backend が推定(2B 以下 = small)
+   * - 'standard' : 常に従来設定(長いプロンプト / 履歴 10 往復 / 添削あり)
+   * - 'small'    : 常に軽量設定(短いプロンプト / 履歴 4 往復 / 日本語訳のみ)
+   */
+  modelProfile: ModelProfilePref
   whisperModel: WhisperModel
   darkMode: DarkModePref
   ttsRateConnectedToLevel: boolean
@@ -99,6 +125,15 @@ export interface AppSettings {
   ttsPitch: number
   /** AI 返答に日本語訳を表示するか。true(表示)がデフォルト。 */
   showJapanese: boolean
+  /**
+   * 返答のストリーミング読み上げを使うか(既定 true)。
+   *
+   * **キルスイッチ**。バックエンドを差し替えずに、クライアント側だけで
+   * 旧来の一括生成へ戻せるようにするためのもの。
+   * true でも、バックエンドが `/api/health` の features で機能を申告していなければ
+   * ストリーミングは使われない(機能検出は常に肯定的に行う)。
+   */
+  streaming: boolean
   lastCleanupAt: number | null
   defaultLevel: Level
   /** 保存済み設定のスキーマ版。欠落 = 1(v1.0.0 以前)として扱う。 */
@@ -119,7 +154,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // 1.5秒: 話し終わってから送信されるまでの猶予。設定画面で 1-15 秒に調整可能。
   // 5秒だと毎ターン無言の待ち時間が乗って体感が大幅に悪化するため短縮した。
   silenceDurationMs: 1500,
-  llmModel: 'llama3.2:3b',
+  // ⚠️ **必ず同梱モデル**(backend/src/shared/llm-models.ts の BUNDLED_LLM_MODEL)。
+  // 既定が同梱物でないと、ネットの無い初回起動が「選ばれているモデルを取得できない」
+  // 行き止まりになる。v1.2.0 で 3B → 1B に変更した(DMG も約 2.67GB → 約 1.5GB)。
+  // 1B は自動判定で軽量モード(短い返答 / 添削・単語なし)になる — これは意図した
+  // 結果で、メモリに余裕のある人には設定画面から 3B の取得を案内する。
+  llmModel: DEFAULT_LLM_MODEL,
+  // 新規ユーザーは自動判定。1B / 1.5B を選べば自動で軽量モードになる。
+  modelProfile: 'auto',
   // small(多言語・約488MB): 8GB Mac でも現実的な速度/RAM。日本語入力を扱うので `.en` は不可。
   whisperModel: 'small',
   darkMode: 'system',
@@ -127,6 +169,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ttsRate: 1.0,
   ttsPitch: 1.0,
   showJapanese: true,
+  streaming: true,
   lastCleanupAt: null,
   defaultLevel: 'intermediate',
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -207,11 +250,39 @@ export function loadSettings(): AppSettings {
         merged.whisperModel = DEFAULT_SETTINGS.whisperModel
       }
     }
+    // --- スキーマ移行(2 → 3): 既存ユーザーの会話プロファイルを据え置く ---
+    // v2 までは全モデルが standard 相当(長いプロンプト / 履歴 10 往復 / 添削あり)
+    // で動いていた。新設の 'auto' は 2B 以下を small へ落とすので、
+    // **既に 2B を選んでいた人だけ黙って挙動が変わる**。その人には明示的に
+    // 'standard' を書き込んで現状維持し、それ以外(新規含む)は 'auto' にする。
+    //
+    // ⚠️ この移行は **冪等でない**。移行後にユーザーが自分で 'auto' へ戻しても、
+    // 再実行されればまた 'standard' に引き戻される。下の「移行したら即保存」
+    // (needsMigration → saveSettings)が効いていないとこれが毎起動起きる。
+    if (storedVersion < 3) {
+      // ⚠️ **`merged` ではなく `parsed` の値で判定する**。merged はキーが欠けていると
+      // 新しいデフォルト(= 同梱モデル。v1.2.0 で 1B になった)で埋まるため、
+      // 「llmModel を保存していない旧ユーザー」が新デフォルトの 1B を根拠に
+      // standard へ据え置かれてしまう。据え置くべきなのは
+      // **自分で 2B 以下を選んで保存していた人**だけ。
+      const storedModel = typeof parsed.llmModel === 'string' ? parsed.llmModel : null
+      merged.modelProfile =
+        storedModel !== null && inferProfileLevel(storedModel) === 'small' ? 'standard' : 'auto'
+    }
+    // 壊れた値(手編集・将来版からのダウングレード)は既定へ戻す。
+    if (!isModelProfilePref(merged.modelProfile)) {
+      merged.modelProfile = DEFAULT_SETTINGS.modelProfile
+    }
     merged.schemaVersion = SETTINGS_SCHEMA_VERSION
 
     // showJapanese は旧バージョンに無いので欠落時はデフォルト(表示)に
     if (typeof merged.showJapanese !== 'boolean') {
       merged.showJapanese = DEFAULT_SETTINGS.showJapanese
+    }
+    // streaming も旧バージョンに無い。欠落時はデフォルト(有効)に。
+    // 値の形は変わらないのでスキーマ版は上げない(v2 のまま)。
+    if (typeof merged.streaming !== 'boolean') {
+      merged.streaming = DEFAULT_SETTINGS.streaming
     }
     // silenceDurationMs を許容範囲に clamp
     merged.silenceDurationMs = clamp(

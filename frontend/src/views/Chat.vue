@@ -69,7 +69,8 @@ onMounted(async () => {
 })
 
 watch(
-  () => conversation.messages.length,
+  // 生成中の擬似メッセージが伸びる間もログ末尾に追従させる。
+  () => [conversation.messages.length, loop.streamingReplyEn.value],
   async () => {
     await nextTick()
     logEndRef.value?.scrollIntoView({ behavior: 'smooth' })
@@ -216,7 +217,9 @@ async function saveAllFromMessage(message: Message) {
 }
 
 function replayText(text: string) {
-  loop.tts.speak(text)
+  // 直接 TTS を叩かずキュー経由で割り込む(AI の読み上げ中に押されても
+  // 二重再生にならない)。詳細は useConversationLoop.replay のコメント。
+  loop.replay(text)
 }
 
 function formatTime(d: Date): string {
@@ -228,6 +231,23 @@ function formatTime(d: Date): string {
 
 function isVocabSaved(message: Message, word: string): boolean {
   return savedVocab.value.has(`${message.id}:${word}`)
+}
+
+// --- 日本語訳の後追い(enrich)状態 ---
+// 「日本語訳を必ず表示」という約束があるので、届くまでは待機表示、
+// 失敗したら再取得ボタンを出す(空行のまま放置しない)。
+function isEnrichPending(message: Message): boolean {
+  return loop.enrichPendingIds.value.has(message.id)
+}
+function isEnrichFailed(message: Message): boolean {
+  return loop.enrichFailedIds.value.has(message.id)
+}
+function showJapaneseLine(message: Message): boolean {
+  if (!settings.settings.showJapanese) return false
+  return !!message.replyJa || isEnrichPending(message) || isEnrichFailed(message)
+}
+async function retryJapanese(message: Message) {
+  await loop.retryEnrich(message.id)
 }
 </script>
 
@@ -242,6 +262,18 @@ function isVocabSaved(message: Message, word: string): boolean {
             <div class="mt-1 flex items-center gap-2 text-xs">
               <LevelBadge :level="conversation.level" size="sm" />
               <TopicChip :label="conversation.topic" size="sm" />
+              <!--
+                backend が申告したプロファイル(推定ではなく実際に動いた値)。
+                軽量モードは添削も単語も出ないので、「出ない」のか「壊れている」のかを
+                ユーザーが区別できるようにここで明示する。
+              -->
+              <span
+                v-if="loop.activeProfile.value === 'small'"
+                class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300"
+                title="小さいモデル向けの設定で動いています(返答は1〜2文・添削と単語は出ません)"
+              >
+                🪶 軽量モード
+              </span>
               <span v-if="conversation.isPaused" class="text-amber-500"> ⏸ 一時停止中 </span>
             </div>
           </div>
@@ -293,11 +325,21 @@ function isVocabSaved(message: Message, word: string): boolean {
                 class="max-w-[75%] rounded-3xl rounded-bl-lg bg-surface px-4 py-3 shadow-glow-sm ring-1 ring-border"
               >
                 <div class="text-sm">{{ m.replyEn }}</div>
-                <div
-                  v-if="settings.settings.showJapanese && m.replyJa"
-                  class="mt-1 text-xs text-text-muted"
-                >
-                  {{ m.replyJa }}
+                <div v-if="showJapaneseLine(m)" class="mt-1 text-xs text-text-muted">
+                  <template v-if="m.replyJa">{{ m.replyJa }}</template>
+                  <template v-else-if="isEnrichPending(m)">
+                    <span class="opacity-60">日本語訳を準備中...</span>
+                  </template>
+                  <template v-else>
+                    <span class="opacity-60">日本語訳を取得できませんでした</span>
+                    <button
+                      v-if="loop.canRetryEnrich()"
+                      class="ml-2 text-[10px] text-primary hover:underline"
+                      @click="retryJapanese(m)"
+                    >
+                      ↻ 再取得
+                    </button>
+                  </template>
                 </div>
                 <div class="mt-2 flex items-center gap-2">
                   <button
@@ -371,6 +413,20 @@ function isVocabSaved(message: Message, word: string): boolean {
                   </button>
                 </li>
               </ul>
+            </div>
+          </div>
+        </div>
+        <!--
+          生成中の返答。まだ DB には無い「擬似メッセージ」で、done が来た時点で
+          本物のメッセージに置き換わる(ここでは保存しない)。
+        -->
+        <div v-if="loop.streamingReplyEn.value" class="flex flex-col items-start space-y-2">
+          <div class="flex w-full justify-start">
+            <div
+              class="max-w-[75%] rounded-3xl rounded-bl-lg bg-surface px-4 py-3 shadow-glow-sm ring-1 ring-border ring-dashed"
+            >
+              <div class="text-sm">{{ loop.streamingReplyEn.value }}</div>
+              <div class="mt-1 text-[10px] text-text-muted">生成中...</div>
             </div>
           </div>
         </div>

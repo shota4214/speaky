@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AiMascot from '../components/AiMascot.vue'
 import BaseButton from '../components/BaseButton.vue'
@@ -11,10 +11,19 @@ import {
   getWhisperCppStatus,
   listOllamaModels,
   listWhisperModels,
+  probeBackendFeatures,
   pullOllamaModel,
 } from '../services/api'
 import type { PersonalityPreset } from '../db/types'
+import { findCatalogEntry } from '../storage/settings'
 import { useSettingsStore } from '../stores/settings'
+import {
+  formatMemoryGb,
+  isLowMemoryMachine,
+  NO_FEATURES,
+  type BackendFeatures,
+} from '../utils/backend-features'
+import { buildOnboardingLlmOptions, chooseOnboardingLlm } from '../utils/onboarding-model'
 
 const router = useRouter()
 const settings = useSettingsStore()
@@ -82,9 +91,27 @@ watch(step, (s) => {
   if (s === 4) refreshStep4Status()
 })
 
-onMounted(() => {
+/**
+ * この Mac の搭載メモリ。**このステージで一番効く 1 行**。
+ *
+ * 8GB の Mac に 9B を選ばせると「重くて使えない」まま離脱するが、
+ * ユーザーは自分が何を選ぶべきか判断する材料を持っていない
+ * (「軽量」「標準」「高品質」だけでは、自分の機械がどれなのか分からない)。
+ * backend が os.totalmem() を返すので、**このマシンは何 GB か**を言い切って
+ * 既定の選択もそちらへ寄せる。メモリが取れないときは何も推測しない。
+ */
+const backendFeatures = ref<BackendFeatures>(NO_FEATURES)
+const memoryLabel = computed(() => formatMemoryGb(backendFeatures.value))
+const lowMemory = computed(() => isLowMemoryMachine(backendFeatures.value))
+
+onMounted(async () => {
   if (step.value === 2) startOllamaPolling()
   if (step.value === 4) refreshStep4Status()
+
+  backendFeatures.value = await probeBackendFeatures()
+  // refreshInstalledLlms が中で applyAutoLlmSelection まで走らせる
+  // (一覧が変われば選択もやり直す、が唯一の置き場所)。
+  await refreshInstalledLlms()
 })
 
 onUnmounted(() => {
@@ -92,6 +119,8 @@ onUnmounted(() => {
 })
 
 const llmModel = ref(settings.settings.llmModel)
+/** ユーザーがこの画面で LLM を選び直したか(自動選択で上書きしないため)。 */
+const userPickedLlm = ref(false)
 const whisperModel = ref(settings.settings.whisperModel)
 const aiName = ref(settings.settings.aiCharacter.name)
 const aiGender = ref<'female' | 'male'>(settings.settings.aiCharacter.gender)
@@ -128,13 +157,90 @@ const whisperProgress = ref(0)
 const whisperStatus = ref('')
 const whisperError = ref('')
 
-async function refreshStep4Status() {
+/**
+ * インストール済みの LLM 一覧。**自動選択の前に必ず取る**。
+ * 取れなければ空配列 = 「何も入っていない」と同じ扱いにして、
+ * 同梱モデルを選ぶ(推測でユーザーを行き止まりに置かない)。
+ */
+const installedLlms = ref<string[]>([])
+
+async function refreshInstalledLlms(): Promise<void> {
   try {
-    const llmList = await listOllamaModels()
-    llmPulled.value = llmList.models.some((m) => m.name === llmModel.value)
+    const list = await listOllamaModels()
+    installedLlms.value = list.models.map((m) => m.name)
   } catch {
-    llmPulled.value = false
+    installedLlms.value = []
   }
+  // ⚠️ **一覧を取り直したら自動選択もやり直す**。
+  // 最初のプローブは Ollama がまだ応答しない段階で走ることがあり、そのときは
+  // 「1 つも入っていない」= 同梱モデル + 「3B の取得を薦める」案内 で確定していた。
+  // あとから一覧が埋まっても選択と案内は mount 時のまま固定で、3B を持っている
+  // 16GB 機が最後まで 1B のまま & 不要な DL 案内を出し続けていた。
+  applyAutoLlmSelection()
+}
+
+/**
+ * この Mac に合わせて LLM を選択状態にする。
+ *
+ * ⚠️ **インストール済みの中からしか選ばない**(utils/onboarding-model.ts)。
+ * v1.1.0 は 12GB 未満なら無条件に 1B を選んでいたが、同梱は 3B だけだったので
+ * オフラインの 8GB 機では「選ばれたモデルを取得できず次へ進めない」
+ * 行き止まりになっていた。ユーザーが自分で選び直していたら尊重する。
+ */
+function applyAutoLlmSelection(): void {
+  // 自分で選び直した人の選択は絶対に動かさない。
+  // DL 中も動かさない(いま引いているモデルの足元を変えないため)。
+  if (userPickedLlm.value || llmPulling.value) return
+  const selection = chooseOnboardingLlm({
+    installed: installedLlms.value,
+    lowMemory: lowMemory.value,
+    memoryKnown: backendFeatures.value.totalMemoryBytes !== null,
+  })
+  // 案内は毎回更新する(3B が入った瞬間に消えるべき)。
+  recommendedDownload.value = selection.recommendedDownload
+  if (llmModel.value === selection.model) return
+  llmModel.value = selection.model
+  // 選択が動いたらステップ 4 の「取得済みか」も引き直す。
+  llmPulled.value = installedLlms.value.includes(selection.model)
+}
+
+/**
+ * メモリに余裕がある Mac に薦めたいが、まだ入っていないモデル(通常 3B)。
+ * **案内するだけで選択は動かさない** — オフラインでも先へ進めることが優先。
+ */
+const recommendedDownload = ref<string | null>(null)
+
+const recommendedDownloadLabel = computed(() => {
+  const tag = recommendedDownload.value
+  if (!tag) return null
+  const entry = findCatalogEntry(tag)
+  return entry ? `${entry.label}(${entry.sizeLabel})` : tag
+})
+
+/**
+ * 選択肢はカタログから作る(設定画面の取得フォームと同じ出典)。
+ * ただし **いま選ばれているモデルは必ず入れる** — カタログに無いモデルが
+ * 選ばれることがある(この Mac に入っているのがそれだけ、という場合)。
+ * 詳細は utils/onboarding-model.ts の注記。
+ */
+const llmOptions = computed(() =>
+  buildOnboardingLlmOptions({ selected: llmModel.value, installed: installedLlms.value }),
+)
+
+/** 今選ばれているモデルがディスクにあるか(= このまま会話を始められるか)。 */
+const selectedLlmInstalled = computed(
+  () => llmPulled.value || installedLlms.value.includes(llmModel.value),
+)
+
+function onLlmPicked(): void {
+  userPickedLlm.value = true
+  // 選び直したら「取得済みか」を即座に引き直す(step 4 の「次へ」の判定に効く)。
+  llmPulled.value = installedLlms.value.includes(llmModel.value)
+}
+
+async function refreshStep4Status() {
+  await refreshInstalledLlms()
+  llmPulled.value = installedLlms.value.includes(llmModel.value)
   try {
     const wList = await listWhisperModels()
     whisperDownloaded.value = wList.models.some((m) => m.name === `ggml-${whisperModel.value}.bin`)
@@ -163,6 +269,7 @@ async function pullLlm() {
     })
     llmPulled.value = true
     llmPullStatus.value = 'done'
+    await refreshInstalledLlms()
   } catch (e) {
     llmPullError.value = (e as Error).message
   } finally {
@@ -307,16 +414,66 @@ function complete() {
           <p class="text-sm text-text-muted">
             利用する LLM と Whisper のモデルを選びます。後から設定で変更可能です。
           </p>
+
+          <!--
+            このマシンのメモリ。「軽量 / 標準 / 高品質」だけでは、ユーザーは
+            自分の Mac がどれに当たるのか判断できない。言い切る。
+          -->
+          <div
+            v-if="lowMemory"
+            class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200"
+          >
+            💡 この Mac のメモリは <strong>{{ memoryLabel }}</strong> です。
+            <strong>同梱の軽量モデル</strong>を選んであります(ダウンロード不要です)。
+            大きいモデルを選ぶと 1 回の返答に 30 秒以上かかったり、途中で止まったりします。
+          </div>
+          <div v-else-if="memoryLabel" class="text-xs text-text-muted">
+            この Mac のメモリ: <strong class="text-text">{{ memoryLabel }}</strong>
+          </div>
+
+          <!--
+            メモリに余裕がある Mac への案内。**選択は動かさない**。
+            ネットが無い環境でも「入っているモデル」で先へ進めることが最優先で、
+            3B は入っていれば選ばれるし、入っていなければここで薦めるだけにする。
+          -->
+          <div
+            v-if="recommendedDownloadLabel"
+            class="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:bg-sky-900/20 dark:text-sky-200"
+          >
+            💡 この Mac はメモリに余裕があります(<strong>{{ memoryLabel }}</strong
+            >)。同梱の軽量モデルでもすぐ会話できますが、
+            <strong>{{ recommendedDownloadLabel }}</strong>
+            をダウンロードすると<strong>標準モード</strong>になり、
+            <strong>添削と単語カード</strong>が出るようになります。
+            次のステップで取得できます(オフラインなら後から設定画面でも取得できます)。
+          </div>
+
           <div>
             <label class="block text-sm font-medium">LLM</label>
             <select
               v-model="llmModel"
               class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+              @change="onLlmPicked"
             >
-              <option value="llama3.2:3b">⚡ 軽量(推奨) (Llama 3.2 3B / ~2GB)</option>
-              <option value="gemma2:9b">⚖️ 標準 (Gemma 2 9B / ~5.5GB)</option>
-              <option value="qwen2.5:14b">💎 高品質 (Qwen 2.5 14B / ~9GB)</option>
+              <option v-for="o in llmOptions" :key="o.value" :value="o.value">
+                {{ o.label }}
+              </option>
             </select>
+            <p
+              v-if="!selectedLlmInstalled"
+              class="mt-1 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+            >
+              ⚠ このモデルはまだ入っていません。次のステップでダウンロードが必要です(要ネット接続)。
+              オフラインのままなら「同梱」と書かれたモデルを選んでください。
+            </p>
+            <p class="mt-1 text-xs text-text-muted">
+              2B 以下のモデルを選ぶと <strong class="text-text">軽量モード</strong> で動きます(AI
+              への指示を短くし、返答を 1〜2 文に制限。<strong class="text-text"
+                >添削と単語カードは出ず</strong
+              >、日本語訳だけを作ります)。 同梱の Llama 3.2 1B もこれに当たります —
+              小さいモデルの添削は誤りが多く、 間違った学習材料を出すより出さない方がよいためです。
+              大きいモデルを入れれば自動で標準モードに戻り、設定画面で固定もできます。
+            </p>
           </div>
           <div>
             <label class="block text-sm font-medium">Whisper</label>
@@ -347,17 +504,23 @@ function complete() {
                 <div class="text-sm font-medium">
                   LLM: <code class="font-mono">{{ llmModel }}</code>
                 </div>
-                <div class="text-xs text-text-muted">Ollama 経由でダウンロード</div>
+                <div class="text-xs text-text-muted">
+                  {{
+                    selectedLlmInstalled
+                      ? '取得済み(ダウンロード不要)'
+                      : 'Ollama 経由でダウンロード(要ネット接続)'
+                  }}
+                </div>
               </div>
               <span
-                v-if="llmPulled"
+                v-if="selectedLlmInstalled"
                 class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
               >
                 ✓ 取得済み
               </span>
             </div>
             <BaseButton
-              v-if="!llmPulled"
+              v-if="!selectedLlmInstalled"
               class="mt-3"
               size="sm"
               :disabled="llmPulling"
@@ -522,7 +685,7 @@ function complete() {
           v-if="step < 6"
           :disabled="
             (step === 2 && !ollamaReady) ||
-            (step === 4 && (!llmPulled || !whisperCppBuilt || !whisperDownloaded))
+            (step === 4 && (!selectedLlmInstalled || !whisperCppBuilt || !whisperDownloaded))
           "
           @click="next"
         >

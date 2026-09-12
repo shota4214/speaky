@@ -4,17 +4,54 @@ import { useRoute } from 'vue-router'
 import BaseCard from '../components/BaseCard.vue'
 import LevelBadge from '../components/LevelBadge.vue'
 import TopicChip from '../components/TopicChip.vue'
+import { useSpeechQueue } from '../composables/useSpeechQueue'
 import { useTextToSpeech } from '../composables/useTextToSpeech'
 import { conversationsRepo } from '../db/repos/conversations'
 import { messagesRepo } from '../db/repos/messages'
 import type { Conversation, Message } from '../db/types'
+import { chatEnrich, probeBackendFeatures } from '../services/api'
+import { useSettingsStore } from '../stores/settings'
+import {
+  FEATURE_CHAT_ENRICH,
+  FEATURE_MODEL_PROFILE,
+  hasFeature,
+  NO_FEATURES,
+  type BackendFeatures,
+} from '../utils/backend-features'
 
 const route = useRoute()
+const settings = useSettingsStore()
 const tts = useTextToSpeech()
+/**
+ * 読み上げはキュー経由に統一する。この画面には会話ループが無いので
+ * 単独で tts.speak を呼んでも壊れないが、「割り込み再生の入口は speakNow だけ」
+ * という約束を画面ごとに破ると、会話画面で潰したばかりの二重再生が
+ * コピペで戻ってくる。
+ */
+const speechQueue = useSpeechQueue(tts)
 
 const conversation = ref<Conversation | null>(null)
 const messages = ref<Message[]>([])
 const loading = ref(true)
+
+/**
+ * 日本語訳の再取得。
+ *
+ * なぜ履歴画面にも要るのか: 日本語訳は会話中に **後追い(enrich)** で入る。
+ * 次のターンを始めるとき前のターンの enrich は打ち切られるし、会話終了後の
+ * 一括埋め合わせ(backfillEnrichment)も、その間にユーザーが次の会話を始めれば
+ * 途中で止まる。その結果 **日本語訳の無い行が履歴に残る**。
+ * 会話画面には再取得ボタンがあるのに履歴画面には無かったので、
+ * そこへ辿り着いた行は「二度と訳が入らない」状態だった —
+ * 「日本語訳を必ず表示する」という製品上の約束が最後で破れていた。
+ */
+const backendFeatures = ref<BackendFeatures>(NO_FEATURES)
+/** 再取得中のメッセージ ID。 */
+const retryingIds = ref<Set<string>>(new Set())
+/** 再取得したが訳を取れなかったメッセージ ID(もう一度押せる)。 */
+const retryFailedIds = ref<Set<string>>(new Set())
+
+const canRetryJapanese = computed(() => hasFeature(backendFeatures.value, FEATURE_CHAT_ENRICH))
 
 onMounted(async () => {
   const id = route.params.id as string
@@ -23,7 +60,83 @@ onMounted(async () => {
     messages.value = await messagesRepo.listByConversation(id)
   }
   loading.value = false
+  // 機能検出は画面マウント時(起動時に取ると backend がまだ listen していない)。
+  backendFeatures.value = await probeBackendFeatures()
 })
+
+/** 日本語訳が欠けている AI 返答か(= 再取得の対象)。 */
+function isJapaneseMissing(m: Message): boolean {
+  return m.role === 'ai' && !!m.replyEn?.trim() && !m.replyJa?.trim()
+}
+
+/** そのメッセージの直前のユーザー発話(添削の材料)。 */
+function previousUserText(messageId: string): string | null {
+  const idx = messages.value.findIndex((m) => m.id === messageId)
+  for (let i = idx - 1; i >= 0; i--) {
+    const m = messages.value[i]!
+    if (m.role === 'user') return m.userText
+  }
+  return null
+}
+
+function setFlag(target: typeof retryingIds, id: string, on: boolean): void {
+  const next = new Set(target.value)
+  if (on) next.add(id)
+  else next.delete(id)
+  target.value = next
+}
+
+async function retryJapanese(message: Message): Promise<void> {
+  if (!message.replyEn || retryingIds.value.has(message.id)) return
+  setFlag(retryingIds, message.id, true)
+  setFlag(retryFailedIds, message.id, false)
+  try {
+    const enrichment = await chatEnrich(message.replyEn, previousUserText(message.id), {
+      aiName: settings.settings.aiCharacter.name,
+      level: conversation.value?.level,
+      topic: conversation.value?.topic,
+      model: settings.settings.llmModel,
+      ...(hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)
+        ? { modelProfile: settings.settings.modelProfile }
+        : {}),
+    })
+    // 訳が空の enrich は成功ではない。会話画面(applyEnrichment)と同じ判定にする。
+    if (!enrichment.replyJa.trim()) {
+      setFlag(retryFailedIds, message.id, true)
+      return
+    }
+    // ⚠️ ユーザーが頼んだのは **日本語訳** であって添削のやり直しではない。
+    // 既に添削 / 単語が入っている行を今のモデル(当時と別かもしれない、
+    // しかも小さいかもしれない)の出力で差し替えると、黙って劣化させることになる。
+    // 空のときだけ埋める。
+    const updated = await messagesRepo.update(message.id, {
+      replyJa: enrichment.replyJa,
+      ...(message.feedback || !enrichment.feedback
+        ? {}
+        : {
+            feedback: {
+              userSaid: enrichment.feedback.user_said,
+              corrected: enrichment.feedback.corrected,
+              explanation: enrichment.feedback.explanation,
+            },
+          }),
+      ...((message.vocabulary?.length ?? 0) > 0 || enrichment.vocabulary.length === 0
+        ? {}
+        : { vocabulary: enrichment.vocabulary }),
+    })
+    if (updated) {
+      messages.value = messages.value.map((m) => (m.id === updated.id ? updated : m))
+    } else {
+      // 行が消えている(30 日で削除された等)。押しっぱなしに見せない。
+      setFlag(retryFailedIds, message.id, true)
+    }
+  } catch (e) {
+    console.warn('[history] 日本語訳の再取得に失敗:', e)
+    setFlag(retryFailedIds, message.id, true)
+  } finally {
+    setFlag(retryingIds, message.id, false)
+  }
+}
 
 const durationMin = computed(() => {
   const c = conversation.value
@@ -42,7 +155,9 @@ function formatTime(d: Date): string {
 }
 
 function replay(text: string) {
-  tts.speak(text)
+  const trimmed = text.trim()
+  if (!trimmed) return
+  speechQueue.speakNow(trimmed)
 }
 </script>
 
@@ -92,7 +207,25 @@ function replay(text: string) {
                 class="max-w-[75%] rounded-2xl rounded-bl-md bg-surface px-4 py-3 shadow-sm ring-1 ring-border"
               >
                 <div class="text-sm">{{ m.replyEn }}</div>
-                <div class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
+                <!--
+                  日本語訳は後追い(enrich)で入るため、届かないまま保存された行が
+                  ありうる。無条件に出すと空行だけが残るので、あるときだけ描画する。
+                -->
+                <div v-if="m.replyJa" class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
+                <div v-else-if="isJapaneseMissing(m)" class="mt-1 text-xs text-text-muted">
+                  <span class="opacity-60">
+                    {{
+                      retryingIds.has(m.id) ? '日本語訳を取得中...' : '日本語訳が保存されていません'
+                    }}
+                  </span>
+                  <button
+                    v-if="canRetryJapanese && !retryingIds.has(m.id)"
+                    class="ml-2 text-[10px] text-primary hover:underline"
+                    @click="retryJapanese(m)"
+                  >
+                    {{ retryFailedIds.has(m.id) ? '↻ もう一度試す' : '↻ 再取得' }}
+                  </button>
+                </div>
                 <button
                   class="mt-2 text-[10px] text-text-muted hover:text-text"
                   @click="replay(m.replyEn ?? '')"

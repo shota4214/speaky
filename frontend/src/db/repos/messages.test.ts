@@ -117,4 +117,90 @@ describe('messagesRepo', () => {
     expect(await messagesRepo.listByConversation('conv-3')).toHaveLength(0)
     expect(await messagesRepo.listByConversation('conv-4')).toHaveLength(1)
   })
+
+  it('updates an existing message (enrich の後追い反映)', async () => {
+    const created = await messagesRepo.create({
+      conversationId: 'conv-5',
+      timestamp: new Date(),
+      role: 'ai',
+      userText: null,
+      inputLanguage: null,
+      replyEn: 'Oh nice, where did you go?',
+      replyJa: null,
+      feedback: null,
+      vocabulary: [],
+      mode: 'normal',
+    })
+
+    const updated = await messagesRepo.update(created.id, {
+      replyJa: 'いいね、どこに行ったの?',
+      feedback: { userSaid: 'I go', corrected: 'I went', explanation: '過去形に' },
+      vocabulary: [{ word: 'hiking', meaning: 'ハイキング', example: null }],
+    })
+
+    expect(updated?.replyJa).toBe('いいね、どこに行ったの?')
+    expect(updated?.feedback?.corrected).toBe('I went')
+    expect(updated?.vocabulary).toHaveLength(1)
+    // 英文と id は保たれる
+    expect(updated?.replyEn).toBe('Oh nice, where did you go?')
+    expect(updated?.id).toBe(created.id)
+
+    const persisted = await messagesRepo.listByConversation('conv-5')
+    expect(persisted[0]?.replyJa).toBe('いいね、どこに行ったの?')
+  })
+
+  it('update returns undefined for a missing id (中断したターンの id を渡しても壊れない)', async () => {
+    expect(await messagesRepo.update('does-not-exist', { replyJa: 'x' })).toBeUndefined()
+  })
+
+  /**
+   * null を渡したらフィールドを **消せる** こと。
+   * `patch.x ?? existing.x` で書くと null が既存値に戻され、
+   * 「間違った添削を消す」といった操作ができない(呼び出し側からは
+   * 成功したように見えるので気づけない)。
+   */
+  it('null を渡すと feedback / vocabulary を消せる', async () => {
+    const created = await messagesRepo.create({
+      conversationId: 'conv-6',
+      timestamp: new Date(),
+      role: 'ai',
+      userText: null,
+      inputLanguage: null,
+      replyEn: 'Oh nice!',
+      replyJa: 'いいね!',
+      feedback: { userSaid: 'I go', corrected: 'I went', explanation: '過去形に' },
+      vocabulary: [{ word: 'hiking', meaning: 'ハイキング', example: null }],
+      mode: 'normal',
+    })
+
+    const cleared = await messagesRepo.update(created.id, { feedback: null, vocabulary: null })
+    expect(cleared?.feedback).toBeNull()
+    expect(cleared?.vocabulary).toBeNull()
+
+    const persisted = await messagesRepo.listByConversation('conv-6')
+    expect(persisted[0]?.feedback).toBeNull()
+    expect(persisted[0]?.vocabulary).toBeNull()
+    // 触っていないフィールドは残る
+    expect(persisted[0]?.replyJa).toBe('いいね!')
+  })
+
+  it('patch に入れなかったフィールドは既存値のまま', async () => {
+    const created = await messagesRepo.create({
+      conversationId: 'conv-7',
+      timestamp: new Date(),
+      role: 'ai',
+      userText: null,
+      inputLanguage: null,
+      replyEn: 'Oh nice!',
+      replyJa: null,
+      feedback: { userSaid: 'I go', corrected: 'I went', explanation: '過去形に' },
+      vocabulary: [{ word: 'hiking', meaning: 'ハイキング', example: null }],
+      mode: 'normal',
+    })
+
+    const updated = await messagesRepo.update(created.id, { replyJa: 'いいね!' })
+    expect(updated?.feedback?.corrected).toBe('I went')
+    expect(updated?.vocabulary).toHaveLength(1)
+    expect(updated?.replyJa).toBe('いいね!')
+  })
 })

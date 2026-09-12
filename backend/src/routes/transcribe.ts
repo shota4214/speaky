@@ -13,8 +13,80 @@ import {
   whisperModelExists,
   whisperModelPath,
 } from '../services/whisper-paths.js'
+import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
+import { TRANSCRIBE_BUDGET_MS } from '../shared/request-budget.js'
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * 転写が予算内に終わらなかったことを表すエラー。
+ * ルートはこれを 504 + code:'TIMEOUT' に変換する。
+ */
+class TranscribeTimeoutError extends Error {
+  constructor(label: string, budgetMs: number) {
+    super(`音声認識が時間内に終わりませんでした(${label} / ${budgetMs}ms)`)
+    this.name = 'TranscribeTimeoutError'
+  }
+}
+
+/**
+ * 1 リクエスト分の残り時間を持つ予算。
+ *
+ * ⚠️ **これが v1.1.0 まで唯一存在しなかった締め切り**だった。
+ * 転写は毎ターン必ず通る経路なのに、クライアント側にもサーバー側にも
+ * 時間の上限が無く、whisper の子プロセスが詰まる(メモリ逼迫)か
+ * ソケットが半開きになる(スリープ復帰)と、会話ループは
+ * 「認識中」のままマイクを閉じて永久に戻ってこなかった。
+ *
+ * ⚠️ **whisper の子プロセス自体は kill できない**。nodejs-whisper は
+ * `shelljs.exec(..., {async:true}, cb)` の戻り値(ChildProcess)を
+ * 外に出さないので、こちらから握れるハンドルが無い。
+ * よってここで打ち切れるのは「待つのをやめる」ところまでで、
+ * 走っている whisper-cli は自然に終わるまで残る(音声は最長でも
+ * 1 ターン分なので、詰まっていなければ数十秒で終わる)。
+ * それでもリクエストが必ず畳まれることが重要 — ループが復帰できる。
+ * 子プロセスまで確実に殺すには nodejs-whisper を経由せず whisper-cli を
+ * 自前で spawn する必要があり、それは実機検証込みの別作業にしてある。
+ */
+class Deadline {
+  private readonly expiresAt: number
+  constructor(budgetMs: number) {
+    this.expiresAt = Date.now() + budgetMs
+  }
+  remainingMs(): number {
+    return this.expiresAt - Date.now()
+  }
+  /** `promise` を残り時間で打ち切る。中断シグナルが立っていても即座に諦める。 */
+  async race<T>(promise: Promise<T>, label: string, signal: AbortSignal): Promise<T> {
+    const remaining = this.remainingMs()
+    // 負け側になった promise が後から reject しても unhandledRejection にしない。
+    // 打ち切り後に finally が wav ファイルを消すので、走り続けている whisper は
+    // ほぼ確実に失敗する = ここが無いとプロセスが落ちる。
+    promise.catch(() => undefined)
+    if (remaining <= 0) throw new TranscribeTimeoutError(label, TRANSCRIBE_BUDGET_MS)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let onAbort: (() => void) | undefined
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            console.warn(
+              `[transcribe] ${label} が予算(${TRANSCRIBE_BUDGET_MS}ms)を超えたので打ち切り`,
+            )
+            reject(new TranscribeTimeoutError(label, TRANSCRIBE_BUDGET_MS))
+          }, remaining)
+          onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+          if (signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+      if (onAbort) signal.removeEventListener('abort', onAbort)
+    }
+  }
+}
 
 // nodejs-whisper の同期 shelljs.exec が Electron の GUI 起動コンテキストで
 // 不安定なため(undefined を返して "Cannot read properties of undefined (reading 'code')"
@@ -305,25 +377,40 @@ transcribeRouter.post(
       `[transcribe] start: requested=${requestedModel ?? '(none)'} resolved=${resolvedModel} using=${modelName}`,
     )
 
+    // 会話を終えた / クライアントが締め切りで諦めた瞬間に、こちらも待つのをやめる。
+    // (whisper の子プロセス自体は Deadline のコメント通り握れないので残るが、
+    //  リクエストは必ず畳まれ、Express のハンドラが宙に浮かない)
+    const { signal, dispose } = watchClientAbort(res)
+    // 予算はリクエスト全体に 1 本。ffmpeg + 最大 3 パスの合計をここで見る。
+    const deadline = new Deadline(TRANSCRIBE_BUDGET_MS)
+
     let wavPath: string | null = null
     try {
       // 事前 WAV 変換(nodejs-whisper の壊れた sync shelljs.exec をバイパス)。
       // 既に .wav なら nodejs-whisper が isValidWavHeader で素通しするので、
       // ffmpeg を介さず元ファイルを渡しても良いが、不正な .wav ヘッダだけ守るため
       // 拡張子に関わらず変換する。
-      wavPath = await convertAudioToWav(filePath)
+      wavPath = await deadline.race(convertAudioToWav(filePath), 'ffmpeg', signal)
 
       // 1パス目: 言語自動判定。日本語と韓国語は音素が近く、短い発話や雑音時に
       // ハングルとして返ってくることがある。アプリは日英のみ扱うので、その場合は
       // 言語を強制した再認識で救済する。
-      let text = await runWhisper(wavPath, modelName, 'auto')
+      let text = await deadline.race(
+        runWhisper(wavPath, modelName, 'auto'),
+        'whisper(auto)',
+        signal,
+      )
       let usedLanguage: 'auto' | 'ja' | 'en' = 'auto'
 
       if (hasKorean(text)) {
         console.warn(
           `[transcribe] Korean chars in auto pass; retrying with language=ja. text="${text.slice(0, 80)}"`,
         )
-        const jaText = await runWhisper(wavPath, modelName, 'ja')
+        const jaText = await deadline.race(
+          runWhisper(wavPath, modelName, 'ja'),
+          'whisper(ja)',
+          signal,
+        )
         if (!hasKorean(jaText) && jaText.trim().length > 0) {
           text = jaText
           usedLanguage = 'ja'
@@ -331,7 +418,11 @@ transcribeRouter.post(
           console.warn(
             `[transcribe] ja pass still bad; retrying with language=en. ja="${jaText.slice(0, 80)}"`,
           )
-          const enText = await runWhisper(wavPath, modelName, 'en')
+          const enText = await deadline.race(
+            runWhisper(wavPath, modelName, 'en'),
+            'whisper(en)',
+            signal,
+          )
           if (!hasKorean(enText) && enText.trim().length > 0) {
             text = enText
             usedLanguage = 'en'
@@ -353,9 +444,23 @@ transcribeRouter.post(
 
       return res.json({ text, language, durationMs, model: modelName })
     } catch (e) {
+      // 会話を終えただけ / クライアントが切っただけ。エラーとして書き込まない。
+      if (isClientAbort(e, signal)) return endAborted(res)
+      if (e instanceof TranscribeTimeoutError) {
+        console.error('[transcribe] deadline exceeded:', e.message)
+        // 504 + TIMEOUT。フロントはこれを「通信が切れたかもしれない」として
+        // ユーザーに見せ、連続失敗の上限に当たれば録音を止める(復帰可能な形)。
+        return res.status(504).json({
+          error:
+            '音声の認識が時間内に終わりませんでした。' +
+            'Mac の空きメモリが少ない可能性があります。もう一度話しかけてみてください。',
+          code: 'TIMEOUT',
+        })
+      }
       console.error('[transcribe] error:', e)
       return res.status(500).json({ error: (e as Error).message })
     } finally {
+      dispose()
       const cleanup = [
         filePath,
         `${filePath}.json`,

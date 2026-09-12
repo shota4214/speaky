@@ -119,4 +119,28 @@ describe('useConversationStore', () => {
     s.setVocabFocus([])
     expect(s.vocabFocusIds).toEqual([])
   })
+
+  it('updateMessage replaces the array element (配列ごと差し替える)', () => {
+    const s = useConversationStore()
+    s.start({ id: 'conv-1', level: 'intermediate', topic: 'daily' })
+    s.appendMessage(makeAiMessage('m1', 'first'))
+    s.appendMessage(makeAiMessage('m2', 'second'))
+    const before = s.messages
+
+    s.updateMessage({ ...makeAiMessage('m2', 'second'), replyJa: '日本語訳' })
+
+    expect(s.messages[1]?.replyJa).toBe('日本語訳')
+    // 参照が変わる = Vue が再描画できる(その場書き換えだと変わらない)
+    expect(s.messages).not.toBe(before)
+    expect(s.messages).toHaveLength(2)
+  })
+
+  it('updateMessage ignores unknown ids', () => {
+    const s = useConversationStore()
+    s.start({ id: 'conv-1', level: 'intermediate', topic: 'daily' })
+    s.appendMessage(makeAiMessage('m1', 'first'))
+    s.updateMessage(makeAiMessage('ghost', 'nope'))
+    expect(s.messages).toHaveLength(1)
+    expect(s.messages[0]?.replyEn).toBe('first')
+  })
 })

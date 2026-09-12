@@ -13,7 +13,9 @@
     "prep:vendor:whisper-model": "node ../scripts/prep-whisper-model.mjs",
     "verify:arm64": "node ../scripts/verify-arm64.mjs",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -28,6 +30,7 @@
     "@types/node": "^20.16.0",
     "esbuild": "^0.28.0",
     "tsx": "^4.19.0",
-    "typescript": "~6.0.2"
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.6"
   }
 }

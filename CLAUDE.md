@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test -w frontend
    ```
-   （現在テストは frontend 55 件）
+   （現在テストは frontend 95 件）
 4. **main へ直接コミット禁止**。必ずブランチ → PR → マージ。コミットは日本語 `[add]/[fix]/[chore]` プレフィクス。
 
 ## 🔴 次にやるべき最優先タスク（このセッションからの引き継ぎ）
@@ -99,6 +99,16 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 - **Ollama バイナリ同期は version gate と独立**（startOllama 内で isDownloaded 確認 → 無ければコピー。既存 userData 対策）。
 - **OLLAMA_VERSION pin** = `v0.30.4`（main.ts と scripts/prep-ollama-binary.mjs の両方。必ず一致させる）。`getMetadata('latest')` は使わない（ネット回避）。
 - **会話の翻訳ロジック**（backend/src/routes/chat.ts）: 日本語/英日混在は専用翻訳経路に分離。日本語訳が空なら en→ja 補完（「日本語訳を必ず表示」設定の保証）。
+- **Whisper モデルは実行前に存在チェック**（`backend/src/services/whisper-paths.ts`）。
+  無ければ同梱の `small` にフォールバックし、それも無ければ 503。
+  `autoDownloadModelName` は**渡さない**（渡すと HTTP リクエスト内で HF DL + cmake ビルドが走り固まる）。
+  明示 DL は `POST /api/models/whisper/download` のみ。
+- **Ollama のチューニング**は 2 箇所: `electron/src/main.ts` startOllama の env
+  （KEEP_ALIVE=30m / NUM_PARALLEL=1 / MAX_LOADED_MODELS=1 / FLASH_ATTENTION=1）と
+  `backend/src/services/ollama.ts` のリクエスト（`keep_alive` / `options.num_ctx`= DEFAULT_NUM_CTX 4096）。
+  リクエスト側の指定が実効値。
+- **設定スキーマ版** `SETTINGS_SCHEMA_VERSION`（`frontend/src/storage/settings.ts`）。
+  デフォルト値を変えて既存ユーザーにも適用したいときは版を上げて移行処理を足す。
 - **モデル選択**は「インストール済み AND backend allowlist 内」のみ。allowlist は frontend(`storage/settings.ts` の `ALLOWED_LLM_MODELS` / `VALID_WHISPER_MODELS`)と backend(`services/ollama.ts` の `ALLOWED_LLM_MODELS`)の両方にあり**手動同期が必要**。
 - **巨大バイナリ/モデルは `.gitignore` 済み**（`electron/build-resources/`、`backend/vendor/node_modules/`、`dist-app/`）。prep スクリプトでビルド時に用意する。
 

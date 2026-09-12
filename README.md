@@ -31,7 +31,7 @@ MacBook(Apple Silicon)上で **Whisper(音声認識)/ Ollama(LLM)/ Web Speech AP
   - **16GB 以上の Mac**: 設定画面(またはオンボーディング)から `llama3.2:3b`(~2GB)を
     ダウンロードして選ぶと**標準モードに戻り、添削と単語カードが出ます**。
     さらに精度が欲しければ Gemma 2 9B / Qwen 2.5 14B も選べます
-- **空き容量 6GB 以上推奨**(DMG 約 1.5GB + アプリ展開 + ランタイム同期分)
+- **空き容量 6GB 以上推奨**(DMG 約 1.9GB + アプリ展開 + ランタイム同期分)
 - 配布版(Speaky.dmg)を使う場合: 追加の依存ソフトは不要
   (Llama 3.2 1B + Whisper small + ffmpeg + Ollama ランタイムをすべて同梱)
 - ソースからビルドする場合: 「開発者向け」セクションを参照
@@ -39,10 +39,10 @@ MacBook(Apple Silicon)上で **Whisper(音声認識)/ Ollama(LLM)/ Web Speech AP
 ## セットアップ(エンドユーザー向け)
 
 > ⚠ 現在は β 段階です。DMG をインストールするだけで使えます(モデル DL 不要)。
-> DMG のサイズは約 1.5GB です(v1.1.0 までは 3B を同梱して約 2.7GB ありました)。
+> DMG のサイズは約 1.9GB です(v1.1.0 までは 3B を同梱して約 2.7GB ありました)。
 > GitHub Releases は 2GB 上限のため、配布先は Google Drive / iCloud Drive / 自前 CDN を想定しています。
 
-1. Speaky.dmg(~1.5GB)をダウンロードして開き、Applications にドラッグ
+1. Speaky.dmg(~1.9GB)をダウンロードして開き、Applications にドラッグ
 2. 初回起動時に macOS の Gatekeeper 警告が出た場合は許可手順(後述)に従って解除
 3. 初回起動時のみ、同梱モデルを書き込み可能な領域に展開するセットアップ画面が
    30〜60 秒ほど表示されます(SSD 性能に依存)

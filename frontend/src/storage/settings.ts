@@ -2,6 +2,22 @@ import type { Gender, Level, PersonalityPreset } from '../db/types'
 
 const STORAGE_KEY = 'speaky:settings'
 
+/**
+ * 設定スキーマのバージョン。
+ * 「デフォルト値を変えたときに、旧デフォルトのまま保存されている既存ユーザーへ
+ *  新デフォルトを一度だけ適用する」ためだけに使う(値の形は変えない)。
+ *
+ * - 1 (= schemaVersion 欠落): v1.0.0 以前
+ * - 2: silenceDurationMs のデフォルトを 5000 → 1500 に、
+ *      whisperModel のデフォルトを 'medium' → 'small' に変更。
+ *      旧デフォルトのまま保存されているものだけを新デフォルトへ移行する。
+ */
+export const SETTINGS_SCHEMA_VERSION = 2
+
+/** v1 時点のデフォルト値。移行判定にのみ使う。 */
+const LEGACY_DEFAULT_SILENCE_MS = 5000
+const LEGACY_DEFAULT_WHISPER_MODEL: WhisperModel = 'medium'
+
 // nodejs-whisper の MODELS_LIST に含まれ、かつ Hugging Face で実在する
 // `ggml-${name}.bin` を持つ名前のみ許可する。
 // - `large-v3` は nodejs-whisper の MODELS_LIST に無いため拒否される
@@ -85,6 +101,8 @@ export interface AppSettings {
   showJapanese: boolean
   lastCleanupAt: number | null
   defaultLevel: Level
+  /** 保存済み設定のスキーマ版。欠落 = 1(v1.0.0 以前)として扱う。 */
+  schemaVersion: number
 }
 
 /** 無音自動送信の間隔(ミリ秒)の許容範囲。UI のスライダー範囲と一致させる。 */
@@ -98,10 +116,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     voiceName: null,
     personality: 'friendly',
   },
-  // 5秒: 話し終わってから送信されるまでの猶予。設定画面で 1-15 秒に調整可能。
-  silenceDurationMs: 5000,
+  // 1.5秒: 話し終わってから送信されるまでの猶予。設定画面で 1-15 秒に調整可能。
+  // 5秒だと毎ターン無言の待ち時間が乗って体感が大幅に悪化するため短縮した。
+  silenceDurationMs: 1500,
   llmModel: 'llama3.2:3b',
-  whisperModel: 'medium',
+  // small(多言語・約488MB): 8GB Mac でも現実的な速度/RAM。日本語入力を扱うので `.en` は不可。
+  whisperModel: 'small',
   darkMode: 'system',
   ttsRateConnectedToLevel: true,
   ttsRate: 1.0,
@@ -109,6 +129,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showJapanese: true,
   lastCleanupAt: null,
   defaultLevel: 'intermediate',
+  schemaVersion: SETTINGS_SCHEMA_VERSION,
 }
 
 const VALID_PERSONALITIES = new Set<PersonalityPreset>([
@@ -171,6 +192,23 @@ export function loadSettings(): AppSettings {
       TTS_PITCH_MIN,
       TTS_PITCH_MAX,
     )
+    // --- スキーマ移行(1 → 2): silenceDurationMs の旧デフォルト 5000 を新デフォルトへ ---
+    // 旧デフォルトのまま使っていた人だけが対象。自分で値を変えていた人の設定は尊重する。
+    const storedVersion = typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 1
+    const needsMigration = storedVersion < SETTINGS_SCHEMA_VERSION
+    if (storedVersion < 2) {
+      if (merged.silenceDurationMs === LEGACY_DEFAULT_SILENCE_MS) {
+        merged.silenceDurationMs = DEFAULT_SETTINGS.silenceDurationMs
+      }
+      // 旧デフォルトの medium は DMG に同梱されなくなった(backend も small に
+      // フォールバックする)。設定表示と実際に動くモデルを一致させるため移行する。
+      // medium を自分で DL して使っていた人はファイルが残っているので設定画面で選び直せる。
+      if (merged.whisperModel === LEGACY_DEFAULT_WHISPER_MODEL) {
+        merged.whisperModel = DEFAULT_SETTINGS.whisperModel
+      }
+    }
+    merged.schemaVersion = SETTINGS_SCHEMA_VERSION
+
     // showJapanese は旧バージョンに無いので欠落時はデフォルト(表示)に
     if (typeof merged.showJapanese !== 'boolean') {
       merged.showJapanese = DEFAULT_SETTINGS.showJapanese
@@ -183,6 +221,13 @@ export function loadSettings(): AppSettings {
       SILENCE_MS_MIN,
       SILENCE_MS_MAX,
     )
+    // 移行が走ったらその場で永続化する。ストアは「変更されたとき」しか保存しないので、
+    // ここで書かないと設定を一度も触らないユーザーは schemaVersion が保存されないまま
+    // 毎回起動のたびに移行が再実行される(= 一度きりの移行という契約が嘘になる)。
+    // 今の v1→v2 は冪等なので実害は無いが、冪等でない v2→v3 を足した瞬間に壊れる。
+    if (needsMigration) {
+      saveSettings(merged)
+    }
     return merged
   } catch {
     return { ...DEFAULT_SETTINGS }

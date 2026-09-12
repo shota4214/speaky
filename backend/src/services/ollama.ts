@@ -1,5 +1,8 @@
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434'
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'llama3.2:3b'
+// env は `??` ではなく `||`(+ trim)で評価する。`??` は null/undefined しか弾かないため、
+// 空文字や空白だけの env(シェルの `VAR=` や Electron から空文字で渡した場合)が
+// そのまま採用されて Ollama に不正な値が飛ぶ。
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434'
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL?.trim() || 'llama3.2:3b'
 
 // 許可するLLMモデルの allowlist。フロントから指定された場合のみ
 // この中に含まれていなければ default にフォールバック。
@@ -27,6 +30,11 @@ type OllamaChatRequest = {
   messages: OllamaChatMessage[]
   format?: 'json'
   stream?: boolean
+  /**
+   * モデルをメモリに保持する時間。省略すると Ollama の既定 5 分で unload され、
+   * 会話が少し途切れただけで次ターンがフルのコールドロードになる。
+   */
+  keep_alive?: string
   options?: {
     temperature?: number
     top_p?: number
@@ -34,8 +42,39 @@ type OllamaChatRequest = {
     seed?: number
     repeat_penalty?: number
     num_predict?: number
+    num_ctx?: number
   }
 }
+
+/**
+ * モデルをロードしたままにする時間。electron/src/main.ts の OLLAMA_KEEP_ALIVE と
+ * 揃えているが、リクエストごとの指定の方が強いのでこちらが実効値になる。
+ */
+// `??` だと OLLAMA_KEEP_ALIVE='' のとき keep_alive:'' を送ってしまい、
+// Ollama が duration として解釈できず全チャットが 400 になる。空文字は既定値に落とす。
+const KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE?.trim() || '30m'
+
+/**
+ * コンテキスト長。ここ 1 箇所で調整する。
+ * system prompt が約 900 トークン + 履歴最大 20 メッセージあるため、
+ * 既定(2048)だと静かに溢れて JSON 崩れの一因になっていた疑いがある。
+ * 計測せずにこれ以上下げないこと(RAM と品質のトレードオフ)。
+ */
+const DEFAULT_NUM_CTX = 4096
+const NUM_CTX = (() => {
+  const raw = process.env.OLLAMA_NUM_CTX?.trim()
+  if (!raw) return DEFAULT_NUM_CTX
+  const parsed = Number(raw)
+  // 0 / 負数 / 小数 / 非数値はすべて拒否する(num_ctx は正の整数のみ)。
+  // Number('') === 0、Number('1.5') === 1.5 なので isFinite だけでは足りない。
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    console.warn(
+      `[ollama] OLLAMA_NUM_CTX="${raw}" は正の整数ではないため無視します (num_ctx=${DEFAULT_NUM_CTX} を使用)`,
+    )
+    return DEFAULT_NUM_CTX
+  }
+  return parsed
+})()
 
 export type OllamaChatResponse = {
   model: string
@@ -115,7 +154,9 @@ export async function chatWithOllama(
       model,
       messages,
       stream: false,
+      keep_alive: KEEP_ALIVE,
       options: {
+        num_ctx: NUM_CTX,
         temperature,
         top_p: topP,
         top_k: topK,

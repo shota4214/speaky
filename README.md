@@ -20,25 +20,25 @@ MacBook(Apple Silicon)上で **Whisper(音声認識)/ Ollama(LLM)/ Web Speech AP
 ## 動作要件
 
 - **macOS** (Apple Silicon, M4/M5 推奨。最低 M1 以上)
-- **メモリ 16GB 以上**(32GB推奨)
-- **空き容量 10GB 以上推奨**(DMG 約 3.5GB + アプリ展開 + ランタイム同期分)
+- **メモリ 8GB 以上**(16GB 以上推奨)
+- **空き容量 8GB 以上推奨**(DMG 約 2.7GB + アプリ展開 + ランタイム同期分)
 - 配布版(Speaky.dmg)を使う場合: 追加の依存ソフトは不要
-  (Llama 3.2 3B + Whisper medium + ffmpeg + Ollama ランタイムをすべて同梱)
+  (Llama 3.2 3B + Whisper small + ffmpeg + Ollama ランタイムをすべて同梱)
 - ソースからビルドする場合: 「開発者向け」セクションを参照
 
 ## セットアップ(エンドユーザー向け)
 
 > ⚠ 現在は β 段階です。DMG をインストールするだけで使えます(モデル DL 不要)。
-> DMG はサイズが約 3.5GB あるため GitHub Releases(2GB 上限)では配布できません。
+> DMG はサイズが約 2.7GB あるため GitHub Releases(2GB 上限)では配布できません。
 > 配布先は Google Drive / iCloud Drive / 自前 CDN を想定しています。
 
-1. Speaky.dmg(~3.5GB)をダウンロードして開き、Applications にドラッグ
+1. Speaky.dmg(~2.7GB)をダウンロードして開き、Applications にドラッグ
 2. 初回起動時に macOS の Gatekeeper 警告が出た場合は許可手順(後述)に従って解除
 3. 初回起動時のみ、同梱モデルを書き込み可能な領域に展開するセットアップ画面が
    30〜60 秒ほど表示されます(SSD 性能に依存)
 4. メインウィンドウが開いたら、オンボーディング画面で **AI キャラクター(名前 / 性別)**
    だけ設定すれば即会話開始できます
-   - LLM(Llama 3.2 3B)・Whisper medium・ffmpeg はすべて同梱済みなので追加 DL は不要です
+   - LLM(Llama 3.2 3B)・Whisper small・ffmpeg はすべて同梱済みなので追加 DL は不要です
    - whisper.cpp のビルドも同梱バイナリ(arm64)で済んでいるため即起動できます
 
 ### Gatekeeper(macOS Sequoia 以降)で許可する手順
@@ -60,7 +60,7 @@ MacBook(Apple Silicon)上で **Whisper(音声認識)/ Ollama(LLM)/ Web Speech AP
 1. ホーム画面で **レベル**(初心者 / 中級 / 上級)と **トピック**(日常会話/旅行/レストラン等)を選択
 2. **「▶ 会話を始める」** をクリック → マイク権限を許可
 3. 英語で話す(言えなければ日本語OK)
-4. 2秒の無音で自動送信 → AIが応答 → 自動でマイクON
+4. 1.5秒の無音で自動送信(設定で 1〜15 秒に変更可) → AIが応答 → 自動でマイクON
 5. AI返答には英文と日本語訳が両方表示される
 6. 添削や単語が出てきたら **「♡ これ覚えたい」** で復習リストに保存
 7. 終わりたい時は **「⏹ 会話を終わる」** で振り返り画面へ
@@ -88,7 +88,7 @@ MacBook(Apple Silicon)上で **Whisper(音声認識)/ Ollama(LLM)/ Web Speech AP
 ### 設定
 
 - サイドバー → **設定**
-- 無音検出時間(1〜5秒)
+- 無音検出時間(1〜15秒 / 初期値 1.5秒)
 - LLM / Whisper モデル選択
 - テーマ切替(Mint / Lavender / Peach)
 - データのエクスポート / インポート / 全削除
@@ -179,7 +179,7 @@ speaky/
 - **Frontend**: Vue 3 (composition API), Vite, TypeScript, Tailwind CSS v3, Pinia, Dexie 4, Vue Router 4
 - **Backend**: Node.js (Express + TypeScript, tsx でホットリロード)
 - **Desktop shell**: Electron(Ollama を sidecar として起動)
-- **STT**: nodejs-whisper(whisper.cpp バインディング, `medium` モデル)
+- **STT**: nodejs-whisper(whisper.cpp バインディング, `small` モデル / 多言語)
 - **LLM**: Ollama HTTP API(`llama3.2:3b` 軽量・デフォルト推奨, JSON 出力強制)
 - **TTS**: Browser Web Speech API(macOS の Samantha/Daniel 音声)
 - **DB**: IndexedDB(Dexie 経由)+ LocalStorage(設定)
@@ -218,10 +218,10 @@ git clone <repo-url> speaky
 cd speaky
 npm install
 
-# Whisper モデル + whisper.cpp ビルド(約 1.5GB / 5〜15分)
+# Whisper モデル + whisper.cpp ビルド(約 500MB / 5〜15分)
 cd backend
 npx --yes nodejs-whisper download
-# 対話プロンプト: モデル名 = medium / CUDA = n
+# 対話プロンプト: モデル名 = small / CUDA = n
 
 # 起動(FE + BE 同時)
 cd ..
@@ -265,7 +265,7 @@ npm run build
 | Ollama ランタイム               | MIT                          | クレジット表記                                                                              |
 | Llama 3.2 3B(GGUF blob)         | Meta Llama Community License | 月間 7 億 MAU 超は別途許諾。Llama 3.2 派生物には `Llama` のクレジット必須                   |
 | whisper.cpp / nodejs-whisper    | MIT                          | クレジット表記                                                                              |
-| ggml-medium.bin(Whisper モデル) | MIT(OpenAI Whisper 由来)     | クレジット表記                                                                              |
+| ggml-small.bin(Whisper モデル)  | MIT(OpenAI Whisper 由来)     | クレジット表記                                                                              |
 | Electron / electron-ollama      | MIT                          | クレジット表記                                                                              |
 | Vue 3 / Vite / Tailwind CSS 等  | MIT                          | クレジット表記                                                                              |
 

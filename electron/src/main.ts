@@ -389,6 +389,28 @@ async function startOllama(ollamaModelsDir: string | null): Promise<void> {
     console.log(`[ollama] OLLAMA_MODELS=${ollamaModelsDir}`)
   }
 
+  // 低スペック機(8GB MacBook Air 等)向けのランタイム調整。
+  // これらも serve() が spawn する `ollama serve` 子プロセスに継承される。
+  // - OLLAMA_KEEP_ALIVE: 既定 5 分。会話が途切れるたびに ~2GB のモデルが unload され、
+  //   次のターンでフルのコールドロードを払っていた。30 分保持する。
+  //   (backend からのリクエストでも keep_alive を送っており、そちらが実効値になる)
+  // - OLLAMA_NUM_PARALLEL=1 / OLLAMA_MAX_LOADED_MODELS=1:
+  //   並列実行のために KV キャッシュやモデルを多重に確保させない(RAM 節約)。
+  // - OLLAMA_FLASH_ATTENTION=1: Metal の flash attention で KV キャッシュのメモリと
+  //   プロンプト処理時間を削減する。
+  // ※ OLLAMA_KV_CACHE_TYPE=q8_0 は flash attention 前提かつ品質への影響が
+  //   未計測のため、今回は意図的に設定しない。
+  process.env.OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE ?? '30m'
+  process.env.OLLAMA_NUM_PARALLEL = process.env.OLLAMA_NUM_PARALLEL ?? '1'
+  process.env.OLLAMA_MAX_LOADED_MODELS = process.env.OLLAMA_MAX_LOADED_MODELS ?? '1'
+  process.env.OLLAMA_FLASH_ATTENTION = process.env.OLLAMA_FLASH_ATTENTION ?? '1'
+  console.log(
+    `[ollama] tuning: keep_alive=${process.env.OLLAMA_KEEP_ALIVE} ` +
+      `num_parallel=${process.env.OLLAMA_NUM_PARALLEL} ` +
+      `max_loaded=${process.env.OLLAMA_MAX_LOADED_MODELS} ` +
+      `flash_attention=${process.env.OLLAMA_FLASH_ATTENTION}`,
+  )
+
   ollamaManager = new ElectronOllama({ basePath })
 
   if (await ollamaManager.isRunning()) {

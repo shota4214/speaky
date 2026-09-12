@@ -138,6 +138,11 @@ export async function importAllData(
 
   if (mode === 'replace' && backup.data.settings) {
     saveSettings(backup.data.settings)
+    // バックアップの中身は書き出された時点のスキーマ(古い / 手で壊された可能性がある)。
+    // そのまま書き戻すと schemaVersion が巻き戻ったり、未対応のモデル名が残ったりするため、
+    // loadSettings() の移行・検証・clamp を通した結果で上書きして正規化する
+    // (次回起動を待たずに localStorage を最新スキーマへ収束させる)。
+    saveSettings(loadSettings())
   }
   if (backup.data.selectedTheme) {
     localStorage.setItem('speaky:theme', backup.data.selectedTheme)

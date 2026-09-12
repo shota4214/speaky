@@ -20,7 +20,9 @@ export interface RecordingResult {
 
 export function useAudioRecorder(options: RecorderOptions = {}) {
   const {
-    silenceDurationMs = 2000,
+    // 既定値は DEFAULT_SETTINGS.silenceDurationMs と揃える(常に呼び出し側が
+    // 設定値を渡すので実際には使われないが、値がズレていると読んだ人を惑わせる)。
+    silenceDurationMs = 1500,
     silenceThreshold = 0.02,
     speechThreshold = 0.05,
     minRecordingMs = 500,

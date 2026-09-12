@@ -8,6 +8,11 @@ import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
+import {
+  listInstalledWhisperModelNames,
+  whisperModelExists,
+  whisperModelPath,
+} from '../services/whisper-paths.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -114,12 +119,17 @@ const ALLOWED_WHISPER_MODELS = new Set<WhisperModelName>([
   'large-v3-turbo',
 ])
 
+// 同梱しているモデル(= DMG に必ず入っている既定モデル)。
+// medium(1.53GB)は 8GB Mac で毎リクエスト RAM に載せると swap するため small に変更した。
+// small は多言語モデル。日本語入力を扱うので `.en` 系は選ばないこと。
+export const BUNDLED_WHISPER_MODEL: WhisperModelName = 'small'
+
 function pickDefaultWhisperModel(): WhisperModelName {
   const envModel = process.env.WHISPER_MODEL
   if (envModel && ALLOWED_WHISPER_MODELS.has(envModel as WhisperModelName)) {
     return envModel as WhisperModelName
   }
-  return 'medium'
+  return BUNDLED_WHISPER_MODEL
 }
 
 const DEFAULT_WHISPER_MODEL: WhisperModelName = pickDefaultWhisperModel()
@@ -129,6 +139,69 @@ function resolveWhisperModel(requested?: string): WhisperModelName {
     return requested as WhisperModelName
   }
   return DEFAULT_WHISPER_MODEL
+}
+
+/**
+ * フォールバック先に選んでよい多言語モデルを「小さい順」に並べたもの。
+ *
+ * - `.en` 系は絶対に入れないこと。日本語音声入力(japanese_help / mixed 経路)が
+ *   英語専用モデルでは壊れる。フォールバックは品質劣化であってはならない。
+ * - 低スペック機向けブランチなので、大きい方ではなく**小さい方**を優先する
+ *   (rescue が RAM を食い潰して次の問題を作らないように)。
+ */
+const MULTILINGUAL_FALLBACK_ORDER: WhisperModelName[] = [
+  'tiny',
+  'base',
+  'small',
+  'medium',
+  'large-v3-turbo',
+  'large-v1',
+]
+
+/**
+ * 実行直前にモデル実体(ggml-*.bin)がディスクにあるかを確認する。
+ *
+ * 旧版では `medium` が localStorage に残っているユーザーがいるが、DMG に同梱するのは
+ * `small` になったため、そのまま whisper を叩くとモデルが無い。nodejs-whisper に
+ * autoDownloadModelName を渡していた頃はここで DL + ビルドが走って固まっていた。
+ *
+ * フォールバック順: リクエスト値 → 同梱デフォルト → インストール済みの多言語モデル
+ * (小さい順) → null(呼び出し側で 503)。
+ * 3 段目が無いと「設定は small だがディスクには medium しか無い」ユーザーが、
+ * 使えるモデルが同じディレクトリにあるのに毎ターン 503 になっていた。
+ * どの段でもネットは叩かない(オフライン動作の前提を守る)。明示 DL は
+ * POST /api/models/whisper/download のみ。
+ */
+function ensureWhisperModel(requested: WhisperModelName): WhisperModelName | null {
+  if (whisperModelExists(requested)) return requested
+
+  console.warn(
+    `[transcribe] model file not found for "${requested}" (${whisperModelPath(requested)}); ` +
+      `looking for a usable fallback`,
+  )
+  if (requested !== BUNDLED_WHISPER_MODEL && whisperModelExists(BUNDLED_WHISPER_MODEL)) {
+    console.warn(`[transcribe] falling back to bundled model "${BUNDLED_WHISPER_MODEL}"`)
+    return BUNDLED_WHISPER_MODEL
+  }
+
+  // 同梱モデルも無い(ユーザーが消した / 旧 userData のまま等)。
+  // models ディレクトリを走査して、使える多言語モデルがあればそれを使う。
+  const installed = new Set(listInstalledWhisperModelNames())
+  const alternative = MULTILINGUAL_FALLBACK_ORDER.find(
+    (m) => m !== requested && ALLOWED_WHISPER_MODELS.has(m) && installed.has(m),
+  )
+  if (alternative) {
+    console.warn(
+      `[transcribe] falling back to installed multilingual model "${alternative}" ` +
+        `(installed: ${[...installed].join(', ') || '(none)'})`,
+    )
+    return alternative
+  }
+
+  console.error(
+    `[transcribe] no usable whisper model on disk (installed: ${[...installed].join(', ') || '(none)'})`,
+  )
+  return null
 }
 
 function detectLanguage(text: string): Language {
@@ -156,9 +229,14 @@ async function runWhisper(
   modelName: WhisperModelName,
   language: 'auto' | 'ja' | 'en',
 ): Promise<string> {
+  // autoDownloadModelName は意図的に渡さない。
+  // 渡すと nodejs-whisper がモデル欠落時に HTTP リクエストの中で
+  // HuggingFace からの DL + cmake ビルドを始めてしまい、リクエストが
+  // 数分〜無限に固まる(autoDownloadModel.js 参照)。
+  // モデルの有無は ensureWhisperModel() が事前に検証し、無ければ同梱モデルに
+  // フォールバックする。明示的な DL は POST /api/models/whisper/download が担当。
   const result = await nodewhisper(wavPath, {
     modelName,
-    autoDownloadModelName: modelName,
     removeWavFileAfterTranscription: false,
     whisperOptions: {
       language,
@@ -204,14 +282,28 @@ transcribeRouter.post(
     // multipart の追加フィールド `model` で Whisper モデルを指定可能。
     // allowlist 検証で安全化(任意のファイル名を受け付けない)。
     const requestedModel = typeof req.body?.model === 'string' ? req.body.model : undefined
-    const modelName = resolveWhisperModel(requestedModel)
+    const resolvedModel = resolveWhisperModel(requestedModel)
 
     // 念のため最終ガード(本来は resolveWhisperModel が常に文字列を返す)
-    if (!modelName) {
+    if (!resolvedModel) {
       return res.status(500).json({ error: 'Internal: failed to resolve whisper model name' })
     }
 
-    console.log(`[transcribe] start: requested=${requestedModel ?? '(none)'} resolved=${modelName}`)
+    // モデル実体が無ければ同梱モデルにフォールバック(リクエスト内 DL/ビルドはしない)
+    const modelName = ensureWhisperModel(resolvedModel)
+    if (!modelName) {
+      await fs.unlink(filePath).catch(() => {})
+      return res.status(503).json({
+        error:
+          `音声認識モデルが見つかりません(要求: ${resolvedModel} / 同梱: ${BUNDLED_WHISPER_MODEL})。` +
+          `使用できるモデルが 1 つもインストールされていません。` +
+          `設定画面の「インストール済みモデル」から取得してください。`,
+      })
+    }
+
+    console.log(
+      `[transcribe] start: requested=${requestedModel ?? '(none)'} resolved=${resolvedModel} using=${modelName}`,
+    )
 
     let wavPath: string | null = null
     try {

@@ -234,7 +234,7 @@ async function handlePullLlm() {
 }
 
 // Whisper download
-const newWhisperName = ref('medium')
+const newWhisperName = ref('small')
 const whisperDownloading = ref(false)
 const whisperProgress = ref(0)
 const whisperStatus = ref('')
@@ -243,8 +243,8 @@ const whisperError = ref('')
 const whisperPresets = [
   { value: 'tiny', label: '⚡⚡ tiny — 超高速・精度低(~75MB)' },
   { value: 'base', label: '⚡ base — 高速・精度ふつう(~142MB)' },
-  { value: 'small', label: '⚡ small — 高速・実用精度(~466MB)' },
-  { value: 'medium', label: '⚖️ medium — バランス・おすすめ(~1.5GB)' },
+  { value: 'small', label: '⚡ small — 高速・実用精度・おすすめ(~466MB)' },
+  { value: 'medium', label: '⚖️ medium — 高精度・重い(~1.5GB / 16GB以上向け)' },
   { value: 'large-v1', label: '🎯 large-v1 — 高精度・低速(~2.9GB)' },
   { value: 'large-v3-turbo', label: '🎯 large-v3-turbo — 高精度・最新(~1.5GB)' },
 ]
@@ -267,15 +267,15 @@ function describeLlm(name: string): { icon: string; note: string } {
 }
 
 function describeWhisper(name: string): { icon: string; note: string } {
-  // 例: "ggml-medium.bin" → "medium"
+  // 例: "ggml-small.bin" → "small"
   const base = name
     .replace(/^ggml-/, '')
     .replace(/\.bin$/, '')
     .toLowerCase()
   if (base.startsWith('tiny')) return { icon: '⚡⚡', note: '超高速 / 精度低' }
   if (base.startsWith('base')) return { icon: '⚡', note: '高速 / 精度ふつう' }
-  if (base.startsWith('small')) return { icon: '⚡', note: '高速・実用精度' }
-  if (base.startsWith('medium')) return { icon: '⚖️', note: 'バランス / おすすめ' }
+  if (base.startsWith('small')) return { icon: '⚡', note: '高速・実用精度 / おすすめ' }
+  if (base.startsWith('medium')) return { icon: '⚖️', note: '高精度 / 重め・16GB以上向け' }
   if (base.startsWith('large')) return { icon: '🎯', note: '高精度 / 低速・重め' }
   return { icon: '🎙', note: 'Whisper モデル' }
 }
@@ -375,7 +375,7 @@ function updateShowJapanese(e: Event) {
   settings.update({ showJapanese: (e.target as HTMLInputElement).checked })
 }
 
-// アプリが実際に使う Whisper モデルのファイル名(例: medium → ggml-medium.bin)。
+// アプリが実際に使う Whisper モデルのファイル名(例: small → ggml-small.bin)。
 // インストール済み一覧の「使用中」バッジ・削除保護の判定に使う。
 const activeWhisperFile = computed(() => `ggml-${settings.settings.whisperModel}.bin`)
 
@@ -400,17 +400,31 @@ const installedLlmOptions = computed(() =>
     }),
 )
 
-// Whisper はインストール名が "ggml-medium.bin"。設定値は短縮名 "medium" なので変換する。
+// Whisper はインストール名が "ggml-small.bin"。設定値は短縮名 "small" なので変換する。
 // transcribe 側の allowlist と同期した VALID_WHISPER_MODELS で絞る。
 const installedWhisperOptions = computed(() =>
   whisperModels.value
     .map((m) => {
       const short = m.name.replace(/^ggml-/, '').replace(/\.bin$/, '')
       const d = describeWhisper(m.name)
-      return { value: short, label: `${d.icon} ${short} — ${d.note}` }
+      return { value: short, label: `${d.icon} ${short} — ${d.note}`, installed: true }
     })
     .filter((o) => VALID_WHISPER_MODELS.has(o.value as WhisperModel)),
 )
+
+/**
+ * 実際に <select> へ流す選択肢。
+ * 保存されている whisperModel がインストール済み一覧に無いと、ブラウザは先頭の
+ * option を選択状態として描画してしまい、「画面の表示」と「保存値(実際に
+ * backend へ送られる値)」が食い違う。現在値を必ず表現できるよう、未インストール
+ * なら先頭に disabled の項目として差し込む。
+ */
+const whisperSelectOptions = computed(() => {
+  const current = settings.settings.whisperModel
+  const options = installedWhisperOptions.value
+  if (options.some((o) => o.value === current)) return options
+  return [{ value: current, label: `⚠️ ${current} — 未インストール`, installed: false }, ...options]
+})
 function updateWhisper(e: Event) {
   settings.update({
     whisperModel: (e.target as HTMLSelectElement).value as WhisperModel,
@@ -653,7 +667,12 @@ async function handleDeleteAll() {
             class="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm"
             @change="updateWhisper"
           >
-            <option v-for="o in installedWhisperOptions" :key="o.value" :value="o.value">
+            <option
+              v-for="o in whisperSelectOptions"
+              :key="o.value"
+              :value="o.value"
+              :disabled="!o.installed"
+            >
               {{ o.label }}
             </option>
           </select>
@@ -666,7 +685,8 @@ async function handleDeleteAll() {
           </p>
           <p class="mt-1 text-xs text-text-muted">
             選べるのはインストール済みのモデルだけです。英会話学習なら
-            <strong class="text-text">small または medium</strong> がバランス良。
+            <strong class="text-text">small</strong>
+            がおすすめ(同梱モデル)。メモリ 16GB 以上なら medium も選べます。
           </p>
         </div>
         <div>

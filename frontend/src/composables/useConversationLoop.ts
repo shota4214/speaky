@@ -3,6 +3,7 @@ import { conversationsRepo } from '../db/repos/conversations'
 import { messagesRepo } from '../db/repos/messages'
 import type { Message } from '../db/types'
 import {
+  ApiError,
   chat,
   chatOpening,
   extractFacts,
@@ -24,6 +25,19 @@ import { getDefaultVoicePreference, useTextToSpeech } from './useTextToSpeech'
 
 const MAX_SILENT_BEFORE_HINT = 3
 const MAX_PROMPTED_ATTEMPTS = 3
+/**
+ * 連続で文字起こしに失敗したらループを止める閾値。
+ * これが無いと 503 が続く間ずっとマイクが開いたまま無言で回り続け、
+ * ユーザーには「録音中のまま何も起きない」ようにしか見えない。
+ */
+const MAX_TRANSCRIBE_FAILURES = 3
+/**
+ * system prompt に載せるユーザープロフィール事実の上限(新しいものから)。
+ * 事実は会話のたびに増える一方なので、上限が無いと num_ctx(4096)を圧迫し、
+ * 溢れた分は古いメッセージ = JSON 形式を指示している system prompt から
+ * 捨てられて JSON パース失敗を招く。送信側だけで抑える(保存は全件のまま)。
+ */
+const MAX_PROFILE_FACTS_IN_PROMPT = 20
 
 interface StartLoopInput {
   conversationId: string
@@ -66,10 +80,16 @@ export function useConversationLoop() {
   }
 
   const errorMessage = ref<string | null>(null)
+  const consecutiveTranscribeFailures = ref(0)
   const stopRequested = ref(false)
   const consecutiveSilent = ref(0)
   const promptedAttempts = ref(0)
   const lastAiReplyEn = ref<string>('')
+
+  /** system prompt に渡すプロフィール事実(直近 MAX_PROFILE_FACTS_IN_PROMPT 件)。 */
+  function recentProfileFacts(): string[] {
+    return profile.facts.slice(-MAX_PROFILE_FACTS_IN_PROMPT).map((f) => f.fact)
+  }
 
   function pickExtension(mime: string): string {
     if (mime.includes('mp4')) return 'mp4'
@@ -95,6 +115,7 @@ export function useConversationLoop() {
     stopRequested.value = false
     consecutiveSilent.value = 0
     promptedAttempts.value = 0
+    consecutiveTranscribeFailures.value = 0
     errorMessage.value = null
     lastAiReplyEn.value = ''
 
@@ -121,7 +142,7 @@ export function useConversationLoop() {
         level: conversation.level,
         topic: conversation.topic,
         vocabFocus: input.vocabFocusWords,
-        userProfile: profile.facts.map((f) => f.fact),
+        userProfile: recentProfileFacts(),
         lastConversationSummary: input.lastConversationSummary,
         model: settings.settings.llmModel,
         personality: settings.settings.aiCharacter.personality,
@@ -189,7 +210,31 @@ export function useConversationLoop() {
           })
         } catch (e) {
           console.warn('[loop] transcribe failed:', e)
+          consecutiveTranscribeFailures.value += 1
+          // 503(モデルが無い)は backend がユーザー向けの日本語文言を返すのでそのまま見せる。
+          // 500 は内部エラー文字列(ffmpeg のパス等)なのでユーザーには出さない。
+          errorMessage.value =
+            e instanceof ApiError && e.status === 503
+              ? e.message
+              : '音声の認識に失敗しました。もう一度話しかけてみてください。'
+          if (consecutiveTranscribeFailures.value >= MAX_TRANSCRIBE_FAILURES) {
+            errorMessage.value =
+              `${errorMessage.value}\n` +
+              `音声認識が${MAX_TRANSCRIBE_FAILURES}回続けて失敗したため、録音を停止しました。\n` +
+              '「会話を終わる」で終了し、設定画面で Whisper モデルを確認してから会話を始め直してください。'
+            // マイクと TTS を確実に止める(stopRequested も立つ)
+            stop()
+            break
+          }
           continue
+        }
+
+        // 転写自体は成功した(中身が短い/幻聴でも通信は通っている)。
+        // ここでリセットしないと「成功したが捨てられたターン」を挟んだ失敗が
+        // 連続扱いで積み上がり、エラー表示も出しっぱなしになる。
+        if (consecutiveTranscribeFailures.value > 0) {
+          consecutiveTranscribeFailures.value = 0
+          errorMessage.value = null
         }
 
         if (stopRequested.value) break
@@ -228,7 +273,7 @@ export function useConversationLoop() {
           topic: conversation.topic,
           mode: inputMode,
           vocabFocus: input.vocabFocusWords,
-          userProfile: profile.facts.map((f) => f.fact),
+          userProfile: recentProfileFacts(),
           lastConversationSummary: input.lastConversationSummary,
           conversationHistory: buildHistory().slice(-20),
           model: settings.settings.llmModel,
@@ -389,8 +434,10 @@ export function useConversationLoop() {
 
       // ユーザーの新事実をプロフィールに学習追加
       try {
+        // 既知判定は全件で行うが、プロンプトに載せるのは直近 N 件だけにする
+        // (ここも num_ctx を溢れさせると JSON が壊れて事実抽出ごと失敗する)。
         const existingFacts = profile.facts.map((f) => f.fact)
-        const result = await extractFacts(transcriptItems, existingFacts, profile.name, {
+        const result = await extractFacts(transcriptItems, recentProfileFacts(), profile.name, {
           model: settings.settings.llmModel,
         })
         const knownSet = new Set(existingFacts)
@@ -428,6 +475,7 @@ export function useConversationLoop() {
     recorder,
     tts,
     errorMessage,
+    consecutiveTranscribeFailures,
     consecutiveSilent,
     promptedAttempts,
     start,

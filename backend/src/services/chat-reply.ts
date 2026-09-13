@@ -9,6 +9,7 @@
  */
 import type { Mode } from './conversation-prompt.js'
 import { extractJsonObjectSlice, matchJsonStringField } from './json-salvage.js'
+import { containsNonLatinScript, isJapaneseVocabMeaning } from '../shared/text-guards.js'
 
 export interface Feedback {
   user_said: string
@@ -60,6 +61,35 @@ export function isVocabItem(x: unknown): x is VocabItem {
   if (typeof x !== 'object' || x === null) return false
   const r = x as Record<string, unknown>
   return typeof r.word === 'string' && typeof r.meaning === 'string'
+}
+
+/**
+ * 単語カードを検証して整える(最大 3 件)。**意味が日本語でないものは落とす**。
+ * 標準プロファイルの実モデル評価で、llama3.2:3b の単語カードの意味が日本語だったのは
+ * 90 件中 26 件だけだった(判定は shared/text-guards.ts の isJapaneseVocabMeaning)。
+ * enrich(ストリーミング経路)と非ストリーミング経路の JSON の両方がここを通る。
+ */
+export function sanitizeVocabulary(value: unknown, tag = '[chat]'): VocabItem[] {
+  if (!Array.isArray(value)) return []
+  const items = value.filter(isVocabItem)
+  // 見出し語は AI の **英語の** 返答から拾う語なので、英語であること(ラテン文字があり、
+  // 非ラテン文字体系を含まない)も求める。実モデル(llama3.2:3b)の出力を見ると、意味の欄が
+  // 中国語や崩れた日本語でも「かな / 漢字がある」ので意味の検証だけでは通ってしまうが、
+  // そういう項目は見出し語の方も「我是」「日本」のように英語ではなかった。
+  const japanese = items.filter(
+    (v) =>
+      /[A-Za-z]/.test(v.word) &&
+      !containsNonLatinScript(v.word) &&
+      isJapaneseVocabMeaning(v.meaning),
+  )
+  if (japanese.length < items.length) {
+    console.warn(
+      `${tag} dropping ${items.length - japanese.length} vocabulary item(s) whose meaning is not Japanese`,
+    )
+  }
+  return japanese
+    .slice(0, 3)
+    .map((v) => ({ word: v.word, meaning: v.meaning, example: v.example ?? null }))
 }
 
 /**
@@ -118,16 +148,7 @@ export function parseChatReply(content: string, fallbackMode: Mode): ChatReply |
       })
       feedback = null
     }
-    const vocabulary: VocabItem[] = Array.isArray(parsed.vocabulary)
-      ? parsed.vocabulary
-          .filter(isVocabItem)
-          .slice(0, 3)
-          .map((v) => ({
-            word: v.word,
-            meaning: v.meaning,
-            example: v.example ?? null,
-          }))
-      : []
+    const vocabulary = sanitizeVocabulary(parsed.vocabulary)
 
     const mode: Mode =
       parsed.mode === 'japanese_help' || parsed.mode === 'mixed' || parsed.mode === 'normal'

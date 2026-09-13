@@ -5,13 +5,12 @@ import {
   type Mode,
 } from '../services/conversation-prompt.js'
 import {
-  isFeedback,
-  isValidEnglishFeedback,
-  isVocabItem,
   salvageChatReply,
+  sanitizeVocabulary,
   type Feedback,
   type VocabItem,
 } from '../services/chat-reply.js'
+import { checkGrammar } from '../services/grammar-check.js'
 import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
 import {
   containsJsonScaffoldPattern,
@@ -126,24 +125,33 @@ export function salvagePlainReply(raw: string): string | null {
 
 export interface EnrichmentResult {
   replyJa: string
+  /**
+   * 添削。**モデルが JSON に書いたものは絶対に入れない**。
+   * 入るのは services/grammar-check.ts が検証して固定テンプレートで説明を付けたものだけで、
+   * buildEnrichment 自身は常に null を返す(添削は別の呼び出し)。
+   */
   feedback: Feedback | null
   vocabulary: VocabItem[]
 }
 
+/**
+ * enrich(標準プロファイル)のプロンプト。日本語訳と単語だけを作らせる。
+ *
+ * 添削はここから外した。実モデル評価で、このプロンプトの添削は
+ * 「どのプロファイルでも実質出ない」うえ、説明文が英語 / 崩れた日本語 / 中国語だった。
+ * 添削は services/grammar-check.ts の専用の呼び出しと決定的なフィルタが担う。
+ */
 const ENRICH_SYSTEM_PROMPT = `You support a Japanese learner of English. You are given (a) what the learner said and (b) the English reply their AI conversation partner just gave. You do NOT continue the conversation. You only annotate it.
 
 Respond ONLY with valid JSON. No markdown, no code fences, no extra text.
 {
   "reply_ja": "string - natural Japanese translation of the AI reply",
-  "feedback": null OR { "user_said": "...", "corrected": "...", "explanation": "..." },
   "vocabulary": [] OR up to 2 items: { "word": "...", "meaning": "...", "example": "..." }
 }
 
 # Rules
 - reply_ja is always required. Translate the AI reply into natural, conversational Japanese.
-- feedback: only if the learner made a real English mistake. Otherwise null. "user_said" and "corrected" must be English; "explanation" must be in Japanese.
-- vocabulary: only 1-2 genuinely useful words/phrases from the AI reply, with Japanese meanings. Skip trivial words. Empty array is fine.
-- Never invent a mistake the learner did not make.`
+- vocabulary: only 1-2 genuinely useful words/phrases from the AI reply, with Japanese meanings. Skip trivial words. Empty array is fine.`
 
 /** enrich の JSON を検証して取り出す(壊れていたら拾える範囲だけ拾う)。 */
 export function parseEnrichment(content: string): EnrichmentResult | null {
@@ -151,18 +159,9 @@ export function parseEnrichment(content: string): EnrichmentResult | null {
     try {
       const parsed = JSON.parse(text) as Record<string, unknown>
       const replyJa = typeof parsed.reply_ja === 'string' ? parsed.reply_ja : ''
-      let feedback = isFeedback(parsed.feedback) ? parsed.feedback : null
-      if (feedback && !isValidEnglishFeedback(feedback)) {
-        console.warn('[chat:enrich] dropping feedback with Japanese in corrected/user_said')
-        feedback = null
-      }
-      const vocabulary: VocabItem[] = Array.isArray(parsed.vocabulary)
-        ? parsed.vocabulary
-            .filter(isVocabItem)
-            .slice(0, 3)
-            .map((v) => ({ word: v.word, meaning: v.meaning, example: v.example ?? null }))
-        : []
-      return { replyJa, feedback, vocabulary }
+      // モデルが feedback を書いてきても **読まない**(添削は grammar-check の担当)。
+      const vocabulary = sanitizeVocabulary(parsed.vocabulary, '[chat:enrich]')
+      return { replyJa, feedback: null, vocabulary }
     } catch {
       return null
     }
@@ -197,7 +196,7 @@ interface EnrichInput {
 }
 
 /**
- * 英文が確定した後に、日本語訳 / 添削 / 単語をまとめて生成する。
+ * 英文が確定した後に、日本語訳 / 単語を生成する(添削は {@link checkGrammar} が別に作る)。
  *
  * 「日本語訳を必ず表示」は製品上の約束なので、enrich の JSON が壊れても
  * 最後に en→ja 翻訳で必ず日本語訳を埋める(非ストリーミング経路と同じ保証)。
@@ -207,10 +206,10 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
   const profile =
     input.profile ?? resolveTurnModelAndProfile(context.modelProfile, context.model).profile
 
-  // small プロファイルは日本語訳だけを作る。1B クラスの添削は正しい文を
-  // 「間違い」と言い切ることがあり、単語抽出も学習者が既に知っている語を
-  // 並べるだけになる。**間違った学習材料を出すくらいなら出さない方がよい**。
-  // opening(ユーザー発話が無い)も添削も単語も出さない契約なので同じ経路。
+  // small プロファイルは日本語訳だけを作る(単語カードは出さない)。1B〜2B クラスの
+  // 単語抽出は学習者が既に知っている語を並べるだけになりがちで、意味も崩れやすい。
+  // 添削はこの経路とは別で、どちらのプロファイルでも grammar-check が作る。
+  // opening(ユーザー発話が無い)も単語を出さない契約なので同じ経路。
   // どちらも LLM 呼び出しが 1 回で済むぶん速い。
   if (profile.enrichment === 'translation-only' || !userText?.trim()) {
     const replyJa = await translateEnglishToJapanese(replyEn, {
@@ -297,8 +296,13 @@ export const chatStreamRouter = Router()
  *   data: {"type":"meta","mode":"normal","model":"llama3.2:3b","speakDeltas":true}
  *   data: {"type":"delta","text":" I went"}
  *   data: {"type":"done","text":"<英文全体>"}
- *   data: {"type":"enrich","replyJa":"...","feedback":{...}|null,"vocabulary":[...]}
+ *   data: {"type":"enrich","replyJa":"...","feedback":null,"vocabulary":[...]}
+ *   data: {"type":"feedback","feedback":{"user_said":"...","corrected":"...","explanation":"..."}}
  *   data: {"type":"error","code":"TIMEOUT","error":"..."}
+ *
+ * `enrich` の feedback は **常に null**(古いフロントとの形の互換のために残している)。
+ * 添削は enrich の **後** に `feedback` イベントで届き、表示できる添削が無いターンでは
+ * 送らない(古いフロントは知らない type として無視する)。
  */
 chatStreamRouter.post('/chat/stream', async (req: Request, res: Response) => {
   const { userText, context = {} } = (req.body ?? {}) as {
@@ -374,15 +378,27 @@ chatStreamRouter.post('/chat/enrich', async (req: Request, res: Response) => {
   const { signal, dispose } = watchClientAbort(res)
   try {
     const { profile } = resolveTurnModelAndProfile(context.modelProfile, context.model)
+    const learnerText = typeof userText === 'string' ? userText : null
     const enrichment = await buildEnrichment({
       replyEn,
-      userText: typeof userText === 'string' ? userText : null,
+      userText: learnerText,
       context,
       profile,
       signal,
       fresh: retry === true,
     })
-    return res.json({ ...enrichment, profile: profile.level })
+    // ストリーミング経路と同じ順序: 日本語訳の後に添削。添削の失敗はこの応答を失敗にしない
+    // (checkGrammar は例外を投げず、表示できない / 失敗したときは null)。
+    // mode を受け取らないので、日本語 / 英日混在の発話は文字で判定して見ない。
+    const feedback = await checkGrammar({
+      userText: learnerText,
+      model: context.model,
+      numCtx: profile.numCtx,
+      signal,
+      tag: '[chat:enrich]',
+    })
+    if (signal.aborted) return endAborted(res)
+    return res.json({ ...enrichment, feedback, profile: profile.level })
   } catch (e) {
     return sendOllamaErrorJson(res, e, '[chat:enrich]')
   } finally {
@@ -692,37 +708,57 @@ async function streamConversationTurn(
 
   // ここから先は「マイクが待っていない」時間。失敗してもターンは成立しているので
   // エラーイベントにはしない(フロントは日本語訳の再取得ボタンを出す)。
-  // enrich の生成中もソケットは無通信になるので keepalive を流す
+  // enrich / 添削の生成中もソケットは無通信になるので keepalive を流す
   // (クライアント側の無通信タイムアウトに巻き込まれないため)。
+  //
+  // 順序は **日本語訳 → enrich イベント → 添削 → feedback イベント**。
+  // 日本語訳は毎ターン必ず見るもの、添削は出ないターンの方が多いもの。
+  // 次のターンが始まるとクライアントがこのストリームを切り、signal が
+  // 実行中の添削の呼び出しも Ollama まで止める(1 枠を次のターンに譲る)。
   startKeepalive()
   try {
-    const enrichment = await buildEnrichment({
-      replyEn: finalText,
-      userText,
-      context,
-      profile,
-      signal,
-    })
-    if (!signal.aborted) {
-      // 日本語訳が空の enrich は **送らない**。送るとクライアントは
-      // 「準備中」を解除してしまい、訳も無い・エラーも無い・再取得ボタンも無い
-      // 行になる(DB の replyJa も null のまま)。届かなかったことにして
-      // フロントに「取得できませんでした + 再取得」を出させる。
-      if (enrichment.replyJa.trim()) {
-        safeSend(res, {
-          type: 'enrich',
-          replyJa: enrichment.replyJa,
-          feedback: enrichment.feedback,
-          vocabulary: enrichment.vocabulary,
-        })
-      } else {
-        console.warn(`${tag} enrichment had no Japanese translation; not sending enrich event`)
+    try {
+      const enrichment = await buildEnrichment({
+        replyEn: finalText,
+        userText,
+        context,
+        profile,
+        signal,
+      })
+      if (!signal.aborted) {
+        // 日本語訳が空の enrich は **送らない**。送るとクライアントは
+        // 「準備中」を解除してしまい、訳も無い・エラーも無い・再取得ボタンも無い
+        // 行になる(DB の replyJa も null のまま)。届かなかったことにして
+        // フロントに「取得できませんでした + 再取得」を出させる。
+        if (enrichment.replyJa.trim()) {
+          safeSend(res, {
+            type: 'enrich',
+            replyJa: enrichment.replyJa,
+            // 添削は下の feedback イベントで送る。ここは常に null(古いフロントとの形の互換)。
+            feedback: null,
+            vocabulary: enrichment.vocabulary,
+          })
+        } else {
+          console.warn(`${tag} enrichment had no Japanese translation; not sending enrich event`)
+        }
+      }
+    } catch (e) {
+      // 中断は失敗ではない(ユーザーが会話を終えただけ)。ログを汚さない。
+      if (!isClientAbort(e, signal)) {
+        console.warn(`${tag} enrichment failed (stream ends without enrich):`, e)
       }
     }
-  } catch (e) {
-    // 中断は失敗ではない(ユーザーが会話を終えただけ)。ログを汚さない。
-    if (!isClientAbort(e, signal)) {
-      console.warn(`${tag} enrichment failed (stream ends without enrich):`, e)
+
+    // 挨拶(userText === null)は添削しない。日本語訳が失敗しても添削は独立に出してよい。
+    if (userText !== null && !signal.aborted) {
+      const feedback = await checkGrammar({
+        userText,
+        model: context.model,
+        numCtx: profile.numCtx,
+        signal,
+        tag,
+      })
+      if (feedback && !signal.aborted) safeSend(res, { type: 'feedback', feedback })
     }
   } finally {
     stopKeepalive()

@@ -12,6 +12,7 @@ import type { Message, VocabItem } from '../db/types'
 import { useConversationStore } from '../stores/conversation'
 import { useSettingsStore } from '../stores/settings'
 import { useVocabularyStore } from '../stores/vocabulary'
+import { lightModeBadgeTitle } from '../utils/correction-wording'
 import { storedJapaneseTranslation } from '../utils/stored-translation'
 
 const router = useRouter()
@@ -273,13 +274,14 @@ async function retryJapanese(message: Message) {
               <TopicChip :label="conversation.topic" size="sm" />
               <!--
                 backend が申告したプロファイル(推定ではなく実際に動いた値)。
-                軽量モードは添削も単語も出ないので、「出ない」のか「壊れている」のかを
-                ユーザーが区別できるようにここで明示する。
+                軽量モードは単語カードが出ないので、「出ない」のか「壊れている」のかを
+                ユーザーが区別できるようにここで明示する(添削はどちらのモードでも出るが、
+                grammar-check を申告した backend のときだけ。文言も申告に揃える)。
               -->
               <span
                 v-if="loop.activeProfile.value === 'small'"
                 class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300"
-                title="小さいモデル向けの設定で動いています(返答は1〜2文・最初の挨拶だけは3文まで・添削と単語は出ません)"
+                :title="lightModeBadgeTitle(loop.backendFeatures.value)"
               >
                 🪶 軽量モード
               </span>

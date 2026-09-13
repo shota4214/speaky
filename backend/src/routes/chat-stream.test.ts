@@ -75,7 +75,7 @@ describe('salvagePlainReply', () => {
 })
 
 describe('parseEnrichment', () => {
-  it('正常な JSON を取り込む', () => {
+  it('正常な JSON を取り込む(モデルが書いた添削は読まない)', () => {
     const result = parseEnrichment(
       JSON.stringify({
         reply_ja: 'いいね、どこに行ったの?',
@@ -84,8 +84,23 @@ describe('parseEnrichment', () => {
       }),
     )
     expect(result?.replyJa).toBe('いいね、どこに行ったの?')
-    expect(result?.feedback?.corrected).toBe('I went hiking')
+    // 添削は grammar-check(検証 + 固定テンプレート)だけが作る。
+    expect(result?.feedback).toBeNull()
     expect(result?.vocabulary).toHaveLength(1)
+  })
+
+  it('意味が日本語でない単語カードは落とす', () => {
+    const result = parseEnrichment(
+      JSON.stringify({
+        reply_ja: 'いいね、どこに行ったの?',
+        vocabulary: [
+          { word: 'hiking', meaning: 'ハイキング' },
+          { word: 'trail', meaning: 'a path through the countryside' },
+          { word: 'summit', meaning: 'chōjō' },
+        ],
+      }),
+    )
+    expect(result?.vocabulary.map((v) => v.word)).toEqual(['hiking'])
   })
 
   it('予算切れで切断された JSON からは日本語訳だけを拾う', () => {

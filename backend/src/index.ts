@@ -76,6 +76,11 @@ const API_FEATURES = [
   // これが無い backend に対して設定画面は推測を表示してはいけない
   // (モデル名を黙って既定へ落とす旧 backend が実在する)。
   'model-profile-preview',
+  // 添削は grammar-check(検証済み + 固定テンプレートの説明)だけが作る。
+  // ストリーミングでは enrich の後の `feedback` イベント、/api/chat と /api/chat/enrich では
+  // レスポンスの feedback に入る。**これが無い backend の feedback はモデルが書いたもの**なので、
+  // フロントはこの申告を肯定的に確認したときだけ添削を表示する。
+  'grammar-check',
 ] as const
 const API_VERSION = 4
 

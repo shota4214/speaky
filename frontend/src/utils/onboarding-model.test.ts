@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  BUNDLED_LLM_MODEL,
-  RECOMMENDED_DOWNLOAD_LLM_MODEL,
-  isAllowedLlmModel,
-} from '../storage/settings'
+import { BUNDLED_LLM_MODEL, isAllowedLlmModel } from '../storage/settings'
 import {
   buildOnboardingLlmOptions,
   chooseOnboardingLlm,
@@ -30,12 +26,12 @@ describe('chooseOnboardingLlm', () => {
     expect(r.model).toBe(BUNDLED_LLM_MODEL)
     expect(r.installed).toBe(true)
     // メモリが少ない機械に 3B は薦めない。
-    expect(r.recommendedDownload).toBeNull()
+    expect(r).not.toHaveProperty('recommendedDownload')
   })
 
   it('8GB / 3B も取得済み = それでも軽い同梱モデルを選ぶ', () => {
     const r = chooseOnboardingLlm({
-      installed: [BUNDLED_LLM_MODEL, RECOMMENDED_DOWNLOAD_LLM_MODEL],
+      installed: [BUNDLED_LLM_MODEL, 'llama3.2:3b'],
       lowMemory: true,
       memoryKnown: true,
     })
@@ -44,15 +40,15 @@ describe('chooseOnboardingLlm', () => {
 
   it('16GB / オンライン(3B 取得済み)= 3B を選び、案内は出さない', () => {
     const r = chooseOnboardingLlm({
-      installed: [BUNDLED_LLM_MODEL, RECOMMENDED_DOWNLOAD_LLM_MODEL],
+      installed: [BUNDLED_LLM_MODEL, 'llama3.2:3b'],
       lowMemory: false,
       memoryKnown: true,
     })
-    expect(r.model).toBe(RECOMMENDED_DOWNLOAD_LLM_MODEL)
-    expect(r.recommendedDownload).toBeNull()
+    expect(r.model).toBe('llama3.2:3b')
+    expect(r).not.toHaveProperty('recommendedDownload')
   })
 
-  it('16GB / オフライン(同梱の軽量モデルだけ)= 選択は同梱のまま、3B は案内だけ', () => {
+  it('16GB / オフライン(同梱の軽量モデルだけ)= 選択は同梱のまま、3B を薦めることもしない', () => {
     // ここが今回の核心。メモリに余裕があっても、入っていない 3B を
     // 選択状態にしてはいけない(オフラインだと先へ進めなくなる)。
     const r = chooseOnboardingLlm({
@@ -62,17 +58,18 @@ describe('chooseOnboardingLlm', () => {
     })
     expect(r.model).toBe(BUNDLED_LLM_MODEL)
     expect(r.installed).toBe(true)
-    expect(r.recommendedDownload).toBe(RECOMMENDED_DOWNLOAD_LLM_MODEL)
+    // 取得も案内しない(3B の日本語訳は同梱モデルより良くならず、添削はどちらでも出る)。
+    expect(r).not.toHaveProperty('recommendedDownload')
   })
 
   it('メモリが分からない(古い backend / プローブ失敗)= 推測せず同梱モデル', () => {
     const r = chooseOnboardingLlm({
-      installed: [BUNDLED_LLM_MODEL, RECOMMENDED_DOWNLOAD_LLM_MODEL],
+      installed: [BUNDLED_LLM_MODEL, 'llama3.2:3b'],
       lowMemory: false,
       memoryKnown: false,
     })
     expect(r.model).toBe(BUNDLED_LLM_MODEL)
-    expect(r.recommendedDownload).toBeNull()
+    expect(r).not.toHaveProperty('recommendedDownload')
   })
 
   it('カタログに無いが allowlist は通るモデルしか入っていない場合はそれを選ぶ', () => {
@@ -140,7 +137,7 @@ describe('chooseOnboardingLlm', () => {
   it('何か入っている限り、選ぶモデルは必ずその中にある(不変条件)', () => {
     const installedSets = [
       [BUNDLED_LLM_MODEL],
-      [RECOMMENDED_DOWNLOAD_LLM_MODEL],
+      ['llama3.2:3b'],
       ['llama3.2:1b'],
       ['gemma2:9b'],
       ['qwen2.5:14b', 'qwen2.5:1.5b'],
@@ -230,7 +227,7 @@ describe('buildOnboardingLlmOptions', () => {
       ['qwen2.5:3b-instruct-q5_K_M'],
       ['gemma2:2b'],
       ['llama3.1:8b-instruct-q8_0', 'qwen2.5:1.5b'],
-      [RECOMMENDED_DOWNLOAD_LLM_MODEL],
+      ['llama3.2:3b'],
       // 取得の選択肢から外した旧同梱物だけが入っている(v1.2.0 のテスト機)
       ['llama3.2:1b'],
     ]

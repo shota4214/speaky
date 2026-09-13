@@ -42,7 +42,7 @@ export interface ModelProfile {
   openingNumPredict: number
   /** ストリーミング(プレーンテキスト)の生成上限。 */
   streamNumPredict: number
-  /** enrich(日本語訳 + 添削 + 単語)の生成上限。 */
+  /** enrich(日本語訳 + 単語)の生成上限。 */
   enrichNumPredict: number
   /** 1 回目の試行の温度。 */
   temperature: number
@@ -54,13 +54,16 @@ export interface ModelProfile {
   repeatPenalty: number
   /**
    * enrich でどこまで作らせるか。
-   * - 'full'             : 日本語訳 + 添削 + 単語(JSON 1 回)
-   * - 'translation-only' : 日本語訳だけ(en→ja の単発翻訳)
+   * - 'full'             : 日本語訳 + 単語カード(JSON 1 回)
+   * - 'translation-only' : 日本語訳だけ(en→ja の単発翻訳)。単語カードは出ない
    *
-   * small が translation-only なのは品質の問題。1B クラスの添削は
-   * 「間違っていない文を間違いだと言う」誤添削が実際に出るうえ、
-   * 単語抽出も trivial な語を並べるだけになりがちで、どちらも
-   * **学習者を積極的に間違った方向へ引っ張る**。日本語訳は製品の約束なので残す。
+   * small が translation-only なのは品質の問題。1B〜2B クラスの単語抽出は
+   * trivial な語を並べるだけになりがちで、**学習者を間違った方向へ引っ張る**。
+   * 日本語訳は製品の約束なので残す。
+   *
+   * ⚠️ **添削はこの値と無関係**。どちらのプロファイルでも services/grammar-check.ts が
+   * 専用の呼び出し + 決定的なフィルタ + 固定テンプレートの説明で作る
+   * (以前は small が「添削なし」だった。モデルに書かせた添削は誤りが多かったため)。
    */
   enrichment: 'full' | 'translation-only'
   /**

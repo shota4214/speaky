@@ -30,6 +30,7 @@ import {
   FEATURE_CHAT_ENRICH,
   FEATURE_CHAT_OPENING_STREAM,
   FEATURE_CHAT_STREAM,
+  FEATURE_GRAMMAR_CHECK,
   FEATURE_MODEL_PROFILE,
   hasFeature,
   NO_FEATURES,
@@ -38,6 +39,7 @@ import {
 import { BUNDLED_LLM_MODEL, resolveProfileLevel, type ModelProfileLevel } from '../storage/settings'
 import type {
   ChatEnrichment,
+  StreamFeedback,
   ChatStreamEffect,
   ChatStreamError,
 } from '../utils/chat-stream-reducer'
@@ -388,20 +390,43 @@ export function useConversationLoop() {
       markEnrichFailed(messageId)
       return false
     }
+    const checked = checkedFeedback(enrichment.feedback)
     const updated = await messagesRepo.update(messageId, {
       replyJa,
-      feedback: enrichment.feedback
-        ? {
-            userSaid: enrichment.feedback.user_said,
-            corrected: enrichment.feedback.corrected,
-            explanation: enrichment.feedback.explanation,
-          }
-        : null,
+      // 添削は **あるときだけ書く**(null で上書きしない)。ストリーミングでは添削が
+      // enrich の後に別イベントで届くので、ここで null を書くと、先に保存された添削を
+      // 後から消しかねない(DB の更新は get + put なので書き込みの順序が前後しうる)。
+      ...(checked ? { feedback: toStoredFeedback(checked) } : {}),
       vocabulary: enrichment.vocabulary,
     })
     if (updated) conversation.updateMessage(updated)
     clearEnrichPending(messageId)
     return true
+  }
+
+  /**
+   * 表示してよい添削か。**grammar-check を申告した backend の添削だけ**を通す。
+   * 申告の無い backend の feedback はモデルが JSON に書いたもの(説明が英語 /
+   * 崩れた日本語 / 中国語になりうる)なので捨てる。Electron では
+   * 「frontend だけ新しい」組み合わせが普通に起こる。
+   */
+  function checkedFeedback(feedback: StreamFeedback | null | undefined): StreamFeedback | null {
+    if (!feedback) return null
+    return hasFeature(backendFeatures.value, FEATURE_GRAMMAR_CHECK) ? feedback : null
+  }
+
+  function toStoredFeedback(feedback: StreamFeedback): NonNullable<Message['feedback']> {
+    return {
+      userSaid: feedback.user_said,
+      corrected: feedback.corrected,
+      explanation: feedback.explanation,
+    }
+  }
+
+  /** ストリーミングの `feedback` イベント(enrich の後に届く添削)を DB とストアへ反映する。 */
+  async function applyFeedback(messageId: string, feedback: StreamFeedback): Promise<void> {
+    const updated = await messagesRepo.update(messageId, { feedback: toStoredFeedback(feedback) })
+    if (updated) conversation.updateMessage(updated)
   }
 
   /** そのメッセージの直前のユーザー発話(enrich の添削材料)。 */
@@ -488,6 +513,8 @@ export function useConversationLoop() {
       replyJa: null as string | null,
       persistedId: null as string | null,
       stashedEnrichment: null as ChatEnrichment | null,
+      /** 永続化より先に届いた添削(保存できてから反映する)。 */
+      stashedFeedback: null as StreamFeedback | null,
       enrichApplied: false,
       streamFinished: false,
     }
@@ -541,6 +568,19 @@ export function useConversationLoop() {
           } else {
             // done の直後・永続化の途中に来た場合。保存できてから反映する。
             turn.stashedEnrichment = effect.enrichment
+          }
+          break
+        }
+        case 'feedback': {
+          // 添削は enrich の後に届く。マイクはこれを待たない(ターンは done + 読み上げ終わりで終わる)。
+          // `feedback` イベントを送るのは grammar-check を持つ backend だけなので、中身は検証済み。
+          const persistedId = turn.persistedId
+          if (persistedId) {
+            void applyFeedback(persistedId, effect.feedback).catch((e) => {
+              console.warn('[loop] applying feedback failed:', e)
+            })
+          } else {
+            turn.stashedFeedback = effect.feedback
           }
           break
         }
@@ -642,6 +682,11 @@ export function useConversationLoop() {
       // 既にストリームが閉じていた(= enrich は永遠に来ない)なら、その場で
       // 「取得できませんでした + 再取得」に切り替える。準備中のまま固まらせない。
       if (turn.streamFinished && !turn.enrichApplied) markEnrichFailed(messageId)
+    }
+    if (turn.stashedFeedback) {
+      await applyFeedback(messageId, turn.stashedFeedback).catch((e) => {
+        console.warn('[loop] applying stashed feedback failed:', e)
+      })
     }
 
     // ターンの終わりは「done」AND「読み上げ終わり」の両方。
@@ -1032,13 +1077,11 @@ export function useConversationLoop() {
             inputMode === 'normal'
               ? acceptJapaneseTranslation(reply.reply_ja ?? '', reply.reply_en) || null
               : reply.reply_ja,
-          feedback: reply.feedback
-            ? {
-                userSaid: reply.feedback.user_said,
-                corrected: reply.feedback.corrected,
-                explanation: reply.feedback.explanation,
-              }
-            : null,
+          // 添削は grammar-check を申告した backend のものだけ(古い backend はモデルが書いた添削を返す)。
+          feedback: (() => {
+            const checked = checkedFeedback(reply.feedback)
+            return checked ? toStoredFeedback(checked) : null
+          })(),
           vocabulary: reply.vocabulary,
           // モデルが JSON に書いた mode は信用しない(ストリーミング経路と同じ)。
           // 古い backend は英語のターンでもモデルの "mixed" をそのまま返すので、

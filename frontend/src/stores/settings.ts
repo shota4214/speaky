@@ -38,12 +38,14 @@ export const useSettingsStore = defineStore('settings', () => {
       },
     }
     // モデルを明示的に選んだ(設定画面 / オンボーディング)なら、旧既定 LLM からの
-    // 移行待ちは取り消す。確認が後から終わって、選んだばかりのモデルを
-    // 同梱モデルで上書きしないため(utils/bundled-llm-migration.ts)。
+    // 移行は終わりにする(utils/bundled-llm-migration.ts)。
+    // - 'pending': 確認が後から終わって、選んだばかりのモデルを同梱モデルで上書きしないため
+    // - 'notice' : 「同梱モデルに切り替えました」という通知が、別のモデルを選んだ後も
+    //              出続けて嘘にならないため
     if (
       patch.llmModel !== undefined &&
       patch.bundledLlmMigration === undefined &&
-      next.bundledLlmMigration === 'pending'
+      (next.bundledLlmMigration === 'pending' || next.bundledLlmMigration === 'notice')
     ) {
       next.bundledLlmMigration = 'idle'
     }

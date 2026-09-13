@@ -28,7 +28,11 @@ function persisted(): Record<string, unknown> {
   return JSON.parse(raw!) as Record<string, unknown>
 }
 
-/** v1.1.0 の利用者が保存していた設定(スキーマ v3、既定の 3B のまま)。 */
+/**
+ * スキーマ v3 で `llama3.2:3b` を保存していた設定(v1.2.0 のテストビルドで 3B を選んだ人)。
+ * ⚠️ **v1.1.0 の利用者ではない**。v1.1.0 が出荷したのはスキーマ 2(v3 はその後に入った)。
+ * v1.1.0 の実際の形は seedV110() を使う。
+ */
 function seedV3(extra: Record<string, unknown> = {}): void {
   localStorage.setItem(
     KEY,
@@ -38,6 +42,30 @@ function seedV3(extra: Record<string, unknown> = {}): void {
       modelProfile: 'standard',
       silenceDurationMs: 2000,
       ...extra,
+    }),
+  )
+}
+
+/**
+ * v1.1.0(5d7374b)の DEFAULT_SETTINGS をそのまま保存した形。スキーマ **2**。
+ * modelProfile / streaming / bundledLlmMigration はまだ存在しない。
+ */
+function seedV110(): void {
+  localStorage.setItem(
+    KEY,
+    JSON.stringify({
+      aiCharacter: { name: 'Emma', gender: 'female', voiceName: null, personality: 'friendly' },
+      silenceDurationMs: 1500,
+      llmModel: 'llama3.2:3b',
+      whisperModel: 'small',
+      darkMode: 'system',
+      ttsRateConnectedToLevel: true,
+      ttsRate: 1.0,
+      ttsPitch: 1.0,
+      showJapanese: true,
+      lastCleanupAt: null,
+      defaultLevel: 'intermediate',
+      schemaVersion: 2,
     }),
   )
 }
@@ -84,6 +112,27 @@ describe('旧既定 LLM から同梱モデルへの移行', () => {
     expect(stored.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
     // 他の設定は触らない
     expect(stored.silenceDurationMs).toBe(2000)
+  })
+
+  it('v1.1.0 の実際の保存値(スキーマ 2)は 1 回の load で v2→v3→v4 を通り、切り替えまで進む', async () => {
+    seedV110()
+    const store = launch()
+    // v3: 3B は 2B 以下ではないので auto / v4: 旧既定なので pending
+    expect(store.settings.modelProfile).toBe('auto')
+    expect(store.settings.bundledLlmMigration).toBe('pending')
+    expect(store.settings.llmModel).toBe(LEGACY_DEFAULT_LLM_MODEL)
+    expect(store.settings.streaming).toBe(true)
+    // 移行結果はその場で書き戻されている(次の load で v2 からやり直さない)
+    const stored = persisted()
+    expect(stored.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+    expect(stored.modelProfile).toBe('auto')
+    expect(stored.bundledLlmMigration).toBe('pending')
+    expect(stored.silenceDurationMs).toBe(1500)
+
+    const deps = depsReturning(listing([LEGACY_DEFAULT_LLM_MODEL, BUNDLED_LLM_MODEL]))
+    await expect(runBundledLlmMigration(store, deps)).resolves.toBe('switched')
+    expect(persisted().llmModel).toBe(BUNDLED_LLM_MODEL)
+    expect(persisted().bundledLlmMigration).toBe('notice')
   })
 
   it('切り替えたら会話モードの固定を自動に戻す', async () => {
@@ -156,6 +205,47 @@ describe('旧既定 LLM から同梱モデルへの移行', () => {
       listing([LEGACY_DEFAULT_LLM_MODEL, BUNDLED_LLM_MODEL], LEGACY_DEFAULT_LLM_MODEL),
     )
     await expect(runBundledLlmMigration(store, oldBackend)).resolves.toBe('retry-later')
+    expect(store.settings.llmModel).toBe(LEGACY_DEFAULT_LLM_MODEL)
+    expect(persisted().bundledLlmMigration).toBe('pending')
+  })
+
+  // backend は Ollama が `models` を返さないと空配列にする。空の一覧で
+  // 「同梱モデルなし」と結論すると、移行が永久に終わってしまう。
+  it('空の一覧では結論を出さない(pending のまま、次回起動で完了できる)', async () => {
+    seedV3()
+    const store = launch()
+    await expect(runBundledLlmMigration(store, depsReturning(listing([])))).resolves.toBe(
+      'retry-later',
+    )
+    expect(store.settings.llmModel).toBe(LEGACY_DEFAULT_LLM_MODEL)
+    expect(persisted().bundledLlmMigration).toBe('pending')
+
+    const relaunched = launch()
+    await expect(
+      runBundledLlmMigration(
+        relaunched,
+        depsReturning(listing([LEGACY_DEFAULT_LLM_MODEL, BUNDLED_LLM_MODEL])),
+      ),
+    ).resolves.toBe('switched')
+  })
+
+  // 3B すら載っていない一覧は、このユーザーが会話に使っている Ollama のものか分からない。
+  it('今の 3B が載っていない一覧でも結論を出さない', async () => {
+    seedV3()
+    const store = launch()
+    const other = depsReturning(listing(['gemma2:2b']))
+    await expect(runBundledLlmMigration(store, other)).resolves.toBe('retry-later')
+    expect(store.settings.llmModel).toBe(LEGACY_DEFAULT_LLM_MODEL)
+    expect(persisted().bundledLlmMigration).toBe('pending')
+  })
+
+  it('一覧はあるが defaultModel が無い(旧 backend)なら次回に回す', async () => {
+    seedV3()
+    const store = launch()
+    const noDefault = depsReturning({
+      models: listing([LEGACY_DEFAULT_LLM_MODEL, BUNDLED_LLM_MODEL]).models,
+    } as unknown as OllamaModelsResponse)
+    await expect(runBundledLlmMigration(store, noDefault)).resolves.toBe('retry-later')
     expect(store.settings.llmModel).toBe(LEGACY_DEFAULT_LLM_MODEL)
     expect(persisted().bundledLlmMigration).toBe('pending')
   })
@@ -249,6 +339,29 @@ describe('旧既定 LLM から同梱モデルへの移行', () => {
     expect(relaunched.settings.llmModel).toBe(BUNDLED_LLM_MODEL)
   })
 
+  // 通知を開いたまま設定画面で別のモデルを選ぶと、「切り替えました」が嘘になる。
+  it('通知中に設定画面でモデルを選んだら通知は消え、再起動しても出ない', async () => {
+    seedV3()
+    const store = launch()
+    await runBundledLlmMigration(store, depsReturning(listing([BUNDLED_LLM_MODEL])))
+    expect(store.settings.bundledLlmMigration).toBe('notice')
+
+    store.update({ llmModel: 'gemma2:9b', modelProfile: 'auto' })
+    expect(store.settings.bundledLlmMigration).toBe('idle')
+    expect(store.settings.llmModel).toBe('gemma2:9b')
+    await nextTick()
+    expect(persisted().bundledLlmMigration).toBe('idle')
+    expect(launch().settings.bundledLlmMigration).toBe('idle')
+  })
+
+  it('通知中にモデル以外の設定を変えても通知は残る', async () => {
+    seedV3()
+    const store = launch()
+    await runBundledLlmMigration(store, depsReturning(listing([BUNDLED_LLM_MODEL])))
+    store.update({ silenceDurationMs: 3000 })
+    expect(store.settings.bundledLlmMigration).toBe('notice')
+  })
+
   it('閉じていない通知は再起動後も出る', async () => {
     seedV3()
     const store = launch()
@@ -284,9 +397,37 @@ describe('decideBundledLlmMigration', () => {
     expect(
       decideBundledLlmMigration({
         currentModel: LEGACY_DEFAULT_LLM_MODEL,
-        listing: listing([`${BUNDLED_LLM_MODEL}-instruct-q8_0`]),
+        listing: listing([LEGACY_DEFAULT_LLM_MODEL, `${BUNDLED_LLM_MODEL}-instruct-q8_0`]),
       }),
     ).toBe('skip')
+  })
+
+  it('空の一覧は retry(「無い」と結論しない)', () => {
+    expect(
+      decideBundledLlmMigration({ currentModel: LEGACY_DEFAULT_LLM_MODEL, listing: listing([]) }),
+    ).toBe('retry')
+  })
+
+  it('「無い」と結論するのは、今の 3B が一覧に載っているときだけ', () => {
+    const decide = (names: string[]) =>
+      decideBundledLlmMigration({ currentModel: LEGACY_DEFAULT_LLM_MODEL, listing: listing(names) })
+    expect(decide([LEGACY_DEFAULT_LLM_MODEL])).toBe('skip')
+    expect(decide(['gemma2:2b'])).toBe('retry')
+    // 3B の量子化タグ違いは、今の llmModel(完全一致の名前)を会話に使える証拠にならない
+    expect(decide([`${LEGACY_DEFAULT_LLM_MODEL}-instruct-q4_K_M`])).toBe('retry')
+    // 同梱モデルがあれば 3B の有無に関係なく切り替えてよい(入っていると確認できている)
+    expect(decide([BUNDLED_LLM_MODEL])).toBe('switch')
+  })
+
+  it('defaultModel が無い一覧は retry', () => {
+    expect(
+      decideBundledLlmMigration({
+        currentModel: LEGACY_DEFAULT_LLM_MODEL,
+        listing: {
+          models: listing([LEGACY_DEFAULT_LLM_MODEL, BUNDLED_LLM_MODEL]).models,
+        } as unknown as OllamaModelsResponse,
+      }),
+    ).toBe('retry')
   })
 })
 

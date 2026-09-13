@@ -21,9 +21,10 @@ import type { SettingsPatch } from '../stores/settings'
  *
  * 状態遷移(すべて永続化される):
  *   pending --(同梱モデルあり)--> notice --(通知を閉じる)--> idle
- *   pending --(同梱モデルなし)--> idle(切り替えない・通知も出さない)
- *   pending --(API 失敗 / 古い backend)--> pending のまま(次回起動で再試行)
- *   pending --(設定画面 / オンボーディングでモデルを選んだ)--> idle(stores/settings.ts)
+ *   pending --(3B は載っているが同梱モデルなし)--> idle(切り替えない・通知も出さない)
+ *   pending --(API 失敗 / 古い backend / 一覧が空 / 3B も同梱モデルも無い)--> pending のまま(次回起動で再試行)
+ *   pending | notice --(設定画面 / オンボーディングでモデルを選んだ)--> idle(stores/settings.ts)
+ *   notice --(バックアップの取り込み)--> idle(utils/data-portability.ts)
  */
 
 export type BundledLlmMigrationDecision = 'switch' | 'skip' | 'retry'
@@ -38,14 +39,16 @@ export interface BundledLlmMigrationInput {
 /**
  * 切り替えるか・やめるか・次回に回すかを決める純関数。
  *
- * - **retry**: 一覧が取れない / 壊れている / **backend の既定が同梱モデルでない**。
+ * - **retry**: 一覧が取れない / 壊れている / **空、または旧既定の 3B すら載っていない**
+ *   (その一覧が本当に「このユーザーの Ollama」のものか分からない)/
+ *   **backend の既定が同梱モデルでない**。
  *   最後の条件は「frontend だけ新しい」組み合わせ(backend は userData から読むので
  *   version gate の再同期前は旧コードのまま)への備え。旧 backend は同梱モデル名を
  *   allowlist で黙って既定へ差し替えることがあり、そうなると
  *   「切り替えました」という通知が嘘になる。backend の既定 = 同梱モデルなら、
  *   その backend は同梱モデルを確実に受け付ける版である。
  *   (dev で OLLAMA_MODEL を別名にしていると毎起動 retry になるが、害は無い)
- * - **skip**: 一覧は取れたが同梱モデルが入っていない。これは「確認が済んだ」結果であって
+ * - **skip**: 一覧に旧既定の 3B は載っているが同梱モデルが入っていない。これは「確認が済んだ」結果であって
  *   一時的な失敗ではないので、pending を残さず終える。理由は
  *   bundled-llm-migration.test.ts の該当ケースと CLAUDE.md を参照
  *   (自前の Ollama を使っている人に、後から勝手に切り替えないため)。
@@ -57,8 +60,15 @@ export function decideBundledLlmMigration(
   const listing = input.listing
   if (!listing || !Array.isArray(listing.models)) return 'retry'
   if (listing.defaultModel !== BUNDLED_LLM_MODEL) return 'retry'
-  const installed = listing.models.some((m) => m?.name === BUNDLED_LLM_MODEL)
-  return installed ? 'switch' : 'skip'
+  const names = listing.models.map((m) => m?.name)
+  if (names.includes(BUNDLED_LLM_MODEL)) return 'switch'
+  // 「同梱モデルが無い」と言い切って移行を永久に終えてよいのは、この一覧が
+  // **ユーザーが実際に会話に使っている Ollama のもの** だと分かるときだけ。
+  // その証拠は「今の llmModel(= 旧既定の 3B)が一覧に載っていること」。
+  // backend は Ollama が `models` を返さないと空配列にする(routes/models.ts)ので、
+  // 空の一覧や、3B すら載っていない一覧は「確認できなかった」と同じ扱いにする。
+  if (names.includes(LEGACY_DEFAULT_LLM_MODEL)) return 'skip'
+  return 'retry'
 }
 
 /** 移行が触る設定ストアの形(テストで本物のストアをそのまま渡せるよう最小限にする)。 */

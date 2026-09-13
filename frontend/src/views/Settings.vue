@@ -35,6 +35,7 @@ import {
   type WhisperModel,
 } from '../storage/settings'
 import { FEATURE_MODEL_PROFILE_PREVIEW, hasFeature } from '../utils/backend-features'
+import { watchProfilePreviewInputs } from '../utils/profile-preview-watch'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore } from '../stores/theme'
 import {
@@ -528,8 +529,14 @@ const enrichmentReduced = computed(() => profilePreview.value?.enrichment === 't
 
 function updateModelProfile(e: Event) {
   settings.update({ modelProfile: (e.target as HTMLSelectElement).value as ModelProfilePref })
-  void refreshProfilePreview()
+  // バッジの問い合わせは下の watchProfilePreviewInputs が行う。
 }
+
+// モデル / 会話モードが **どこから変わっても** バッジを問い合わせ直す。
+// この画面の操作だけでなく、旧既定 LLM からの移行(BundledLlmMigrationNotice.vue)が
+// 設定画面を開いている最中に llmModel を切り替えることがある。操作時にだけ
+// 問い合わせていた頃は、バッジが切り替え前のモデルの話をし続けた。
+watchProfilePreviewInputs(settings, () => void refreshProfilePreview())
 
 // Whisper はインストール名が "ggml-small.bin"。設定値は短縮名 "small" なので変換する。
 // transcribe 側の allowlist と同期した VALID_WHISPER_MODELS で絞る。
@@ -576,7 +583,7 @@ function updateLlm(e: Event) {
   const patch: { llmModel: string; modelProfile?: ModelProfilePref } = { llmModel: next }
   if (settings.settings.modelProfile !== 'auto') patch.modelProfile = 'auto'
   settings.update(patch)
-  void refreshProfilePreview()
+  // バッジの問い合わせは watchProfilePreviewInputs が行う(二重に聞かない)。
 }
 
 /** 同梱モデル / 追加ダウンロードの案内に使う表示名。 */

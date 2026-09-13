@@ -8,7 +8,14 @@ import { BUNDLED_LLM_NOTICE } from '../utils/bundled-llm-migration-notice'
 /**
  * 旧既定 LLM → 同梱モデルの一度きりの移行を起動し、切り替えた場合だけ通知を出す。
  * 判定と状態遷移は utils/bundled-llm-migration.ts、文言は同ディレクトリの -notice.ts。
- * 通知は画面を塞がない(閉じるまで右上に残るだけで、操作はそのまま続けられる)。
+ * 通知は画面を塞がない(閉じるまで残るだけで、操作はそのまま続けられる)。
+ *
+ * ⚠️ **置き場所は左下、サイドバーの幅の内側**。閉じるまで何日でも残るので、
+ * どの画面の操作にも重なってはいけない。右上は会話画面ヘッダーの「⏹ 会話を終わる」の
+ * 真上だった。右下は UpdateNotification の場所。サイドバー(AppSidebar.vue、w-60 = 240px)は
+ * この通知が出る全画面(= layout が minimal でない画面)に必ずあり、下端は
+ * バージョン表記しか無いので、`left-4` + `w-52`(16〜224px)に収めればメイン領域
+ * (240px〜)の何にも重ならない。高さはナビの項目にかからないよう上限を付けてスクロールさせる。
  */
 
 const settings = useSettingsStore()
@@ -56,15 +63,16 @@ function openSettings() {
 <template>
   <Transition
     enter-active-class="transition duration-300 ease-out"
-    enter-from-class="opacity-0 -translate-y-2"
+    enter-from-class="opacity-0 translate-y-2"
     enter-to-class="opacity-100 translate-y-0"
     leave-active-class="transition duration-200 ease-in"
     leave-from-class="opacity-100 translate-y-0"
-    leave-to-class="opacity-0 -translate-y-2"
+    leave-to-class="opacity-0 translate-y-2"
   >
     <div
       v-if="visible"
-      class="fixed right-4 top-4 z-40 max-w-sm rounded-2xl bg-surface p-4 shadow-glow-lg ring-1 ring-border"
+      data-testid="bundled-llm-migration-notice"
+      class="fixed bottom-4 left-4 z-40 max-h-[calc(100vh-20rem)] w-52 overflow-y-auto rounded-2xl bg-surface p-3 shadow-glow-lg ring-1 ring-border"
       role="status"
       aria-live="polite"
     >

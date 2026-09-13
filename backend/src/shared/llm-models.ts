@@ -96,7 +96,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Qwen 2.5 1.5B',
     sizeLabel: '~1GB',
     icon: '⚡⚡',
-    note: '同梱・既定 / 8GB 機向け・日本語訳が安定(軽量モード: 添削あり・単語カードなし)',
+    note: '同梱・既定 / 8GB 機向け・日本語訳が安定(軽量モード: 単語カードなし)',
     lightweight: true,
     offerForDownload: true,
     bundled: true,
@@ -124,7 +124,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Gemma 2 2B',
     sizeLabel: '~1.6GB',
     icon: '⚡',
-    note: '要ダウンロード / 会話は成立する(添削・日本語訳の品質は未計測)',
+    note: '要ダウンロード / 会話は成立する(日本語訳の品質は未計測)',
     lightweight: true,
     offerForDownload: false,
     bundled: false,
@@ -204,7 +204,9 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
  * 日本語訳を必ず出すこのアプリには、小さく速く、日本語が安定する Qwen の方が合う。
  *
  * 副作用として、素の初回インストールは自動判定で `small` プロファイル
- * (短い返答 / 日本語訳と添削あり / 単語カードなし)になる。これは意図した結果であり、
+ * (短い返答 / 日本語訳あり / 単語カードなし)になる。これは意図した結果であり、
+ * (添削はプロファイルに依らず、grammar-check を申告した backend のときだけ出る。
+ * カタログの note には書かず、機能検出に揃えた画面の文言に任せる)
  * 設定画面とオンボーディングで明示する。追加ダウンロードは **どの画面も薦めない**
  * (下の「RECOMMENDED_DOWNLOAD_LLM_MODEL を消した理由」)。
  *

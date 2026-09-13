@@ -344,7 +344,7 @@ npm run dev:backend
 # Lint
 npm run lint
 
-# テスト(frontend 301件 / backend 819件)
+# テスト(frontend 311件 / backend 819件)
 npm test
 
 # 個別

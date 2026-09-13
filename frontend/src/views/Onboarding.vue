@@ -370,7 +370,7 @@ function complete() {
           </p>
           <ul class="list-disc space-y-1 pl-5 text-sm text-text-muted">
             <li>マイクから英語/日本語で話しかけると AI が応答します</li>
-            <li>添削・日本語訳つき</li>
+            <li>{{ lightOutputsLabel }}つき</li>
             <li>会話履歴は30日間ローカルに保存</li>
             <li>外部にデータが送信されることはありません</li>
           </ul>

@@ -12,7 +12,7 @@ import type { Conversation, Message } from '../db/types'
 import { chatEnrich, probeBackendFeatures } from '../services/api'
 import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
 import { storedJapaneseTranslation, withEffectiveAiModes } from '../utils/stored-translation'
-import { retryFeedbackPatch, storedFeedback } from '../utils/stored-feedback'
+import { displayFeedbackMap, retryFeedbackPatch } from '../utils/stored-feedback'
 import { useSettingsStore } from '../stores/settings'
 import {
   FEATURE_CHAT_ENRICH,
@@ -43,13 +43,12 @@ const messages = ref<Message[]>([])
  */
 const displayMessages = computed(() => withEffectiveAiModes(messages.value))
 /**
- * 表示する添削(メッセージ ID → 添削)。保存された添削は **表示のたびに** 今のフィルタで
- * 検証し直し、通ったものだけを **今のテンプレートで作り直した説明** で出す
- * (以前のバージョンはモデルが書いた添削を保存していた。storedFeedback の注記)。
+ * 表示する添削(メッセージ ID → 添削)。保存された添削は **表示のたびに**、
+ * 保存された引用ではなく **直前のユーザー発話** と組にして今のフィルタで検証し直し、
+ * 通ったものだけを **今のテンプレートで作り直した説明** で出す
+ * (以前のバージョンはモデルが書いた添削と引用を保存していた。storedFeedback の注記)。
  */
-const displayFeedback = computed(
-  () => new Map(messages.value.map((m) => [m.id, storedFeedback(m)] as const)),
-)
+const displayFeedback = computed(() => displayFeedbackMap(messages.value))
 const loading = ref(true)
 
 /**
@@ -118,9 +117,10 @@ async function retryJapanese(message: Message): Promise<void> {
   setFlag(retryingIds, message.id, true)
   setFlag(retryFailedIds, message.id, false)
   try {
+    const userText = previousUserText(message.id)
     const enrichment = await chatEnrich(
       message.replyEn,
-      previousUserText(message.id),
+      userText,
       {
         aiName: settings.settings.aiCharacter.name,
         level: conversation.value?.level,
@@ -150,7 +150,7 @@ async function retryJapanese(message: Message): Promise<void> {
       : null
     const updated = await messagesRepo.update(message.id, {
       replyJa,
-      ...retryFeedbackPatch(message, checkedFeedback),
+      ...retryFeedbackPatch(message, userText, checkedFeedback),
       ...((message.vocabulary?.length ?? 0) > 0 || enrichment.vocabulary.length === 0
         ? {}
         : { vocabulary: enrichment.vocabulary }),

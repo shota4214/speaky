@@ -293,7 +293,8 @@ describe('同梱モデルの整合', () => {
     // 9B / 14B の精度は計測していない。
     for (const e of LLM_CATALOG) {
       expect(e.note, e.tag).not.toMatch(/おすすめ|高品質|精度重視/)
-      expect(e.note, e.tag).not.toMatch(/添削[^・]*(戻|出るように)/)
+      // 添削の有無は backend の申告(grammar-check)次第。静的な説明には一切書かない。
+      expect(e.note, e.tag).not.toContain('添削')
     }
   })
 

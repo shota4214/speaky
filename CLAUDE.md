@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （`npm test` = frontend → backend の順に vitest。**frontend 301 件 / backend 819 件**）
+   （`npm test` = frontend → backend の順に vitest。**frontend 311 件 / backend 819 件**）
    backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
    LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
    `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
@@ -383,7 +383,7 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   プロンプト・例示・デコード設定は `grammar-check.test.ts` が一字一句固定している。
 - **フィルタと説明**（`backend/src/shared/correction-guard.ts`）: 研究のプロトタイプ `filter.mjs` の忠実な移植。
   backend と frontend（履歴画面の再検証）が **同じ 1 つの実装**を import するので `shared/` に置いてある
-  （node/DOM の API を使わない純粋関数だけ。frontend の HistoryDetail チャンクが 6.2 → 25.2 kB（+19 kB / gzip +7 kB）になった。他のチャンクは変わらない）。
+  （node/DOM の API を使わない純粋関数だけ。frontend の HistoryDetail チャンクが 6.2 → 25.4 kB（+19 kB / gzip +7 kB）になった。他のチャンクは変わらない）。
   `guard()` が差分を単語単位で見て、閉じた語類の変更・同じ語の語形変化・語順の入れ替え以外
   （言い換え・数字・固有名詞・カジュアルな言い方への手出し・直しすぎ・文の種類の変更）を捨てる。
   `classify()` が変更を分類し、**全部の変更に日本語テンプレートがあるときだけ**説明を返す。
@@ -413,8 +413,13 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   - **履歴画面は保存済みの添削を表示のたびに検証し直す**（`frontend/src/utils/stored-feedback.ts`）。
     以前のバージョンはモデルが書いた添削（説明が英語 / 崩れた日本語 / 中国語）を検証せずに保存していて、
     インポートしたバックアップからも戻ってくるので、一度きりの削除ではなく表示時に判定する。
-    保存された発話と直した文を `recheckCorrection` に通し、通れば **今のテンプレートで作り直した説明**を出す
-    （保存された説明文は使わない）。通らなければ出さない。日本語訳の再取得では、通らない添削を
+    **直前のユーザー行の発話**（保存された引用 `userSaid` ではない）と直した文を `recheckCorrection` に通し、
+    さらに保存された `userSaid` が発話と（trim して）一致することを求める。通れば **今のテンプレートで作り直した説明**を出す
+    （保存された説明文も引用も使わない。「言ったこと」の欄は実際の発話）。通らなければ出さない。直前のユーザー行が無い行も出さない。
+    ⚠️ 引用で判定してはいけない: 以前の `user_said` もモデルが自由に書いていて、正しく「My sister is a nurse.」と
+    言った人に「My sister is nurse.」という引用を作ると組がフィルタを通り、**言ってもいない間違い**が冠詞の説明付きで出る
+    （長い発話の一部だけを引用した場合も同じ）。grammar-check の `user_said` は発話の trim なので一致条件で落ちない。
+    表示は `displayFeedbackMap` が 1 回の走査で作る。日本語訳の再取得では、同じ判定で通らない添削を
     「無い」扱いにして検証済みの添削で置き換える（`retryFeedbackPatch`）。判定は決定的なので、
     grammar-check が表示した添削はテンプレートを変えない限り必ず同じ説明で通る（fixture のテストが固定）。
     会話画面はこのセッションで作った行（検証済み）しか出さないので再検証しない。

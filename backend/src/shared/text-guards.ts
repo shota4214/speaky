@@ -17,8 +17,9 @@
  * "smiling face with smiling eyes" のように文字どおり喋ってしまうため。
  */
 const EMOJI_RE =
-  // 結合子・異体字セレクタ・キーキャップは文字クラスに入れると lint が「結合文字」と誤読するので分けて書く。
-  /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{E0020}-\u{E007F}]|\u{FE0E}|\u{FE0F}|\u{200D}|\u{20E3}/gu
+  // ⭐(U+2B50)・⏰(U+23F0)などの記号絵文字も含める。結合子・異体字セレクタ・キーキャップは
+  // 文字クラスに入れると lint が「結合文字」と誤読するので分けて書く。
+  /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{3030}\u{303D}\u{3297}\u{3299}\u{E0020}-\u{E007F}]|\u{FE0E}|\u{FE0F}|\u{200D}|\u{20E3}/gu
 
 /** 絵文字を取り除く(連続した空白は 1 つに畳まない。呼び出し側で trim する)。 */
 export function stripEmoji(text: string): string {
@@ -44,7 +45,7 @@ export function stripLoneSurrogates(text: string): string {
  * 構成する非 ASCII)が 1 文字でもあれば訳ではない。
  */
 const JA_ALLOWED_RE =
-  /^[\u3040-\u30FF\u4E00-\u9FFF\u3005\u3000-\u3002\u300C-\u300F\uFF08\uFF09\uFF01\uFF1F\uFF1A\uFF5E\u301C\u2026\u30FB\u2014\u2015\x20-\x7E\s]*$/
+  /^[\u3040-\u30FF\u4E00-\u9FFF\u3005\u3007\u3010\u3011\u201C\u201D\u2018\u2019\u3000-\u3002\u300C-\u300F\uFF08\uFF09\uFF01\uFF1F\uFF1A\uFF5E\u301C\u2026\u30FB\u2014\u2015\x20-\x7E\s]*$/
 const KANA_RE = /[\u3040-\u30FF]/g
 const HAN_RE = /[\u4E00-\u9FFF\u3005]/g
 const LATIN_RE = /[A-Za-z]/g
@@ -79,12 +80,21 @@ function codePointLength(text: string): number {
  *  5) 長さが max(12, 英文の長さ × 0.9) 以下
  *     (翻訳ではなく「返事の続き」を書き始めた出力を落とす)
  *
+ * 評価の validator_v2 からの差分は 2 つだけ: 判定前の NFKC 正規化と、〇 “” ‘’ 【】 の許可。
+ * どちらも「落としていた正しい訳を通す」方向で、下の較正ケースの判定は変わらない。
+ *
  * 評価データ(5 モデル × 12 件の目視判定)で、正しい / 部分的に正しい訳
  * 43 件のうち落としたのは 1 件だけ(訳の後ろに括弧書きのローマ字を足したもの)。
  * **ここを緩めるときは validator のテストの較正ケースを先に見ること。**
  */
 export function judgeJapaneseTranslation(ja: string, en: string): JapaneseTranslationVerdict {
-  const t = stripEmoji(ja ?? '').trim()
+  // NFKC で全角英数字・全角記号(３ ％ ； ，)を ASCII に寄せてから判定する。
+  // 評価の validator_v2 はこれをせず、「３時に会いましょう。」のような普通の訳を
+  // 許可外の文字として落としていた(3B の標準プロファイルで実際に出る書き方)。
+  // 〇 “” ‘’ 【】 は NFKC で変わらないので許可文字に直接足してある。
+  const t = stripEmoji(ja ?? '')
+    .normalize('NFKC')
+    .trim()
   if (!t) return 'empty'
   if (!JA_ALLOWED_RE.test(t)) return 'disallowed-char'
   const kana = count(t, KANA_RE)

@@ -577,11 +577,12 @@ export async function chatEnrich(
   replyEn: string,
   userText: string | null,
   context: ChatRequestContext = {},
-  options: { signal?: AbortSignal } = {},
+  /** retry: ユーザー操作による再取得(backend は毎回違う出力を引く梯子を使う)。 */
+  options: { signal?: AbortSignal; retry?: boolean } = {},
 ): Promise<ChatEnrichment> {
   return postJson<ChatEnrichment>(
     '/api/chat/enrich',
-    { replyEn, userText, context },
+    { replyEn, userText, context, ...(options.retry ? { retry: true } : {}) },
     CLIENT_DEADLINE_MS.enrich,
     options.signal,
   )

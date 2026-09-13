@@ -10,7 +10,11 @@ import {
 } from './request-budget.js'
 import { chatAttempts, openingAttempts } from '../routes/chat.js'
 import { EXTRACT_FACTS_ATTEMPTS } from '../routes/extract-facts.js'
-import { EN_TO_JA_ATTEMPTS, TRANSLATION_ATTEMPTS } from '../services/translation.js'
+import {
+  EN_TO_JA_ATTEMPTS,
+  EN_TO_JA_FRESH_ATTEMPTS,
+  TRANSLATION_ATTEMPTS,
+} from '../services/translation.js'
 import { MODEL_PROFILES } from '../services/model-profile.js'
 
 /**
@@ -34,6 +38,7 @@ describe('リトライ梯子とクライアント締め切りの結合', () => {
     expect(openingAttempts(MODEL_PROFILES.standard)).toHaveLength(OLLAMA_ATTEMPTS.opening)
     expect(TRANSLATION_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.translation)
     expect(EN_TO_JA_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.translationEnToJa)
+    expect(EN_TO_JA_FRESH_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.translationEnToJa)
     expect(EXTRACT_FACTS_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.extractFacts)
   })
 

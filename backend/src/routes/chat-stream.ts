@@ -192,6 +192,8 @@ interface EnrichInput {
   /** 既に解決済みのプロファイル。省略時は context から解決する。 */
   profile?: ModelProfile
   signal?: AbortSignal
+  /** ユーザー操作による再取得か(翻訳の梯子を毎回違う出力を引く側にする)。 */
+  fresh?: boolean
 }
 
 /**
@@ -201,7 +203,7 @@ interface EnrichInput {
  * 最後に en→ja 翻訳で必ず日本語訳を埋める(非ストリーミング経路と同じ保証)。
  */
 export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentResult> {
-  const { replyEn, userText, context, signal } = input
+  const { replyEn, userText, context, signal, fresh } = input
   const profile =
     input.profile ?? resolveTurnModelAndProfile(context.modelProfile, context.model).profile
 
@@ -215,6 +217,7 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
       model: context.model,
       numCtx: profile.numCtx,
       signal,
+      fresh,
     })
     return { replyJa, feedback: null, vocabulary: [] }
   }
@@ -255,6 +258,7 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
       model: context.model,
       numCtx: profile.numCtx,
       signal,
+      fresh,
     })
   }
   return result
@@ -356,10 +360,13 @@ chatStreamRouter.post('/chat/enrich', async (req: Request, res: Response) => {
     replyEn,
     userText,
     context = {},
+    retry,
   } = (req.body ?? {}) as {
     replyEn?: string
     userText?: string | null
     context?: ChatContext
+    /** 「↻ 再取得」から呼ばれたか。古いフロントは送らない(= 従来どおり決定的な梯子)。 */
+    retry?: boolean
   }
   if (typeof replyEn !== 'string' || replyEn.trim().length === 0) {
     return res.status(400).json({ error: 'replyEn is required (non-empty string)' })
@@ -373,6 +380,7 @@ chatStreamRouter.post('/chat/enrich', async (req: Request, res: Response) => {
       context,
       profile,
       signal,
+      fresh: retry === true,
     })
     return res.json({ ...enrichment, profile: profile.level })
   } catch (e) {
@@ -649,6 +657,14 @@ async function streamConversationTurn(
         maxSentences: profile.maxReplySentences,
         dropNonLatin: profile.dropNonLatinReply,
       }).text
+      if (!finalText) {
+        safeSend(res, {
+          type: 'error',
+          code: 'MALFORMED',
+          error: 'LLM が英語の返答を返しませんでした。',
+        })
+        return res.end()
+      }
     }
   } else if (gate) {
     if (!gate.isCapped) gate.advance(full, full.length, true)

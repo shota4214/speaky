@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EN_TO_JA_ATTEMPTS,
+  EN_TO_JA_FRESH_ATTEMPTS,
   isAcceptableEnglishRendering,
   TRANSLATION_ATTEMPTS,
   translateEnglishToJapanese,
@@ -85,6 +86,18 @@ describe('translateEnglishToJapanese', () => {
       'こんにちは！私はどうですか。日本人である人は、英語で日常生活をしているかもしれません。',
     ])
     expect(await translateEnglishToJapanese('Hi! How are you?', {})).toBe('')
+  })
+
+  it('再取得(fresh)では seed を固定せず温度も上げる(押すたびに同じ失敗を繰り返さない)', async () => {
+    const sent = stubOllama(['Nice to meet you!', 'はじめまして！'])
+    expect(await translateEnglishToJapanese('Nice to meet you!', { fresh: true })).toBe(
+      'はじめまして！',
+    )
+    expect(sent.map((b) => b.options.temperature)).toEqual(
+      EN_TO_JA_FRESH_ATTEMPTS.map((a) => a.temperature),
+    )
+    expect(sent.every((b) => b.options.seed !== RETRY_SEED)).toBe(true)
+    expect(EN_TO_JA_FRESH_ATTEMPTS).toHaveLength(EN_TO_JA_ATTEMPTS.length)
   })
 
   it('閉じタグの残骸は剥がす', async () => {

@@ -218,6 +218,17 @@ export const EN_TO_JA_ATTEMPTS: readonly { temperature: number; seed?: number }[
 ]
 
 /**
+ * ユーザーが「↻ 再取得」を押したとき(と会話終了後の一括 enrich)の試行設定。
+ * 上の梯子は 2 本とも決定的なので、それで弾かれた訳は **何度押しても同じ結果** になる。
+ * 再取得では seed を固定せず温度も少し上げて、別の出力を引く。
+ * ⚠️ 本数は EN_TO_JA_ATTEMPTS と同じにすること(予算は同じ宣言から計算している)。
+ */
+export const EN_TO_JA_FRESH_ATTEMPTS: readonly { temperature: number; seed?: number }[] = [
+  { temperature: 0.3 },
+  { temperature: 0.5 },
+]
+
+/**
  * 日本語訳として使ってよい文字列か確かめる。
  *
  * このプロンプトはプレーンテキストを求めているが、小型モデルは JSON
@@ -237,7 +248,13 @@ export function sanitizeJapaneseTranslation(raw: string): string {
 
 export async function translateEnglishToJapanese(
   englishText: string,
-  options: { model?: string; numCtx?: number; signal?: AbortSignal },
+  options: {
+    model?: string
+    numCtx?: number
+    signal?: AbortSignal
+    /** ユーザー操作による再取得。決定的な梯子ではなく、毎回違う出力を引く梯子を使う。 */
+    fresh?: boolean
+  },
 ): Promise<string> {
   // 絵文字は訳させない(訳に絵文字や「笑顔」が混ざる / 検証の長さ判定が狂う)。
   const source = stripTags(stripEmoji(englishText), 'en').trim()
@@ -248,7 +265,7 @@ export async function translateEnglishToJapanese(
     { role: 'user', content: `<en>${source}</en>` },
   ]
   try {
-    for (const a of EN_TO_JA_ATTEMPTS) {
+    for (const a of options.fresh ? EN_TO_JA_FRESH_ATTEMPTS : EN_TO_JA_ATTEMPTS) {
       const ollamaRes = await chatWithOllama(messages, {
         model: options.model,
         numCtx: options.numCtx,

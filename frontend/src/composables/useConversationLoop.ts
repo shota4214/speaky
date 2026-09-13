@@ -419,13 +419,18 @@ export function useConversationLoop() {
     if (!message?.replyEn) return
     markEnrichPending(messageId)
     try {
-      const enrichment = await chatEnrich(message.replyEn, previousUserText(messageId), {
-        aiName: settings.settings.aiCharacter.name,
-        level: conversation.level,
-        topic: conversation.topic,
-        model: settings.settings.llmModel,
-        ...profilePatch(),
-      })
+      const enrichment = await chatEnrich(
+        message.replyEn,
+        previousUserText(messageId),
+        {
+          aiName: settings.settings.aiCharacter.name,
+          level: conversation.level,
+          topic: conversation.topic,
+          model: settings.settings.llmModel,
+          ...profilePatch(),
+        },
+        { retry: true },
+      )
       await applyEnrichment(messageId, enrichment)
     } catch (e) {
       console.warn('[loop] enrich retry failed:', e)
@@ -1020,8 +1025,9 @@ export function useConversationLoop() {
           inputLanguage: null,
           replyEn: reply.reply_en,
           // 日本語入力ターンの reply_ja は訳ではなく定型の案内文なので検証しない。
+          // 判定はモデルが書いた reply.mode ではなく、こちらで判定した入力モードで行う。
           replyJa:
-            reply.mode === 'normal'
+            inputMode === 'normal'
               ? acceptJapaneseTranslation(reply.reply_ja ?? '', reply.reply_en) || null
               : reply.reply_ja,
           feedback: reply.feedback
@@ -1036,7 +1042,7 @@ export function useConversationLoop() {
         })
         conversation.appendMessage(aiMsg)
         // 使える訳が無ければ「取得できませんでした + 再取得」にする(空行のまま放置しない)。
-        if (reply.mode === 'normal' && !aiMsg.replyJa) markEnrichFailed(aiMsg.id)
+        if (inputMode === 'normal' && !aiMsg.replyJa) markEnrichFailed(aiMsg.id)
 
         lastAiReplyEn.value = reply.reply_en
         conversation.setMode('aiSpeaking')
@@ -1210,6 +1216,8 @@ export function useConversationLoop() {
         try {
           const enrichment = await chatEnrich(target.replyEn!, userText, context, {
             signal: ctrl.signal,
+            // 会話中に取れなかった行のやり直しなので、同じ失敗を繰り返さない梯子を使う。
+            retry: true,
           })
           // 保存・ストア反映・pending 解除はセッション中と同じ経路に通す
           // (日本語訳が空なら applyEnrichment が失敗として扱う)。

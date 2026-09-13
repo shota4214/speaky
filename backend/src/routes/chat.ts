@@ -180,7 +180,16 @@ export function historyToMessages(
  *    英文を削ったときは、モデルの reply_ja は **削る前の英文** の訳なので捨てて訳し直す。
  *  - reply_ja を検証する。訳として使えなければ空にして en→ja 補完に回す。
  */
-export function finalizeReply(reply: ChatReply, profile: ModelProfile): ChatReply | null {
+export function finalizeReply(
+  reply: ChatReply,
+  profile: ModelProfile,
+  /**
+   * このターンのモード。**モデルが JSON に書いた mode は信用しない**。
+   * 1B は英語入力のターンに "mixed" と書くことがあり、そのまま返すとフロントが
+   * 「言ってみて」状態に入り、日本語訳の検証と再取得ボタンも飛ばしてしまう。
+   */
+  mode: Mode = 'normal',
+): ChatReply | null {
   let replyEn = stripLoneSurrogates(reply.reply_en).trim()
   let replyJa = reply.reply_ja
   if (profile.dropNonLatinReply || profile.maxReplySentences !== null) {
@@ -195,7 +204,12 @@ export function finalizeReply(reply: ChatReply, profile: ModelProfile): ChatRepl
     }
   }
   if (!replyEn) return null
-  return { ...reply, reply_en: replyEn, reply_ja: acceptJapaneseTranslation(replyJa, replyEn) }
+  return {
+    ...reply,
+    mode,
+    reply_en: replyEn,
+    reply_ja: acceptJapaneseTranslation(replyJa, replyEn),
+  }
 }
 
 interface ChatRequestBody {
@@ -325,7 +339,7 @@ async function handleChatTurn(
           )
         }
       }
-      if (reply) reply = finalizeReply(reply, profile)
+      if (reply) reply = finalizeReply(reply, profile, mode)
       if (reply) {
         // 会話 LLM が reply_ja を省略することがある(特に 3B)。
         // フロントの「日本語訳を必ず表示」を保証するため、reply_en があるのに
@@ -440,7 +454,7 @@ async function handleOpeningTurn(
           )
         }
       }
-      if (reply) reply = finalizeReply(reply, profile)
+      if (reply) reply = finalizeReply(reply, profile, mode)
       if (reply) {
         if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
           reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {

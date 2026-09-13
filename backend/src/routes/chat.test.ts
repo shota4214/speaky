@@ -79,6 +79,12 @@ describe('finalizeReply', () => {
     }
   })
 
+  it('モデルが JSON に書いた mode は使わず、このターンのモードにする', () => {
+    expect(finalizeReply(reply({ mode: 'mixed' }), MODEL_PROFILES.small, 'normal')?.mode).toBe(
+      'normal',
+    )
+  })
+
   it('孤立サロゲートを落とす', () => {
     const r = finalizeReply(
       reply({ reply_en: 'Hello there\ud83d, friend.' }),

@@ -497,6 +497,19 @@ describe('judgeJapaneseTranslation(評価データで較正)', () => {
   })
 })
 
+describe('judgeJapaneseTranslation(validator_v2 が落としていた正しい訳)', () => {
+  it.each([
+    ['See you at 3.', '３時に会いましょう。'],
+    ["I'm 100% sure!", '１００％確信してる！'],
+    ['Is your name Tanaka?', 'お名前は〇〇さんですか？'],
+    ['He said it was fun.', '彼は“楽しい”と言った。'],
+    ['Great; really.', 'すごいね；本当に。'],
+    ['Well done! ⭐', 'よくできました！⭐'],
+  ])('%s → %s', (en, ja) => {
+    expect(judgeJapaneseTranslation(ja, en)).toBe('ok')
+  })
+})
+
 describe('acceptJapaneseTranslation', () => {
   it('使える訳は絵文字と孤立サロゲートを落とした形で返す', () => {
     expect(acceptJapaneseTranslation(' 映画は楽しいね！😊 ', 'Movies are fun!')).toBe(
@@ -513,6 +526,9 @@ describe('acceptJapaneseTranslation', () => {
 describe('stripEmoji / stripLoneSurrogates', () => {
   it('絵文字・異体字セレクタ・結合子・国旗を取り除く', () => {
     expect(stripEmoji('Nice! 😊👍🏽 ❤️ 👨‍👩‍👧 🇯🇵 done')).toBe('Nice!     done')
+  })
+  it('記号絵文字(⭐ ⏰ ⌛)も取り除く', () => {
+    expect(stripEmoji('Good job ⭐ ⏰⌛!')).toBe('Good job  !')
   })
   it('普通の英文・日本語・記号は変えない', () => {
     const text = 'Café at 3:00 — €5, ¥500. 「いいね」！'

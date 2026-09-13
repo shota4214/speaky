@@ -97,15 +97,20 @@ async function retryJapanese(message: Message): Promise<void> {
   setFlag(retryingIds, message.id, true)
   setFlag(retryFailedIds, message.id, false)
   try {
-    const enrichment = await chatEnrich(message.replyEn, previousUserText(message.id), {
-      aiName: settings.settings.aiCharacter.name,
-      level: conversation.value?.level,
-      topic: conversation.value?.topic,
-      model: settings.settings.llmModel,
-      ...(hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)
-        ? { modelProfile: settings.settings.modelProfile }
-        : {}),
-    })
+    const enrichment = await chatEnrich(
+      message.replyEn,
+      previousUserText(message.id),
+      {
+        aiName: settings.settings.aiCharacter.name,
+        level: conversation.value?.level,
+        topic: conversation.value?.topic,
+        model: settings.settings.llmModel,
+        ...(hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)
+          ? { modelProfile: settings.settings.modelProfile }
+          : {}),
+      },
+      { retry: true },
+    )
     // 訳が空 / 訳として使えない enrich は成功ではない。会話画面(applyEnrichment)と同じ判定にする。
     const replyJa = acceptJapaneseTranslation(enrichment.replyJa, message.replyEn)
     if (!replyJa) {

@@ -522,6 +522,49 @@ describe('judgeJapaneseTranslation(評価データで較正)', () => {
   })
 })
 
+describe('judgeJapaneseTranslation(JSON の残骸)', () => {
+  it('英文に無い波括弧は壊れた JSON の残骸として落とす', () => {
+    // 曲がった引用符で閉じられ、matchJsonStringField が JSON の続きまで拾った形
+    expect(judgeJapaneseTranslation('こんにちは”},{', 'Hello!')).toBe('json-remnant')
+    expect(judgeJapaneseTranslation('いいね！"}', 'Nice!')).toBe('json-remnant')
+    expect(judgeJapaneseTranslation('{いいね！', 'Nice!')).toBe('json-remnant')
+    // 全角の波括弧も NFKC で ASCII に寄るので同じく落ちる
+    expect(judgeJapaneseTranslation('いいね！｝', 'Nice!')).toBe('json-remnant')
+  })
+
+  it('英文に波括弧があれば訳にあってもよい', () => {
+    expect(judgeJapaneseTranslation('{A}さん、こんにちは！', 'Hi {A}!')).toBe('ok')
+  })
+
+  it('角括弧は見ない(「[笑]」は訳として普通にありうる)', () => {
+    expect(judgeJapaneseTranslation('それは面白いね[笑]', "That's funny!")).toBe('ok')
+  })
+
+  it('acceptJapaneseTranslation も空文字を返す(= en→ja で訳し直す)', () => {
+    expect(acceptJapaneseTranslation('こんにちは”},{', 'Hello!')).toBe('')
+  })
+})
+
+describe('judgeJapaneseTranslation(2 段落目)', () => {
+  it('空行を含む訳は落とす(訳の後ろに返事の続きを書いている)', () => {
+    expect(judgeJapaneseTranslation('いいね！\n\nそれで、次は何する', 'Nice!')).toBe(
+      'multi-paragraph',
+    )
+    expect(judgeJapaneseTranslation('いいね！\n  \nそれで', 'Nice!')).toBe('multi-paragraph')
+    expect(judgeJapaneseTranslation('いいね！\r\n\r\nそれで', 'Nice!')).toBe('multi-paragraph')
+  })
+
+  it('段落の中の改行 1 つは落とさない', () => {
+    expect(judgeJapaneseTranslation('いいね！\nどこに行ったの？', 'Nice! Where did you go?')).toBe(
+      'ok',
+    )
+  })
+
+  it('前後の空行は trim されるので落とさない', () => {
+    expect(judgeJapaneseTranslation('\n\nいいね！\n\n', 'Nice!')).toBe('ok')
+  })
+})
+
 describe('judgeJapaneseTranslation(validator_v2 が落としていた正しい訳)', () => {
   it.each([
     ['See you at 3.', '３時に会いましょう。'],

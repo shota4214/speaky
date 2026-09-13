@@ -11,6 +11,7 @@ import { messagesRepo } from '../db/repos/messages'
 import type { Conversation, Message } from '../db/types'
 import { chatEnrich, probeBackendFeatures } from '../services/api'
 import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
+import { storedJapaneseTranslation } from '../utils/stored-translation'
 import { useSettingsStore } from '../stores/settings'
 import {
   FEATURE_CHAT_ENRICH,
@@ -70,9 +71,13 @@ function isReferenceTranslation(m: Message): boolean {
   return m.mode !== 'japanese_help' && m.mode !== 'mixed'
 }
 
-/** 日本語訳が欠けている AI 返答か(= 再取得の対象)。 */
+/**
+ * 日本語訳が欠けている AI 返答か(= 再取得の対象)。
+ * 検証を通らない保存済みの訳(v1.2.0 が保存したローマ字など)も欠けている扱い
+ * (storedJapaneseTranslation の注記)。
+ */
 function isJapaneseMissing(m: Message): boolean {
-  return m.role === 'ai' && !!m.replyEn?.trim() && !m.replyJa?.trim()
+  return m.role === 'ai' && !!m.replyEn?.trim() && !storedJapaneseTranslation(m).trim()
 }
 
 /** そのメッセージの直前のユーザー発話(添削の材料)。 */
@@ -223,13 +228,13 @@ function replay(text: string) {
                   日本語訳は後追い(enrich)で入るため、届かないまま保存された行が
                   ありうる。無条件に出すと空行だけが残るので、あるときだけ描画する。
                 -->
-                <div v-if="m.replyJa" class="mt-1 text-xs text-text-muted">
+                <div v-if="storedJapaneseTranslation(m)" class="mt-1 text-xs text-text-muted">
                   <span
                     v-if="isReferenceTranslation(m)"
                     class="mr-1 rounded border border-border px-1 text-[10px]"
                     title="AI による参考の訳です。細かいニュアンスは違うことがあります"
                     >参考訳</span
-                  >{{ m.replyJa }}
+                  >{{ storedJapaneseTranslation(m) }}
                 </div>
                 <div v-else-if="isJapaneseMissing(m)" class="mt-1 text-xs text-text-muted">
                   <span class="opacity-60">

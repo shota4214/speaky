@@ -114,6 +114,24 @@ describe('finalizeReply', () => {
     }
   })
 
+  it('壊れた JSON の残骸が混ざった reply_ja は空にする(en→ja 補完に回る)', () => {
+    for (const profile of [MODEL_PROFILES.small, MODEL_PROFILES.standard]) {
+      expect(
+        finalizeReply(reply({ reply_ja: 'カレーはおいしいね！辛くしたの？”},{' }), profile)
+          ?.reply_ja,
+      ).toBe('')
+    }
+  })
+
+  it('2 段落目を書いた reply_ja は空にする(en→ja 補完に回る)', () => {
+    for (const profile of [MODEL_PROFILES.small, MODEL_PROFILES.standard]) {
+      expect(
+        finalizeReply(reply({ reply_ja: 'カレーいいね！\n\nそれで、次は何する' }), profile)
+          ?.reply_ja,
+      ).toBe('')
+    }
+  })
+
   it('モデルが JSON に書いた mode は使わず、このターンのモードにする', () => {
     expect(finalizeReply(reply({ mode: 'mixed' }), MODEL_PROFILES.small, 'normal')?.mode).toBe(
       'normal',

@@ -45,7 +45,11 @@ export const OLLAMA_BUDGET_MS = {
   chatStream: 60_000,
   /** ストリーミングの opening は非ストリーミング同様コールドロード込み。 */
   openingStream: 90_000,
-  /** 翻訳(ja→en / en→ja)。numPredict 300 の単発。 */
+  /**
+   * 翻訳(ja→en / en→ja)の 1 回ぶん。生成上限は ja→en が 120、en→ja が英文の長さから
+   * 40〜400(services/translation.ts enToJaNumPredict)。上限 400 はこの予算に収まる
+   * 長さとして選んであるので、上限を上げるならここも見直すこと。
+   */
   translation: 60_000,
   /** enrich(日本語訳 + 添削 + 単語の JSON)。 */
   enrich: 60_000,

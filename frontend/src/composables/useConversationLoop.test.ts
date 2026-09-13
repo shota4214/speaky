@@ -424,3 +424,58 @@ describe('会話終了後の一括 enrich', () => {
     expect(rows[0]!.replyJa).toBeNull()
   })
 })
+
+describe('非ストリーミング経路(古い backend)', () => {
+  it('モデルが JSON に書いた mode ではなく、こちらで判定した入力モードを使う', async () => {
+    const conversation = useConversationStore()
+    conversation.start({ id: 'conv-json', level: 'intermediate', topic: 'daily' })
+
+    // ストリーミング機能を申告しない backend
+    apiMocks.probeBackendFeatures.mockResolvedValue({
+      ...FEATURES,
+      features: ['chat-enrich', 'model-profile'],
+    })
+    apiMocks.chatOpening.mockRejectedValue(new Error('no opening'))
+    apiMocks.transcribeAudio.mockResolvedValue({
+      text: 'I went hiking last weekend',
+      language: 'en',
+      durationMs: 1000,
+    })
+    // 古い backend はモデルの "mixed" をそのまま返す
+    apiMocks.chat.mockResolvedValue({
+      reply_en: 'Oh nice, where did you go hiking?',
+      reply_ja: 'いいね、どこにハイキングに行ったの？',
+      feedback: null,
+      vocabulary: [],
+      mode: 'mixed',
+    })
+
+    const loop = useConversationLoop()
+    let micCalls = 0
+    let promptedAtSecondMic = -1
+    recorderStart.mockImplementation(() => {
+      micCalls += 1
+      if (micCalls >= 2) {
+        promptedAtSecondMic = loop.promptedAttempts.value
+        loop.stop()
+        return Promise.resolve({ hadSpeech: false, blob: new Blob(), mimeType: 'audio/webm' })
+      }
+      return Promise.resolve({ hadSpeech: true, blob: new Blob(), mimeType: 'audio/webm' })
+    })
+
+    const running = loop.start(startInput)
+    await until(() => apiMocks.chat.mock.calls.length === 1, 'chat が呼ばれる')
+    await until(() => pendingSpeech.length > 0, '読み上げが始まる')
+    await finishAllSpeech()
+    await running
+
+    expect(apiMocks.chatStream).not.toHaveBeenCalled()
+    // 「言ってみて」状態に入っていない
+    expect(promptedAtSecondMic).toBe(0)
+    const ai = (await messagesRepo.listByConversation('conv-json')).filter((m) => m.role === 'ai')
+    expect(ai).toHaveLength(1)
+    expect(ai[0]!.mode).toBe('normal')
+    // 通常のターンとして訳を検証して保存している(= 「参考訳」の札が付く)
+    expect(ai[0]!.replyJa).toBe('いいね、どこにハイキングに行ったの？')
+  })
+})

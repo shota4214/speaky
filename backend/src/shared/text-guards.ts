@@ -58,6 +58,8 @@ export type JapaneseTranslationVerdict =
   | 'kana-share'
   | 'latin-heavy'
   | 'too-long'
+  | 'json-remnant'
+  | 'multi-paragraph'
 
 /**
  * 日本語訳の長さの上限 = max(JA_LENGTH_FLOOR, 英文の長さ × JA_LENGTH_RATIO)。
@@ -94,6 +96,10 @@ function codePointLength(text: string): number {
  *     下限は validator_v2 では 12 だったが、「Wow.」→「わあ、それはすごいですね！」
  *     (13 文字)のような短い相づちの自然な訳まで落としていたので 18 に上げた。
  *     長い英文の続きを捕まえるのは比率 0.9 の方なので、比率は変えていない。
+ *  6) 英文に無い ASCII の波括弧 { } を含まない(壊れた JSON の残骸)
+ *  7) 空行を含まない(訳の後ろに 2 段落目を書いた出力)
+ *     6 と 7 は評価の後に足した規則で、**較正ケースの判定を変えないよう最後に置く**
+ *     (「」} </td>…」の較正ケースは 4 で latin-heavy のまま)。
  *
  * 評価の validator_v2 からの差分は 2 つだけ: 判定前の NFKC 正規化と、〇 “” ‘’ 【】 の許可。
  * どちらも「落としていた正しい訳を通す」方向で、下の較正ケースの判定は変わらない。
@@ -124,6 +130,18 @@ export function judgeJapaneseTranslation(ja: string, en: string): JapaneseTransl
   ) {
     return 'too-long'
   }
+  // 6) ASCII の波括弧が英文に無いのに訳にある = 壊れた JSON の残骸。
+  //    非ストリーミング経路は壊れた JSON を matchJsonStringField で拾うが、それは
+  //    **最初の straight quote まで** 読むので、モデルが曲がった引用符で閉じると
+  //    「こんにちは”},{」のように JSON の続きまで reply_ja に入る(1〜5 を全部通る)。
+  //    全角の ｛ ｝ は上の NFKC で ASCII に寄っているのでここで一緒に落ちる。
+  //    角括弧は見ない: 「[笑]」は訳として普通にありうる。
+  if (/[{}]/.test(t) && !/[{}]/.test((en ?? '').normalize('NFKC'))) return 'json-remnant'
+  // 7) 空行を含む = 訳の後ろに 2 段落目(返事の続き・補足説明)を書いている。
+  //    翻訳経路は firstTranslationParagraph で最初の段落に切ってから来るので、
+  //    ここで落ちるのは JSON 経路(会話の reply_ja / 標準プロファイルの enrich)の
+  //    出力だけで、落ちたものは en→ja 翻訳で訳し直される。
+  if (/\n[^\S\n]*\n/.test(t)) return 'multi-paragraph'
   return 'ok'
 }
 

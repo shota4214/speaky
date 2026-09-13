@@ -43,6 +43,7 @@ import type {
 } from '../utils/chat-stream-reducer'
 import { SentenceAccumulator, splitIntoSpeechSegments } from '../utils/sentence-stream'
 import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
+import { storedJapaneseTranslation } from '../utils/stored-translation'
 import { useAudioRecorder } from './useAudioRecorder'
 import { useSpeechQueue } from './useSpeechQueue'
 import { getDefaultVoicePreference, useTextToSpeech, type SpeakOptions } from './useTextToSpeech'
@@ -300,7 +301,8 @@ export function useConversationLoop() {
     // 対象に含める。訳の無い行に再取得ボタンが出ないのが一番まずい。
     if (!enrichPendingIds.value.has(id)) {
       const message = conversation.messages.find((m) => m.id === id)
-      if (!message || message.replyJa?.trim()) return
+      // 「訳がある」の判定は画面と同じ(検証を通らない保存済みの訳は無いものとして扱う)。
+      if (!message || storedJapaneseTranslation(message).trim()) return
     }
     const pending = new Set(enrichPendingIds.value)
     pending.delete(id)
@@ -1038,7 +1040,10 @@ export function useConversationLoop() {
               }
             : null,
           vocabulary: reply.vocabulary,
-          mode: reply.mode,
+          // モデルが JSON に書いた mode は信用しない(ストリーミング経路と同じ)。
+          // 古い backend は英語のターンでもモデルの "mixed" をそのまま返すので、
+          // 使うと「言ってみて」状態に入り、バッジが出て「参考訳」の札も消える。
+          mode: inputMode,
         })
         conversation.appendMessage(aiMsg)
         // 使える訳が無ければ「取得できませんでした + 再取得」にする(空行のまま放置しない)。
@@ -1058,7 +1063,7 @@ export function useConversationLoop() {
 
         if (stopRequested.value) break
 
-        if (reply.mode === 'japanese_help' || reply.mode === 'mixed') {
+        if (inputMode === 'japanese_help' || inputMode === 'mixed') {
           promptedAttempts.value = 1
           conversation.setMode('awaitingPromptedSpeech')
         }
@@ -1197,7 +1202,8 @@ export function useConversationLoop() {
     try {
       const rows = await messagesRepo.listByConversation(conversationId)
       const targets = rows
-        .filter((m) => m.role === 'ai' && m.replyEn?.trim() && !m.replyJa?.trim())
+        // 検証を通らない保存済みの訳(v1.2.0 のローマ字など)も欠けているものとして埋め直す。
+        .filter((m) => m.role === 'ai' && m.replyEn?.trim() && !storedJapaneseTranslation(m).trim())
         .slice(0, MAX_BACKFILL_MESSAGES)
       if (targets.length === 0) return 0
       console.log(`[loop] 会話終了後の一括 enrich: ${targets.length} 件`)

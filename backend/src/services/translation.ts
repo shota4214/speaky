@@ -97,6 +97,11 @@ export function stripTranslationPreamble(raw: string): string {
   return out
 }
 
+/** かな / 漢字(日本語の段落かどうかの判定)。 */
+const JAPANESE_CHAR_RE = /[\u3040-\u30FF\u4E00-\u9FFF\u3005]/
+/** 末尾がコロン(「Here is the Japanese translation:」「日本語訳：」のような見出し)。 */
+const ENDS_WITH_COLON_RE = /[:：]\s*$/
+
 /**
  * 翻訳出力の **最初の段落** だけを返す(空行で区切られた 2 段落目以降は捨てる)。
  *
@@ -105,19 +110,80 @@ export function stripTranslationPreamble(raw: string): string {
  * 引き直しても同じなので、訳が永久に空になる。stop からは外し、ここで切る。
  *
  *  - 先頭の空行は読み飛ばす(これが直したい症状)
- *  - 前置きだけの段落(「Here's the translation:」)は訳ではないので読み飛ばす
+ *  - 訳の前に置かれた段落は訳ではないので読み飛ばす:
+ *      - 前置きだけの段落(「Here's the translation:」)
+ *      - 末尾がコロンの段落(「Here is the Japanese translation:」「日本語訳：」)。
+ *        ただし **原文自体がコロンで終わるときは読み飛ばさない**(その訳もコロンで終わる)
+ *      - en→ja では、かなも漢字も無い段落(「Sure!」)。訳は必ず日本語の段落なので、
+ *        **かな / 漢字を含む最初の段落を返す**
  *  - それ以外は **最初の段落で必ず打ち切る**。訳の後ろに続けて書かれた
  *    「返事の続き」や補足説明を検証(と画面)へ渡さない
+ *
+ * 前置きの段落を返してしまうと検証で弾かれ、**後ろにあった本物の訳まで捨てる**
+ * (「Sure!\n\nこんにちは！」が 1 回分の試行ごと無駄になる)。一方で本物の日本語の
+ * 段落を読み飛ばすと 2 段落目(返事の続き)を訳として出してしまうので、
+ * 日本語の段落を読み飛ばすのは「コロンで終わる見出し」のときだけに限っている。
+ * 日本語の段落が 1 つも無い en→ja の出力は、ログのために最初の段落を返す
+ * (どうせ検証で弾かれる)。
  */
-export function firstTranslationParagraph(raw: string): string {
+export function firstTranslationParagraph(
+  raw: string,
+  options: { direction: 'ja-to-en' | 'en-to-ja'; source?: string },
+): string {
   const paragraphs = raw
     .split(/\r?\n[^\S\r\n]*\r?\n/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0)
-  for (const p of paragraphs) {
-    if (stripTranslationPreamble(p)) return p
+  const sourceEndsWithColon = ENDS_WITH_COLON_RE.test(options.source ?? '')
+  const isLead = (p: string, i: number) =>
+    !stripTranslationPreamble(p) ||
+    // 最後の段落は見出しではありえない(後ろに訳が無い)ので読み飛ばさない。
+    (ENDS_WITH_COLON_RE.test(p) && !sourceEndsWithColon && i < paragraphs.length - 1)
+  if (options.direction === 'en-to-ja') {
+    const ja = paragraphs.find((p, i) => JAPANESE_CHAR_RE.test(p) && !isLead(p, i))
+    if (ja !== undefined) return ja
   }
-  return ''
+  return paragraphs.find((p, i) => !isLead(p, i)) ?? ''
+}
+
+/**
+ * en→ja 翻訳の生成トークン数の上限(英文の長さから決める)。
+ *
+ * `'\n\n'` を stop から外したので、訳の後ろに書き続けるモデルは上限まで走る
+ * (弾かれて引き直すと 2 回)。固定の 200 だと、短い英文では無駄に待たされ、
+ * 標準プロファイルの 4〜5 文の返答では **訳が途中で切れて、切れたまま検証を通る**。
+ *
+ *   numPredict = clamp(ceil(英文の文字数 × 1.2 + 20), 40, 400)
+ *
+ *  - 係数 1.2: 検証(judgeJapaneseTranslation)が通す訳の長さは
+ *    **英文の文字数 × 0.9 文字** まで(JA_LENGTH_RATIO)。日本語は同梱・推奨の
+ *    トークナイザ(Qwen 2.5 / Llama 3.2 / Gemma 2)でおおむね 1 文字 1〜1.3 トークン
+ *    (かなと常用漢字は 1 トークン、頻度の低い漢字はバイト単位で 2〜3 に割れる)。
+ *    0.9 × 1.3 ≈ 1.2 なので、**検証を通りうる長さの訳は必ず最後まで書ける**。
+ *    それより長い出力は書かせても too-long で捨てるだけなので、途中で止めてよい。
+ *  - +20: 訳の前に置かれがちな前置き・空行(firstTranslationParagraph が読み飛ばす
+ *    ぶん。「Here is the Japanese translation:」で 8 トークン前後)と、文末の
+ *    絵文字や閉じタグの余白。
+ *  - 下限 40: 検証の長さの下限は 18 文字(JA_LENGTH_FLOOR)で、短い相づち(「Wow.」)
+ *    にもその長さの訳が許される。18 × 1.3 ≈ 24 トークン + 前置きの余白 = 40。
+ *  - 上限 400: 1 回の試行の時間予算は OLLAMA_BUDGET_MS.translation(60 秒、
+ *    shared/request-budget.ts)で、ここは生成トークン数ではなく時間で決まっている。
+ *    8GB の M1 で 3B が 1 秒 10 トークン強なので、400 トークンなら
+ *    プロンプト評価込みで予算に収まる。400 は英文 317 文字(4〜5 文の返答)に当たる。
+ *    それより長い英文は訳が切れうる(切れた訳は検証を通る)が、返答の文数上限から
+ *    まず起きない長さである。
+ */
+export const EN_TO_JA_NUM_PREDICT = {
+  perSourceChar: 1.2,
+  margin: 20,
+  floor: 40,
+  cap: 400,
+} as const
+
+export function enToJaNumPredict(source: string): number {
+  const { perSourceChar, margin, floor, cap } = EN_TO_JA_NUM_PREDICT
+  const chars = Array.from(source.trim()).length
+  return Math.min(cap, Math.max(floor, Math.ceil(chars * perSourceChar + margin)))
 }
 
 /**
@@ -204,7 +270,10 @@ export async function translateToNaturalEnglish(
     })
     const raw = ollamaRes.message?.content ?? ''
     const candidate = stripLoneSurrogates(
-      stripTags(stripTranslationPreamble(firstTranslationParagraph(raw)), 'ja'),
+      stripTags(
+        stripTranslationPreamble(firstTranslationParagraph(raw, { direction: 'ja-to-en', source })),
+        'ja',
+      ),
     ).trim()
     if (candidate && isAcceptableEnglishRendering(candidate)) return candidate
     console.warn(
@@ -299,14 +368,18 @@ export async function translateEnglishToJapanese(
         temperature: a.temperature,
         ...(a.seed !== undefined && { seed: a.seed }),
         topP: 0.9,
-        numPredict: 200,
+        // 英文の長さから決める(enToJaNumPredict の注記)。固定の 200 だと長い返答の訳が切れる。
+        numPredict: enToJaNumPredict(source),
         // '\n\n' は stop に入れない(firstTranslationParagraph の注記)。2 段落目は後処理で捨てる。
         stop: ['<en>', '</en>'],
         jsonFormat: false,
         signal: options.signal,
       })
       const raw = sanitizeJapaneseTranslation(
-        firstTranslationParagraph(ollamaRes.message?.content ?? ''),
+        firstTranslationParagraph(ollamaRes.message?.content ?? '', {
+          direction: 'en-to-ja',
+          source,
+        }),
       )
       const ja = acceptJapaneseTranslation(stripTags(raw, 'en'), source)
       if (ja) return ja

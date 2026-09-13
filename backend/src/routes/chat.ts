@@ -253,7 +253,7 @@ async function handleChatTurn(
   // 別々に解決すると、将来どちらかだけ条件が変わったときに静かに食い違う)。
   // ⚠️ **リクエストされた名前ではなく解決後の名前**から決めること。
   // allowlist で落ちた名前(古い設定に残った mistral:7b 等)をそのまま渡すと、
-  // 実際に走るのは同梱 1B なのに 7B 用の長いプロンプトで回してしまい、
+  // 実際に走るのは同梱の小型モデル(BUNDLED_LLM_MODEL)なのに 7B 用の長いプロンプトで回してしまい、
   // 設定画面のプレビュー(解決後の名前で判定)とも食い違う。
   const { profile } = resolveTurnModelAndProfile(context.modelProfile, context.model)
 

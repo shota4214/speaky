@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EN_TO_JA_ATTEMPTS,
   EN_TO_JA_FRESH_ATTEMPTS,
+  EN_TO_JA_NUM_PREDICT,
+  enToJaNumPredict,
   firstTranslationParagraph,
   isAcceptableEnglishRendering,
   TRANSLATION_ATTEMPTS,
@@ -177,27 +179,125 @@ describe('translateToNaturalEnglish', () => {
 })
 
 describe('firstTranslationParagraph', () => {
+  const enToJa = { direction: 'en-to-ja' } as const
+  const jaToEn = { direction: 'ja-to-en' } as const
+
   it('先頭の空行を読み飛ばし、最初の段落だけを返す', () => {
-    expect(firstTranslationParagraph('\n\n  \nこんにちは！\n\n私も元気です。')).toBe('こんにちは！')
-    expect(firstTranslationParagraph('こんにちは！\n \n私も元気です。\n\nまたね。')).toBe(
-      'こんにちは！',
-    )
-    expect(firstTranslationParagraph('\r\n\r\nこんにちは！\r\n\r\n続き')).toBe('こんにちは！')
+    for (const opts of [enToJa, jaToEn]) {
+      expect(firstTranslationParagraph('\n\n  \nこんにちは！\n\n私も元気です。', opts)).toBe(
+        'こんにちは！',
+      )
+      expect(firstTranslationParagraph('こんにちは！\n \n私も元気です。\n\nまたね。', opts)).toBe(
+        'こんにちは！',
+      )
+      expect(firstTranslationParagraph('\r\n\r\nこんにちは！\r\n\r\n続き', opts)).toBe(
+        'こんにちは！',
+      )
+    }
   })
 
   it('段落の中の改行はそのまま(1 行目を拾うのは stripTranslationPreamble の仕事)', () => {
-    expect(firstTranslationParagraph('一行目\n二行目\n\n続き')).toBe('一行目\n二行目')
+    expect(firstTranslationParagraph('一行目\n二行目\n\n続き', enToJa)).toBe('一行目\n二行目')
   })
 
   it('前置きだけの段落は訳ではないので読み飛ばす(その次の段落で打ち切る)', () => {
-    expect(firstTranslationParagraph("Here's the translation:\n\nこんにちは！\n\n続き")).toBe(
+    expect(
+      firstTranslationParagraph("Here's the translation:\n\nこんにちは！\n\n続き", enToJa),
+    ).toBe('こんにちは！')
+  })
+
+  it('en→ja: かなも漢字も無い前置きの段落は読み飛ばす(本物の訳を捨てない)', () => {
+    expect(firstTranslationParagraph('Sure!\n\nこんにちは！', enToJa)).toBe('こんにちは！')
+    expect(
+      firstTranslationParagraph('Here is the Japanese translation:\n\nこんにちは！', enToJa),
+    ).toBe('こんにちは！')
+  })
+
+  it('コロンで終わる見出しの段落は、日本語でも読み飛ばす', () => {
+    expect(firstTranslationParagraph('日本語訳：\n\nこんにちは！', enToJa)).toBe('こんにちは！')
+    expect(firstTranslationParagraph('日本語訳:\n\nこんにちは！\n\n続き', enToJa)).toBe(
       'こんにちは！',
+    )
+    expect(
+      firstTranslationParagraph('Here is the English sentence:\n\nI have a meeting.', jaToEn),
+    ).toBe('I have a meeting.')
+  })
+
+  it('本物の日本語の段落は読み飛ばさない(2 段落目の返事の続きを訳にしない)', () => {
+    expect(firstTranslationParagraph('いいね！\n\nそれで、次は何する？', enToJa)).toBe('いいね！')
+    // 最後の段落はコロンで終わっていても見出しではない
+    expect(firstTranslationParagraph('理由は次のとおり：', enToJa)).toBe('理由は次のとおり：')
+    // 原文がコロンで終わるなら、コロンで終わる訳は本物
+    expect(
+      firstTranslationParagraph('いくつか案があるよ：\n\n続きの返事', {
+        direction: 'en-to-ja',
+        source: 'I have a few ideas:',
+      }),
+    ).toBe('いくつか案があるよ：')
+  })
+
+  it('en→ja で日本語の段落が 1 つも無ければ、最初の段落を返す(検証で弾かれる)', () => {
+    expect(firstTranslationParagraph('Nice to meet you!\n\nHow are you?', enToJa)).toBe(
+      'Nice to meet you!',
     )
   })
 
   it('空・空白だけなら空文字', () => {
-    expect(firstTranslationParagraph('')).toBe('')
-    expect(firstTranslationParagraph('\n\n \n')).toBe('')
+    expect(firstTranslationParagraph('', enToJa)).toBe('')
+    expect(firstTranslationParagraph('\n\n \n', jaToEn)).toBe('')
+  })
+})
+
+describe('enToJaNumPredict(英文の長さから生成上限を決める)', () => {
+  it('短い英文は下限 40', () => {
+    expect(EN_TO_JA_NUM_PREDICT.floor).toBe(40)
+    expect(enToJaNumPredict('Wow.')).toBe(40)
+    expect(enToJaNumPredict('')).toBe(40)
+    // 1.2 × 16 + 20 = 39.2 → 40(下限)/ 1.2 × 17 + 20 = 40.4 → 41
+    expect(enToJaNumPredict('a'.repeat(16))).toBe(40)
+    expect(enToJaNumPredict('a'.repeat(17))).toBe(41)
+  })
+
+  it('その間は ceil(文字数 × 1.2 + 20)', () => {
+    const en = 'Curry is so good! Did you make it spicy?' // 40 文字
+    expect(enToJaNumPredict(en)).toBe(68)
+    expect(enToJaNumPredict('a'.repeat(100))).toBe(140)
+    // 前後の空白は数えない
+    expect(enToJaNumPredict(`  ${en}  `)).toBe(68)
+  })
+
+  it('長い英文は上限 400', () => {
+    expect(EN_TO_JA_NUM_PREDICT.cap).toBe(400)
+    // 1.2 × 317 + 20 = 400.4 → 400(上限)
+    expect(enToJaNumPredict('a'.repeat(316))).toBe(400)
+    expect(enToJaNumPredict('a'.repeat(317))).toBe(400)
+    expect(enToJaNumPredict('a'.repeat(2000))).toBe(400)
+  })
+
+  it('検証が通す長さの訳(英文 × 0.9 文字、1 文字 1.3 トークン)は上限に収まる', () => {
+    for (const n of [20, 50, 120, 250, 316]) {
+      expect(enToJaNumPredict('a'.repeat(n))).toBeGreaterThanOrEqual(Math.ceil(n * 0.9 * 1.3))
+    }
+  })
+
+  it('translateEnglishToJapanese は英文(絵文字を除いた後)の長さから num_predict を送る', async () => {
+    const sent = stubOllama(['カレーはおいしいよね！辛くしたの？'])
+    await translateEnglishToJapanese('Curry is so good! Did you make it spicy? 🍛', {})
+    expect(sent[0]!.options.num_predict).toBe(
+      enToJaNumPredict('Curry is so good! Did you make it spicy?'),
+    )
+  })
+})
+
+describe('translateEnglishToJapanese(前置きの段落)', () => {
+  it.each([
+    'Sure!\n\nこんにちは！',
+    'Here is the Japanese translation:\n\nこんにちは！',
+    '日本語訳：\n\nこんにちは！',
+  ])('%j でも 1 回目で本物の訳を返す', async (raw) => {
+    const sent = stubOllama([raw])
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('こんにちは！')
+    expect(sent).toHaveLength(1)
   })
 })
 

@@ -53,3 +53,6 @@ electron-ollama/
 
 # 配布同梱用に prep スクリプトが用意する大容量バンドル(Llama blobs/manifests 等)
 electron/build-resources/
+
+# Claude Code のエージェント用 worktree(リポジトリ内に作られるため)
+.claude/worktrees/

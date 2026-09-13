@@ -45,10 +45,21 @@ export const OLLAMA_BUDGET_MS = {
   chatStream: 60_000,
   /** ストリーミングの opening は非ストリーミング同様コールドロード込み。 */
   openingStream: 90_000,
-  /** 翻訳(ja→en / en→ja)。numPredict 300 の単発。 */
+  /**
+   * 翻訳(ja→en / en→ja)の 1 回ぶん。生成上限は ja→en が 120、en→ja が英文の長さから
+   * 40〜400(services/translation.ts enToJaNumPredict)。上限 400 はこの予算に収まる
+   * 長さとして選んであるので、上限を上げるならここも見直すこと。
+   */
   translation: 60_000,
-  /** enrich(日本語訳 + 添削 + 単語の JSON)。 */
+  /** enrich(日本語訳 + 単語の JSON。standard プロファイルのみ)。 */
   enrich: 60_000,
+  /**
+   * 添削(services/grammar-check.ts)。1 文を最小限に直させるだけの呼び出しで、
+   * 生成上限は 60 トークン。ビルド機(M5)の実測で中央値 0.2〜0.35 秒、最悪でも 0.6 秒。
+   * 返答の生成と日本語訳の **直後** に同じモデルで走るので、コールドロードは踏まない。
+   * 20 秒は 8GB 機の悲観値に数十倍の余裕を見た値で、超えたら何も表示しない。
+   */
+  grammarCheck: 20_000,
   /** 要約。 */
   summarize: 60_000,
   /** 事実抽出。 */
@@ -69,15 +80,29 @@ export const OLLAMA_ATTEMPTS = {
   opening: 2,
   /** services/translation.ts translateToNaturalEnglish(): 温度を下げて 1 回だけ再試行。 */
   translation: 2,
-  /** services/translation.ts translateEnglishToJapanese(): リトライ無し。 */
-  translationEnToJa: 1,
+  /**
+   * services/translation.ts EN_TO_JA_ATTEMPTS: 温度 0 → 検証で弾いたら温度 0.3 + 固定 seed で 1 回だけ。
+   * (v1.2.0 まではリトライ無しの 1 回で、出力を検証していなかった)
+   * ここは上の注記の例外で、**タイムアウトした試行も次の試行へ進む**(1 回目のコールドロードで
+   * 諦めないため)。本数は 2 のままなので、最悪値は 60 × 2 で変わらない。
+   * 生成上限(num_predict)で切れた訳も弾いて次の試行へ進む。
+   */
+  translationEnToJa: 2,
   /** routes/extract-facts.ts EXTRACT_FACTS_ATTEMPTS: 2 回目は予算を広げる。 */
   extractFacts: 2,
   /** routes/summarize.ts: 単発。 */
   summarize: 1,
   /** chat-stream.ts buildEnrichment(): JSON 生成は 1 回。 */
   enrich: 1,
+  /**
+   * services/grammar-check.ts GRAMMAR_CHECK_ATTEMPTS: 1 回だけ(温度 0 なので引き直しても同じ出力)。
+   * 失敗・タイムアウトは「添削を表示しない」で終わり、ルートの応答はそのまま返る。
+   */
+  grammarCheck: 1,
 } as const
+
+/** 添削 1 回ぶんの最悪時間(会話の返答を持つルートと enrich の再取得に後置される)。 */
+const GRAMMAR_CHECK_WORST_CASE_MS = OLLAMA_BUDGET_MS.grammarCheck * OLLAMA_ATTEMPTS.grammarCheck
 
 /**
  * backend が 1 リクエストで費やしうる**最悪時間**(ms)。
@@ -86,10 +111,14 @@ export const OLLAMA_ATTEMPTS = {
 export const BACKEND_WORST_CASE_MS = {
   /**
    * POST /api/chat(通常ターン)。
-   * 会話 LLM を最大 2 回 + `reply_ja` が空だったときの en→ja 補完 1 回。
-   * = 90 × 2 + 60 = 240 秒。
+   * 会話 LLM を最大 2 回 + `reply_ja` が空 / 検証で弾かれたときの en→ja 補完(最大 2 回)
+   * + 添削 1 回(非ストリーミング経路は応答を返す前に添削する)。
+   * = 90 × 2 + 60 × 2 + 20 = 320 秒。
    */
-  chat: OLLAMA_BUDGET_MS.chat * OLLAMA_ATTEMPTS.chat + OLLAMA_BUDGET_MS.translation,
+  chat:
+    OLLAMA_BUDGET_MS.chat * OLLAMA_ATTEMPTS.chat +
+    OLLAMA_BUDGET_MS.translation * OLLAMA_ATTEMPTS.translationEnToJa +
+    GRAMMAR_CHECK_WORST_CASE_MS,
   /**
    * POST /api/chat(mode = japanese_help / mixed)。
    * 会話経路には入らず翻訳経路だけを通る = 60 × 2 = 120 秒。
@@ -97,17 +126,22 @@ export const BACKEND_WORST_CASE_MS = {
    * クライアント締め切りは下の chatRoute(両者の最大)から導く。
    */
   chatTranslate: OLLAMA_BUDGET_MS.translation * OLLAMA_ATTEMPTS.translation,
-  /** POST /api/chat/opening。chat と同じ構成。 */
-  opening: OLLAMA_BUDGET_MS.opening * OLLAMA_ATTEMPTS.opening + OLLAMA_BUDGET_MS.translation,
+  /** POST /api/chat/opening。chat と同じ構成 = 90 × 2 + 60 × 2 = 300 秒。 */
+  opening:
+    OLLAMA_BUDGET_MS.opening * OLLAMA_ATTEMPTS.opening +
+    OLLAMA_BUDGET_MS.translation * OLLAMA_ATTEMPTS.translationEnToJa,
   /**
    * POST /api/chat/enrich。
-   * enrich の JSON 生成 1 回 + 日本語訳が空だったときの en→ja 補完 1 回
-   * (「日本語訳を必ず表示」は製品上の約束なので必ず後追いする)。
-   * = 60 + 60 = 120 秒。**ユーザーに見える「日本語訳を再取得」ボタンがこの経路**。
+   * enrich の JSON 生成 1 回 + 日本語訳が空 / 検証で弾かれたときの en→ja 補完(最大 2 回)
+   * (「日本語訳を必ず表示」は製品上の約束なので必ず後追いする)+ 添削 1 回。
+   * = 60 + 60 × 2 + 20 = 200 秒。**ユーザーに見える「日本語訳を再取得」ボタンがこの経路**。
+   * ストリーミング経路の enrich(done の後)も同じ並び(訳 → enrich イベント → 添削 →
+   * feedback イベント)だが、そちらはクライアントの無通信タイムアウト(keepalive で延命)が見る。
    */
   enrich:
     OLLAMA_BUDGET_MS.enrich * OLLAMA_ATTEMPTS.enrich +
-    OLLAMA_BUDGET_MS.translation * OLLAMA_ATTEMPTS.translationEnToJa,
+    OLLAMA_BUDGET_MS.translation * OLLAMA_ATTEMPTS.translationEnToJa +
+    GRAMMAR_CHECK_WORST_CASE_MS,
   /** POST /api/summarize。単発 = 60 秒。 */
   summarize: OLLAMA_BUDGET_MS.summarize * OLLAMA_ATTEMPTS.summarize,
   /** POST /api/extract-facts。2 回 = 120 秒。 */
@@ -157,11 +191,11 @@ export const CLIENT_DEADLINE_MARGIN_MS = 30_000
  * 短くすると健全なターンを殺し、連続失敗としてカウントされる。
  */
 export const CLIENT_DEADLINE_MS = {
-  /** POST /api/chat(通常 240 秒 / 日本語入力 120 秒の大きい方)+ 余裕 = 270 秒。 */
+  /** POST /api/chat(通常 320 秒 / 日本語入力 120 秒の大きい方)+ 余裕 = 350 秒。 */
   chat: CHAT_ROUTE_WORST_CASE_MS + CLIENT_DEADLINE_MARGIN_MS,
-  /** POST /api/chat/opening = 240 + 30 = 270 秒。 */
+  /** POST /api/chat/opening = 300 + 30 = 330 秒(挨拶には添削が無い)。 */
   opening: BACKEND_WORST_CASE_MS.opening + CLIENT_DEADLINE_MARGIN_MS,
-  /** POST /api/chat/enrich = 120 + 30 = 150 秒。 */
+  /** POST /api/chat/enrich = 200 + 30 = 230 秒。 */
   enrich: BACKEND_WORST_CASE_MS.enrich + CLIENT_DEADLINE_MARGIN_MS,
   /** POST /api/summarize = 60 + 30 = 90 秒。 */
   summarize: BACKEND_WORST_CASE_MS.summarize + CLIENT_DEADLINE_MARGIN_MS,

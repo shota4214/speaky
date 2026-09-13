@@ -384,7 +384,7 @@ describe('会話終了後の一括 enrich', () => {
     })
 
     const loop = useConversationLoop()
-    loop.backendFeatures.value = FEATURES
+    loop.backendFeatures.value = { ...FEATURES, features: [...FEATURES.features, 'grammar-check'] }
 
     const filled = await loop.backfillEnrichment('conv-backfill', { model: 'llama3.2:3b' })
     expect(filled).toBe(1)
@@ -422,5 +422,162 @@ describe('会話終了後の一括 enrich', () => {
     expect(filled).toBe(0)
     const rows = await messagesRepo.listByConversation('conv-empty')
     expect(rows[0]!.replyJa).toBeNull()
+  })
+})
+
+describe('添削(grammar-check)', () => {
+  it('ストリームの feedback イベントを AI メッセージの添削として保存する', async () => {
+    const conversation = useConversationStore()
+    conversation.start({ id: 'conv-fb', level: 'intermediate', topic: 'daily' })
+    apiMocks.probeBackendFeatures.mockResolvedValue({
+      ...FEATURES,
+      features: [...FEATURES.features, 'grammar-check'],
+    })
+    apiMocks.chatOpeningStream.mockRejectedValue(new Error('no opening'))
+    apiMocks.chatOpening.mockRejectedValue(new Error('no opening'))
+    apiMocks.transcribeAudio.mockResolvedValue({
+      text: 'Yesterday I go to the park',
+      language: 'en',
+      durationMs: 1000,
+    })
+    const streams: FakeStreamHandle[] = []
+    apiMocks.chatStream.mockImplementation(
+      (_text: string, _ctx: unknown, options: { signal?: AbortSignal; onEffect: never }) => {
+        const s = makeFakeStream(options.onEffect as (e: ChatStreamEffect) => void, options.signal)
+        streams.push(s)
+        return Promise.resolve(s)
+      },
+    )
+
+    const loop = useConversationLoop()
+    let micCalls = 0
+    recorderStart.mockImplementation(() => {
+      micCalls += 1
+      if (micCalls >= 2) {
+        loop.stop()
+        return Promise.resolve({ hadSpeech: false, blob: new Blob(), mimeType: 'audio/webm' })
+      }
+      return Promise.resolve({ hadSpeech: true, blob: new Blob(), mimeType: 'audio/webm' })
+    })
+
+    const running = loop.start(startInput)
+    await until(() => streams.length === 1, 'chatStream が呼ばれる')
+    const reply = 'Oh nice, what did you do at the park yesterday?'
+    streams[0]!.emit({ type: 'speak', text: reply })
+    streams[0]!.finishTurn(reply)
+    // 永続化より先に届く形(保存できてから反映される)
+    const feedback = {
+      user_said: 'Yesterday I go to the park',
+      corrected: 'Yesterday I went to the park',
+      explanation: '「Yesterday」と過去のことを話しているので、「go」を過去形の「went」にします。',
+    }
+    streams[0]!.emit({ type: 'feedback', feedback })
+    await tick(5)
+    await finishAllSpeech()
+    streams[0]!.closeStream()
+    await running
+
+    const ai = (await messagesRepo.listByConversation('conv-fb')).filter((m) => m.role === 'ai')
+    expect(ai).toHaveLength(1)
+    expect(ai[0]!.feedback).toEqual({
+      userSaid: feedback.user_said,
+      corrected: feedback.corrected,
+      explanation: feedback.explanation,
+    })
+  })
+
+  it('grammar-check を申告しない backend の添削(モデルが書いたもの)は保存しない', async () => {
+    await messagesRepo.create({
+      conversationId: 'conv-old-fb',
+      timestamp: new Date('2026-05-15T10:00:00Z'),
+      role: 'user',
+      userText: 'I go hiking',
+      inputLanguage: 'en',
+      replyEn: null,
+      replyJa: null,
+      feedback: null,
+      vocabulary: null,
+      mode: 'normal',
+    })
+    const ai = await messagesRepo.create({
+      conversationId: 'conv-old-fb',
+      timestamp: new Date('2026-05-15T10:00:01Z'),
+      role: 'ai',
+      userText: null,
+      inputLanguage: null,
+      replyEn: 'Oh nice, where did you go?',
+      replyJa: null,
+      feedback: null,
+      vocabulary: [],
+      mode: 'normal',
+    })
+    apiMocks.chatEnrich.mockResolvedValue({
+      replyJa: 'いいね、どこに行ったの?',
+      feedback: { user_said: 'I go hiking', corrected: 'I went hiking', explanation: 'past tense' },
+      vocabulary: [],
+    })
+
+    const loop = useConversationLoop()
+    loop.backendFeatures.value = FEATURES
+    expect(await loop.backfillEnrichment('conv-old-fb', { model: 'llama3.2:3b' })).toBe(1)
+
+    const row = (await messagesRepo.listByConversation('conv-old-fb')).find((m) => m.id === ai.id)!
+    expect(row.replyJa).toBe('いいね、どこに行ったの?')
+    expect(row.feedback).toBeNull()
+  })
+})
+
+describe('非ストリーミング経路(古い backend)', () => {
+  it('モデルが JSON に書いた mode ではなく、こちらで判定した入力モードを使う', async () => {
+    const conversation = useConversationStore()
+    conversation.start({ id: 'conv-json', level: 'intermediate', topic: 'daily' })
+
+    // ストリーミング機能を申告しない backend
+    apiMocks.probeBackendFeatures.mockResolvedValue({
+      ...FEATURES,
+      features: ['chat-enrich', 'model-profile'],
+    })
+    apiMocks.chatOpening.mockRejectedValue(new Error('no opening'))
+    apiMocks.transcribeAudio.mockResolvedValue({
+      text: 'I went hiking last weekend',
+      language: 'en',
+      durationMs: 1000,
+    })
+    // 古い backend はモデルの "mixed" をそのまま返す
+    apiMocks.chat.mockResolvedValue({
+      reply_en: 'Oh nice, where did you go hiking?',
+      reply_ja: 'いいね、どこにハイキングに行ったの？',
+      feedback: null,
+      vocabulary: [],
+      mode: 'mixed',
+    })
+
+    const loop = useConversationLoop()
+    let micCalls = 0
+    let promptedAtSecondMic = -1
+    recorderStart.mockImplementation(() => {
+      micCalls += 1
+      if (micCalls >= 2) {
+        promptedAtSecondMic = loop.promptedAttempts.value
+        loop.stop()
+        return Promise.resolve({ hadSpeech: false, blob: new Blob(), mimeType: 'audio/webm' })
+      }
+      return Promise.resolve({ hadSpeech: true, blob: new Blob(), mimeType: 'audio/webm' })
+    })
+
+    const running = loop.start(startInput)
+    await until(() => apiMocks.chat.mock.calls.length === 1, 'chat が呼ばれる')
+    await until(() => pendingSpeech.length > 0, '読み上げが始まる')
+    await finishAllSpeech()
+    await running
+
+    expect(apiMocks.chatStream).not.toHaveBeenCalled()
+    // 「言ってみて」状態に入っていない
+    expect(promptedAtSecondMic).toBe(0)
+    const ai = (await messagesRepo.listByConversation('conv-json')).filter((m) => m.role === 'ai')
+    expect(ai).toHaveLength(1)
+    expect(ai[0]!.mode).toBe('normal')
+    // 通常のターンとして訳を検証して保存している(= 「参考訳」の札が付く)
+    expect(ai[0]!.replyJa).toBe('いいね、どこにハイキングに行ったの？')
   })
 })

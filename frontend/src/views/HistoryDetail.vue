@@ -10,9 +10,13 @@ import { conversationsRepo } from '../db/repos/conversations'
 import { messagesRepo } from '../db/repos/messages'
 import type { Conversation, Message } from '../db/types'
 import { chatEnrich, probeBackendFeatures } from '../services/api'
+import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
+import { storedJapaneseTranslation, withEffectiveAiModes } from '../utils/stored-translation'
+import { displayFeedbackMap, retryFeedbackPatch } from '../utils/stored-feedback'
 import { useSettingsStore } from '../stores/settings'
 import {
   FEATURE_CHAT_ENRICH,
+  FEATURE_GRAMMAR_CHECK,
   FEATURE_MODEL_PROFILE,
   hasFeature,
   NO_FEATURES,
@@ -32,6 +36,19 @@ const speechQueue = useSpeechQueue(tts)
 
 const conversation = ref<Conversation | null>(null)
 const messages = ref<Message[]>([])
+/**
+ * 表示用の行。AI の行の mode は直前のユーザーの行から導き直す
+ * (古いバージョンはモデルが書いた mode を保存していた。withEffectiveAiModes の注記)。
+ * 「参考訳」の札・訳の検証・再取得ボタンはすべてこちらの mode で決める。
+ */
+const displayMessages = computed(() => withEffectiveAiModes(messages.value))
+/**
+ * 表示する添削(メッセージ ID → 添削)。保存された添削は **表示のたびに**、
+ * 保存された引用ではなく **直前のユーザー発話** と組にして今のフィルタで検証し直し、
+ * 通ったものだけを **今のテンプレートで作り直した説明** で出す
+ * (以前のバージョンはモデルが書いた添削と引用を保存していた。storedFeedback の注記)。
+ */
+const displayFeedback = computed(() => displayFeedbackMap(messages.value))
 const loading = ref(true)
 
 /**
@@ -64,9 +81,18 @@ onMounted(async () => {
   backendFeatures.value = await probeBackendFeatures()
 })
 
-/** 日本語訳が欠けている AI 返答か(= 再取得の対象)。 */
+/** 日本語訳に「参考訳」と添えるか(日本語入力ターンの案内文には付けない)。 */
+function isReferenceTranslation(m: Message): boolean {
+  return m.mode !== 'japanese_help' && m.mode !== 'mixed'
+}
+
+/**
+ * 日本語訳が欠けている AI 返答か(= 再取得の対象)。
+ * 検証を通らない保存済みの訳(v1.2.0 が保存したローマ字など)も欠けている扱い
+ * (storedJapaneseTranslation の注記)。
+ */
 function isJapaneseMissing(m: Message): boolean {
-  return m.role === 'ai' && !!m.replyEn?.trim() && !m.replyJa?.trim()
+  return m.role === 'ai' && !!m.replyEn?.trim() && !storedJapaneseTranslation(m).trim()
 }
 
 /** そのメッセージの直前のユーザー発話(添削の材料)。 */
@@ -91,35 +117,40 @@ async function retryJapanese(message: Message): Promise<void> {
   setFlag(retryingIds, message.id, true)
   setFlag(retryFailedIds, message.id, false)
   try {
-    const enrichment = await chatEnrich(message.replyEn, previousUserText(message.id), {
-      aiName: settings.settings.aiCharacter.name,
-      level: conversation.value?.level,
-      topic: conversation.value?.topic,
-      model: settings.settings.llmModel,
-      ...(hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)
-        ? { modelProfile: settings.settings.modelProfile }
-        : {}),
-    })
-    // 訳が空の enrich は成功ではない。会話画面(applyEnrichment)と同じ判定にする。
-    if (!enrichment.replyJa.trim()) {
+    const userText = previousUserText(message.id)
+    const enrichment = await chatEnrich(
+      message.replyEn,
+      userText,
+      {
+        aiName: settings.settings.aiCharacter.name,
+        level: conversation.value?.level,
+        topic: conversation.value?.topic,
+        model: settings.settings.llmModel,
+        ...(hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)
+          ? { modelProfile: settings.settings.modelProfile }
+          : {}),
+      },
+      { retry: true },
+    )
+    // 訳が空 / 訳として使えない enrich は成功ではない。会話画面(applyEnrichment)と同じ判定にする。
+    const replyJa = acceptJapaneseTranslation(enrichment.replyJa, message.replyEn)
+    if (!replyJa) {
       setFlag(retryFailedIds, message.id, true)
       return
     }
     // ⚠️ ユーザーが頼んだのは **日本語訳** であって添削のやり直しではない。
     // 既に添削 / 単語が入っている行を今のモデル(当時と別かもしれない、
     // しかも小さいかもしれない)の出力で差し替えると、黙って劣化させることになる。
-    // 空のときだけ埋める。
+    // 空のときだけ埋める。検証を通らない保存済みの添削(以前のバージョンがモデルに
+    // 書かせたもの)は空として扱い、検証済みの添削で置き換えられるようにする(retryFeedbackPatch)。
+    // 添削は grammar-check 対応の backend が返したもの(検証済み + 固定テンプレートの説明)だけ。
+    // 申告の無い backend の feedback はモデルが書いたものなので使わない。
+    const checkedFeedback = hasFeature(backendFeatures.value, FEATURE_GRAMMAR_CHECK)
+      ? enrichment.feedback
+      : null
     const updated = await messagesRepo.update(message.id, {
-      replyJa: enrichment.replyJa,
-      ...(message.feedback || !enrichment.feedback
-        ? {}
-        : {
-            feedback: {
-              userSaid: enrichment.feedback.user_said,
-              corrected: enrichment.feedback.corrected,
-              explanation: enrichment.feedback.explanation,
-            },
-          }),
+      replyJa,
+      ...retryFeedbackPatch(message, userText, checkedFeedback),
       ...((message.vocabulary?.length ?? 0) > 0 || enrichment.vocabulary.length === 0
         ? {}
         : { vocabulary: enrichment.vocabulary }),
@@ -192,7 +223,7 @@ function replay(text: string) {
       </BaseCard>
 
       <div class="mt-6 space-y-3">
-        <div v-for="m in messages" :key="m.id">
+        <div v-for="m in displayMessages" :key="m.id">
           <div v-if="m.role === 'user'" class="flex justify-end">
             <div class="max-w-[75%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-white">
               <div class="text-sm">{{ m.userText }}</div>
@@ -211,7 +242,14 @@ function replay(text: string) {
                   日本語訳は後追い(enrich)で入るため、届かないまま保存された行が
                   ありうる。無条件に出すと空行だけが残るので、あるときだけ描画する。
                 -->
-                <div v-if="m.replyJa" class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
+                <div v-if="storedJapaneseTranslation(m)" class="mt-1 text-xs text-text-muted">
+                  <span
+                    v-if="isReferenceTranslation(m)"
+                    class="mr-1 rounded border border-border px-1 text-[10px]"
+                    title="AI による参考の訳です。細かいニュアンスは違うことがあります"
+                    >参考訳</span
+                  >{{ storedJapaneseTranslation(m) }}
+                </div>
                 <div v-else-if="isJapaneseMissing(m)" class="mt-1 text-xs text-text-muted">
                   <span class="opacity-60">
                     {{
@@ -235,19 +273,21 @@ function replay(text: string) {
               </div>
             </div>
             <div
-              v-if="m.feedback"
+              v-if="displayFeedback.get(m.id)"
               class="ml-2 max-w-[75%] rounded-xl bg-amber-50 px-3 py-2 text-xs ring-1 ring-amber-200 dark:bg-amber-900/20 dark:ring-amber-700/40"
             >
               <div class="font-semibold text-amber-700 dark:text-amber-300">✏️ 添削</div>
               <div class="mt-1">
-                <span class="text-rose-500 line-through">{{ m.feedback.userSaid }}</span>
+                <span class="text-rose-500 line-through">{{
+                  displayFeedback.get(m.id)!.userSaid
+                }}</span>
                 <span class="mx-1 text-text-muted">→</span>
                 <strong class="text-emerald-600 dark:text-emerald-400">{{
-                  m.feedback.corrected
+                  displayFeedback.get(m.id)!.corrected
                 }}</strong>
               </div>
               <div class="mt-1 text-text-muted">
-                {{ m.feedback.explanation }}
+                {{ displayFeedback.get(m.id)!.explanation }}
               </div>
             </div>
             <div

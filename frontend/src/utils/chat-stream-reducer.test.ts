@@ -158,6 +158,46 @@ describe('reduceChatStreamEvent', () => {
     expect(state.enrich).toEqual({ replyJa: 'いいね', feedback: null, vocabulary: [] })
   })
 
+  it('enrich の後に届いた feedback(添削)を取り込む', () => {
+    const full = 'Oh nice, that sounds fun. Where did you go exactly?'
+    const feedback = {
+      user_said: 'Yesterday I go to the park.',
+      corrected: 'Yesterday I went to the park.',
+      explanation: '「Yesterday」と過去のことを話しているので、「go」を過去形の「went」にします。',
+    }
+    const { state, effects } = run([
+      meta(),
+      delta(full),
+      { type: 'done', text: full },
+      {
+        type: 'enrich',
+        replyJa: 'いいね、楽しそう。どこに行ったの?',
+        feedback: null,
+        vocabulary: [],
+      },
+      { type: 'feedback', feedback },
+    ])
+    expect(state.feedback).toEqual(feedback)
+    expect(state.error).toBeNull()
+    const order = effects.map((e) => e.type)
+    expect(order.indexOf('feedback')).toBeGreaterThan(order.indexOf('enrich'))
+    expect(effects.find((e) => e.type === 'feedback')).toEqual({ type: 'feedback', feedback })
+  })
+
+  it('壊れた feedback は何も出さない(エラーにもしない)', () => {
+    const full = 'Oh nice, that sounds fun. Where did you go exactly?'
+    const { state, effects } = run([
+      meta(),
+      delta(full),
+      { type: 'done', text: full },
+      { type: 'feedback', feedback: { corrected: 'x' } },
+      { type: 'feedback' },
+    ])
+    expect(state.feedback).toBeNull()
+    expect(state.error).toBeNull()
+    expect(effects.some((e) => e.type === 'feedback')).toBe(false)
+  })
+
   it('speakDeltas=false(日本語入力)は逐次読み上げせず、done で全文を 1 回だけ読む', () => {
     const text = 'I went to a movie with my friends over the weekend.'
     const { state, effects } = run([

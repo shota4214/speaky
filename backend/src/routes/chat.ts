@@ -19,6 +19,10 @@ import { resolveTurnModelAndProfile, type ModelProfile } from '../services/model
 import type { ModelProfilePref } from '../shared/llm-models.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
+import { filterReplySentences } from '../services/reply-guard.js'
+import { checkGrammar } from '../services/grammar-check.js'
+import { acceptJapaneseTranslation, stripLoneSurrogates } from '../shared/text-guards.js'
+import type { ChatReply } from '../services/chat-reply.js'
 
 /**
  * プロンプトに載せる会話履歴の往復数の **上限**(standard の値)。
@@ -145,6 +149,76 @@ export interface ChatContext {
   modelProfile?: ModelProfilePref
 }
 
+/**
+ * 会話履歴を Ollama のメッセージ列にする。**今回のユーザー発話は含めない**
+ * (呼び出し側が最後に userText を 1 回だけ足す)。
+ *
+ * フロントの buildHistory() は、ユーザー発話を保存した **後に** 履歴を組むので、
+ * 末尾に今回の発話が既に入っている。それをそのまま並べてから userText を足すと
+ * モデルには同じ発話が 2 回続けて見え、「さっきも言ったね」と返したり、
+ * 小型モデルでは同じ返事を 2 回分書いたりする。末尾が今回の発話と同じなら落とす
+ * (新旧どちらのフロントとも正しく噛み合う)。
+ */
+export function historyToMessages(
+  history: readonly HistoryItem[] | undefined,
+  userText: string,
+  maxTurns: number,
+): OllamaChatMessage[] {
+  const items = [...(history ?? [])]
+  const last = items[items.length - 1]
+  if (last && last.role === 'user' && last.text.trim() === userText.trim()) items.pop()
+  return items.slice(-maxTurns * 2).map((h) => ({
+    role: h.role === 'user' ? 'user' : 'assistant',
+    content: h.text,
+  }))
+}
+
+/**
+ * パース済みの返答を、クライアントへ返せる形に整える。使えなければ null(= 次の attempt へ)。
+ *
+ *  - 孤立サロゲートを落とす
+ *  - small: 非ラテン文字体系を含む文を落とし、2 文で打ち切る(ストリーミング経路と同じ規則)。
+ *    英文を削ったときは、モデルの reply_ja は **削る前の英文** の訳なので捨てて訳し直す。
+ *  - reply_ja を検証する。訳として使えなければ空にして en→ja 補完に回す。
+ */
+export function finalizeReply(
+  reply: ChatReply,
+  profile: ModelProfile,
+  /**
+   * このターンのモード。**モデルが JSON に書いた mode は信用しない**。
+   * 1B は英語入力のターンに "mixed" と書くことがあり、そのまま返すとフロントが
+   * 「言ってみて」状態に入り、日本語訳の検証と再取得ボタンも飛ばしてしまう。
+   */
+  mode: Mode = 'normal',
+  /**
+   * 最初の挨拶か、ユーザーへの返答か。挨拶は文数の上限が違う
+   * (ModelProfile.maxOpeningSentences: 2 文で切るとトピックの質問が落ちる)。
+   */
+  turn: 'reply' | 'opening' = 'reply',
+): ChatReply | null {
+  let replyEn = stripLoneSurrogates(reply.reply_en).trim()
+  let replyJa = reply.reply_ja
+  const maxSentences = turn === 'opening' ? profile.maxOpeningSentences : profile.maxReplySentences
+  if (profile.dropNonLatinReply || maxSentences !== null) {
+    const filtered = filterReplySentences(replyEn, {
+      maxSentences,
+      dropNonLatin: profile.dropNonLatinReply,
+    })
+    if (!filtered.text) return null
+    if (filtered.changed) {
+      replyEn = filtered.text
+      replyJa = ''
+    }
+  }
+  if (!replyEn) return null
+  return {
+    ...reply,
+    mode,
+    reply_en: replyEn,
+    reply_ja: acceptJapaneseTranslation(replyJa, replyEn),
+  }
+}
+
 interface ChatRequestBody {
   userText?: string
   context?: ChatContext
@@ -180,7 +254,7 @@ async function handleChatTurn(
   // 別々に解決すると、将来どちらかだけ条件が変わったときに静かに食い違う)。
   // ⚠️ **リクエストされた名前ではなく解決後の名前**から決めること。
   // allowlist で落ちた名前(古い設定に残った mistral:7b 等)をそのまま渡すと、
-  // 実際に走るのは同梱 1B なのに 7B 用の長いプロンプトで回してしまい、
+  // 実際に走るのは同梱の小型モデル(BUNDLED_LLM_MODEL)なのに 7B 用の長いプロンプトで回してしまい、
   // 設定画面のプレビュー(解決後の名前で判定)とも食い違う。
   const { profile } = resolveTurnModelAndProfile(context.modelProfile, context.model)
 
@@ -239,13 +313,7 @@ async function handleChatTurn(
 
   // 直近のN往復を文脈として渡す(プロファイルごとの上限。天井は MAX_HISTORY_TURNS)
   const historyTurns = Math.min(profile.maxHistoryTurns, MAX_HISTORY_TURNS)
-  const history = (context.conversationHistory ?? []).slice(-historyTurns * 2)
-  for (const h of history) {
-    messages.push({
-      role: h.role === 'user' ? 'user' : 'assistant',
-      content: h.text,
-    })
-  }
+  messages.push(...historyToMessages(context.conversationHistory, userText, historyTurns))
 
   messages.push({ role: 'user', content: userText })
 
@@ -278,6 +346,7 @@ async function handleChatTurn(
           )
         }
       }
+      if (reply) reply = finalizeReply(reply, profile, mode)
       if (reply) {
         // 会話 LLM が reply_ja を省略することがある(特に 3B)。
         // フロントの「日本語訳を必ず表示」を保証するため、reply_en があるのに
@@ -289,11 +358,24 @@ async function handleChatTurn(
             signal,
           })
         }
+        // 添削は **モデルが JSON に書いたものを絶対に使わない**(どちらのプロファイルでも)。
+        // 実モデル評価で、会話 JSON の feedback は実質出ないうえ、説明文が英語 / 崩れた日本語 /
+        // 中国語だった。表示するのは grammar-check が検証してテンプレートで説明を付けたものか、
+        // 何も無しかのどちらか。ストリーミング経路と違い応答の前に走る(フォールバック経路なので
+        // 添削 1 回ぶん、ビルド機で 0.2〜0.35 秒だけ読み上げの開始が遅れる)。
+        reply.feedback = await checkGrammar({
+          userText,
+          model: context.model,
+          numCtx: profile.numCtx,
+          signal,
+          tag: '[chat]',
+        })
+        if (signal.aborted) return endAborted(res)
         // どのプロファイルで動いたかをクライアントへ返す(UI の「軽量モード」表示用)。
         return res.json({ ...reply, profile: profile.level })
       }
       console.warn(
-        `[chat] JSON parse + salvage failed (attempt ${attempt}/${attempts.length}, ` +
+        `[chat] JSON parse + salvage + validation failed (attempt ${attempt}/${attempts.length}, ` +
           `profile=${profile.level}, numPredict=${profile.chatNumPredict}, ` +
           `temperature=${sampling.temperature}). raw=`,
         lastRawContent.slice(0, 200),
@@ -392,6 +474,7 @@ async function handleOpeningTurn(
           )
         }
       }
+      if (reply) reply = finalizeReply(reply, profile, mode, 'opening')
       if (reply) {
         if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
           reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {
@@ -400,7 +483,8 @@ async function handleOpeningTurn(
             signal,
           })
         }
-        return res.json({ ...reply, profile: profile.level })
+        // 挨拶にはユーザー発話が無い = 添削は無い。モデルが書いた feedback は捨てる。
+        return res.json({ ...reply, feedback: null, profile: profile.level })
       }
       console.warn(
         `[chat/opening] JSON parse + salvage failed (attempt ${attempt}/${attempts.length}, ` +

@@ -30,7 +30,7 @@ describe('standard プロファイル(v1.1.0 の実効値を据え置く)', () =
     expect(p.repeatPenalty).toBe(1.15)
   })
 
-  it('enrich は添削・単語まで作る', () => {
+  it('enrich は日本語訳と単語まで作る(添削はプロファイルに依らず grammar-check)', () => {
     expect(p.enrichment).toBe('full')
   })
 })
@@ -62,7 +62,7 @@ describe('small プロファイル', () => {
     expect(small.repeatPenalty).toBeGreaterThan(standard.repeatPenalty)
   })
 
-  it('enrich は日本語訳だけ(誤添削・無意味な単語を出さない)', () => {
+  it('enrich は日本語訳だけ(無意味な単語カードを出さない。添削はプロファイルに依らず grammar-check)', () => {
     expect(small.enrichment).toBe('translation-only')
   })
 

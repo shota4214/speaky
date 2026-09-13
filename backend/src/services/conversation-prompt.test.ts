@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildOpeningUserPrompt, buildSystemPrompt } from './conversation-prompt.js'
+import { BUILT_IN_TOPICS } from '../shared/topics.js'
 
 /**
  * small プロファイルの system prompt は **約 300 トークン以内** という設計上の
@@ -122,5 +123,32 @@ describe('small プロファイルの opening プロンプト', () => {
   it('text 出力ではプレーンテキストを念押しする', () => {
     const small = buildOpeningUserPrompt({ ...RICH, profile: 'small', outputFormat: 'text' })
     expect(small).toContain('Plain English text only')
+  })
+})
+
+describe('トピックのキーはプロンプトに入る前に英語の説明へ置き換える', () => {
+  it.each(BUILT_IN_TOPICS)('$key → $promptLabel', ({ key, promptLabel }) => {
+    for (const profile of ['small', 'standard'] as const) {
+      for (const outputFormat of ['json', 'text'] as const) {
+        const system = buildSystemPrompt({ topic: key, profile, outputFormat })
+        const opening = buildOpeningUserPrompt({ topic: key, profile, outputFormat })
+        expect(system).toContain(promptLabel)
+        expect(opening).toContain(promptLabel)
+      }
+    }
+  })
+
+  it('small の挨拶で "daily" という単語そのものを尋ねさせない', () => {
+    const opening = buildOpeningUserPrompt({
+      topic: 'daily',
+      profile: 'small',
+      outputFormat: 'text',
+    })
+    expect(opening).toContain('"daily life"')
+    expect(opening).not.toContain('"daily"')
+  })
+
+  it('カスタムトピックはそのまま渡す', () => {
+    expect(buildSystemPrompt({ topic: 'K-pop idols', profile: 'small' })).toContain('K-pop idols')
   })
 })

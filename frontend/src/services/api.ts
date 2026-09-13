@@ -139,7 +139,8 @@ export async function transcribeAudio(
  * 積み上げていた。締め切りは backend の梯子から**計算**する
  * (`backend/src/shared/request-budget.ts`)。ルートごとの内訳はそこに書いてある。
  *
- * 現在の値: /api/chat と /api/chat/opening が 270 秒、/api/chat/enrich と
+ * 現在の値: /api/chat が 350 秒、/api/chat/opening が 330 秒、/api/chat/enrich が 230 秒
+ * (添削 1 回ぶん = 20 秒を /api/chat と /api/chat/enrich に足した)、
  * /api/extract-facts が 150 秒、/api/summarize が 90 秒、/api/transcribe が 210 秒。
  */
 
@@ -577,11 +578,12 @@ export async function chatEnrich(
   replyEn: string,
   userText: string | null,
   context: ChatRequestContext = {},
-  options: { signal?: AbortSignal } = {},
+  /** retry: ユーザー操作による再取得(backend は毎回違う出力を引く梯子を使う)。 */
+  options: { signal?: AbortSignal; retry?: boolean } = {},
 ): Promise<ChatEnrichment> {
   return postJson<ChatEnrichment>(
     '/api/chat/enrich',
-    { replyEn, userText, context },
+    { replyEn, userText, context, ...(options.retry ? { retry: true } : {}) },
     CLIENT_DEADLINE_MS.enrich,
     options.signal,
   )

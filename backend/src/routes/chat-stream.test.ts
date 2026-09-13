@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { findScaffoldOpener, looksLikeJsonScaffold } from '../services/json-salvage.js'
 import { sanitizeJapaneseTranslation } from '../services/translation.js'
-import { parseEnrichment, salvagePlainReply } from './chat-stream.js'
+import { MODEL_PROFILES } from '../services/model-profile.js'
+import { buildEnrichment, parseEnrichment, salvagePlainReply } from './chat-stream.js'
 
 /**
  * ストリーミング経路の「JSON を読み上げさせない」防波堤のテスト。
@@ -74,7 +75,7 @@ describe('salvagePlainReply', () => {
 })
 
 describe('parseEnrichment', () => {
-  it('正常な JSON を取り込む', () => {
+  it('正常な JSON を取り込む(モデルが書いた添削は読まない)', () => {
     const result = parseEnrichment(
       JSON.stringify({
         reply_ja: 'いいね、どこに行ったの?',
@@ -83,8 +84,23 @@ describe('parseEnrichment', () => {
       }),
     )
     expect(result?.replyJa).toBe('いいね、どこに行ったの?')
-    expect(result?.feedback?.corrected).toBe('I went hiking')
+    // 添削は grammar-check(検証 + 固定テンプレート)だけが作る。
+    expect(result?.feedback).toBeNull()
     expect(result?.vocabulary).toHaveLength(1)
+  })
+
+  it('意味が日本語でない単語カードは落とす', () => {
+    const result = parseEnrichment(
+      JSON.stringify({
+        reply_ja: 'いいね、どこに行ったの?',
+        vocabulary: [
+          { word: 'hiking', meaning: 'ハイキング' },
+          { word: 'trail', meaning: 'a path through the countryside' },
+          { word: 'summit', meaning: 'chōjō' },
+        ],
+      }),
+    )
+    expect(result?.vocabulary.map((v) => v.word)).toEqual(['hiking'])
   })
 
   it('予算切れで切断された JSON からは日本語訳だけを拾う', () => {
@@ -111,5 +127,44 @@ describe('sanitizeJapaneseTranslation', () => {
   })
   it('拾えない JSON は捨てる(画面に JSON を出さない)', () => {
     expect(sanitizeJapaneseTranslation('{"unexpected": "shape"}')).toBe('')
+  })
+})
+
+describe('buildEnrichment(空行のある reply_ja)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('reply_en に空行があっても、空行のある reply_ja は捨てて 1 段落にした英文で訳し直す', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sent: { messages: { content: string }[] }[] = []
+    const replies = [
+      JSON.stringify({
+        reply_ja: 'カレーはおいしいね！\n\n辛くしたの？',
+        feedback: null,
+        vocabulary: [],
+      }),
+      'カレーはおいしいね！辛くしたの？',
+    ]
+    vi.stubGlobal('fetch', async (_url: unknown, init: { body: string }) => {
+      sent.push(JSON.parse(init.body) as { messages: { content: string }[] })
+      const content = replies[Math.min(sent.length - 1, replies.length - 1)]
+      return new Response(JSON.stringify({ message: { role: 'assistant', content }, done: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    const result = await buildEnrichment({
+      replyEn: 'Curry is so good!\n\nDid you make it spicy?',
+      userText: 'I made curry.',
+      context: {},
+      profile: MODEL_PROFILES.standard,
+    })
+    expect(result.replyJa).toBe('カレーはおいしいね！辛くしたの？')
+    expect(sent).toHaveLength(2)
+    expect(sent[1]!.messages.at(-1)!.content).toBe(
+      '<en>Curry is so good! Did you make it spicy?</en>',
+    )
   })
 })

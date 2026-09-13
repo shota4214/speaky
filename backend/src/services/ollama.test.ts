@@ -102,3 +102,29 @@ describe('chatWithOllama の中断', () => {
     expect(removed).toHaveLength(1)
   })
 })
+
+describe('chatWithOllama の stop', () => {
+  function captureBody(): { body?: { options: Record<string, unknown> } } {
+    const box: { body?: { options: Record<string, unknown> } } = {}
+    vi.stubGlobal('fetch', ((_url: unknown, init: { body: string }) => {
+      box.body = JSON.parse(init.body)
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ message: { role: 'assistant', content: 'hi' } }),
+      })
+    }) as unknown as typeof fetch)
+    return box
+  }
+
+  it('stop を渡したら options.stop として送る', async () => {
+    const box = captureBody()
+    await chatWithOllama(messages, { stop: ['<en>', '\n\n'] })
+    expect(box.body?.options.stop).toEqual(['<en>', '\n\n'])
+  })
+
+  it('渡さなければ送らない(会話経路の挙動は変えない)', async () => {
+    const box = captureBody()
+    await chatWithOllama(messages, {})
+    expect(box.body?.options).not.toHaveProperty('stop')
+  })
+})

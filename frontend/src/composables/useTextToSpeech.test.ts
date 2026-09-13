@@ -180,3 +180,20 @@ describe('useTextToSpeech', () => {
     await expect(p2).rejects.toThrow('synthesis-failed')
   })
 })
+
+describe('useTextToSpeech の絵文字', () => {
+  it('絵文字を取り除いてから読み上げる', async () => {
+    const tts = useTextToSpeech()
+    const p = tts.speak('Nice! 😊 See you 👋')
+    await vi.advanceTimersByTimeAsync(0)
+    await p
+    expect(synth.spoken.map((u) => u.text)).toEqual(['Nice!  See you'])
+  })
+
+  it('絵文字だけの断片は読み上げず、既存の発話も打ち切らない', async () => {
+    const tts = useTextToSpeech()
+    await tts.speak('🎉✨')
+    expect(synth.spoken).toEqual([])
+    expect(synth.cancelCount).toBe(0)
+  })
+})

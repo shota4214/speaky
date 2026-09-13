@@ -51,7 +51,7 @@ modelProfileRouter.post('/model-profile/preview', (req: Request, res: Response) 
     modelAccepted: requestedModel === null ? false : model === requestedModel,
     pref,
     profile: profile.level,
-    /** 軽量モードで添削・単語が出ないことを UI が言い切れるようにする。 */
+    /** 軽量モードで単語カードが出ないことを UI が言い切れるようにする(添削は両モードで出る)。 */
     enrichment: profile.enrichment,
   })
 })

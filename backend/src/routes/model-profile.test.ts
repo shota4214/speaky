@@ -48,11 +48,11 @@ describe('POST /api/model-profile/preview', () => {
     expect(body.model).toBe(BUNDLED_LLM_MODEL)
     expect(body.modelAccepted).toBe(true)
     expect(body.profile).toBe('small')
-    // 軽量モードでは添削も単語も出ない。UI がそれを言い切れるように返している。
+    // 軽量モードでは単語カードが出ない(添削はどちらのモードでも出る)。UI がそれを言い切れるように返している。
     expect(body.enrichment).toBe('translation-only')
   })
 
-  it('3B + auto は標準モード(添削・単語あり)を返す', async () => {
+  it('3B + auto は標準モード(単語カードあり)を返す', async () => {
     const body = await preview({ model: 'llama3.2:3b', modelProfile: 'auto' })
     expect(body.profile).toBe('standard')
     expect(body.enrichment).toBe('full')

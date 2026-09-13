@@ -1,0 +1,3837 @@
+{
+  "note": "Generated from correction-research (testset.mjs + testset2.mjs + results/probe56-*.jsonl + results/held-*.jsonl, variant V6, temperature 0) by running the research filter.mjs. Do not edit by hand.",
+  "items": [
+    {
+      "id": "E1",
+      "set": "dev",
+      "err": true,
+      "cat": ["tense"],
+      "text": "Yesterday I go to the park with my friend.",
+      "fix": [["\\bwent\\b", "i"]],
+      "bad": [["\\bgo to the park\\b", "i"]]
+    },
+    {
+      "id": "E2",
+      "set": "dev",
+      "err": true,
+      "cat": ["article"],
+      "text": "I bought new bag at the station.",
+      "fix": [["\\b(a|the) new bag\\b", "i"]],
+      "bad": [["bought new bag", "i"]]
+    },
+    {
+      "id": "E3",
+      "set": "dev",
+      "err": true,
+      "cat": ["preposition"],
+      "text": "I arrived to Tokyo at nine o'clock.",
+      "fix": [["\\b(arrived|got) (in|at) Tokyo\\b|\\bgot to Tokyo\\b", "i"]],
+      "bad": [["arrived to Tokyo", "i"]]
+    },
+    {
+      "id": "E4",
+      "set": "dev",
+      "err": true,
+      "cat": ["plural"],
+      "text": "I have two brother and one sister.",
+      "fix": [["\\btwo brothers and (one|a) sister\\b", "i"]],
+      "bad": [["two brother\\b", "i"]]
+    },
+    {
+      "id": "E5",
+      "set": "dev",
+      "err": true,
+      "cat": ["word-order"],
+      "text": "I very like Japanese food.",
+      "fix": [
+        [
+          "\\b(really like japanese food|very much like japanese food|like japanese food (very much|a lot)|love japanese food)\\b",
+          "i"
+        ]
+      ],
+      "bad": [["\\bvery like\\b", "i"]]
+    },
+    {
+      "id": "E6",
+      "set": "dev",
+      "err": true,
+      "cat": ["third-person-s"],
+      "text": "My father work at a bank.",
+      "fix": [["\\bfather works at a bank\\b", "i"]],
+      "bad": [["father work\\b", "i"]]
+    },
+    {
+      "id": "E7",
+      "set": "dev",
+      "err": true,
+      "cat": ["preposition"],
+      "text": "I was born in May 5th.",
+      "fix": [["\\bon May 5(th)?\\b", "i"]],
+      "bad": [["\\bin May 5", "i"]]
+    },
+    {
+      "id": "E8",
+      "set": "dev",
+      "err": true,
+      "cat": ["article"],
+      "text": "My sister is nurse.",
+      "fix": [["\\bis a nurse\\b", "i"]],
+      "bad": [["is nurse\\b", "i"]]
+    },
+    {
+      "id": "E9",
+      "set": "dev",
+      "err": true,
+      "cat": ["tense"],
+      "text": "I have watched that movie last week.",
+      "fix": [["\\b(watched|saw) (that|the) movie last week\\b", "i"]],
+      "bad": [["have watched that movie last week", "i"]]
+    },
+    {
+      "id": "E10",
+      "set": "dev",
+      "err": true,
+      "cat": ["countable"],
+      "text": "I ate many breads this morning.",
+      "fix": [
+        [
+          "\\b(a lot of|lots of|much|some) bread\\b(?!s)|\\b(slices|pieces) of bread\\b|\\bbread rolls\\b",
+          "i"
+        ]
+      ],
+      "bad": [["many breads", "i"]]
+    },
+    {
+      "id": "E11",
+      "set": "dev",
+      "err": true,
+      "cat": ["question"],
+      "text": "What you did last weekend?",
+      "fix": [["\\bwhat did you do\\b", "i"]],
+      "bad": [["what you did", "i"]]
+    },
+    {
+      "id": "E12",
+      "set": "dev",
+      "err": true,
+      "cat": ["adjective-form"],
+      "text": "I am interesting in English movies.",
+      "fix": [["\\binterested in English movies\\b", "i"]],
+      "bad": [["interesting in", "i"]]
+    },
+    {
+      "id": "E13",
+      "set": "dev",
+      "err": true,
+      "cat": ["third-person-s"],
+      "text": "she like playing tennis on weekends",
+      "fix": [["\\bshe likes (playing|to play) tennis\\b", "i"]],
+      "bad": [["she like\\b", "i"]]
+    },
+    {
+      "id": "E14",
+      "set": "dev",
+      "err": true,
+      "cat": ["article", "article"],
+      "text": "i want to be teacher in future",
+      "fix": [
+        ["\\bbe a teacher\\b", "i"],
+        ["\\bin the future\\b", "i"]
+      ],
+      "bad": [
+        ["be teacher", "i"],
+        ["in future", "i"]
+      ]
+    },
+    {
+      "id": "E15",
+      "set": "dev",
+      "err": true,
+      "cat": ["missing-subject"],
+      "text": "Is very hot today.",
+      "fix": [["\\b(it is|it's) very hot today\\b", "i"]],
+      "bad": [["^is very", "i"]]
+    },
+    {
+      "id": "E16",
+      "set": "dev",
+      "err": true,
+      "cat": ["question"],
+      "text": "Where you live?",
+      "fix": [["\\bwhere do you live\\b", "i"]],
+      "bad": [["where you live", "i"]]
+    },
+    {
+      "id": "E17",
+      "set": "dev",
+      "err": true,
+      "cat": ["third-person-s"],
+      "text": "Do she have a car?",
+      "fix": [["\\bdoes she have a car\\b", "i"]],
+      "bad": [["\\bdo she\\b", "i"]]
+    },
+    {
+      "id": "E18",
+      "set": "dev",
+      "err": true,
+      "cat": ["adjective-form"],
+      "text": "The movie was very bored.",
+      "fix": [["\\bmovie was (very|really) boring\\b", "i"]],
+      "bad": [["very bored", "i"]]
+    },
+    {
+      "id": "E19",
+      "set": "dev",
+      "err": true,
+      "cat": ["adjective-form"],
+      "text": "i was very exciting about the trip",
+      "fix": [["\\b(very|really|so) excited about the trip\\b", "i"]],
+      "bad": [["exciting about", "i"]]
+    },
+    {
+      "id": "E20",
+      "set": "dev",
+      "err": true,
+      "cat": ["countable"],
+      "text": "I have many homeworks today.",
+      "fix": [["\\b(a lot of|lots of|much|so much) homework\\b(?!s)", "i"]],
+      "bad": [["homeworks", "i"]]
+    },
+    {
+      "id": "E21",
+      "set": "dev",
+      "err": true,
+      "cat": ["countable"],
+      "text": "Can you give me some advices?",
+      "fix": [["\\bgive me (some |a piece of |any )?advice\\b(?!s)", "i"]],
+      "bad": [["advices", "i"]]
+    },
+    {
+      "id": "E22",
+      "set": "dev",
+      "err": true,
+      "cat": ["plural"],
+      "text": "There are three dog in my house.",
+      "fix": [["\\bthree dogs in my house\\b", "i"]],
+      "bad": [["three dog\\b", "i"]]
+    },
+    {
+      "id": "E23",
+      "set": "dev",
+      "err": true,
+      "cat": ["preposition"],
+      "text": "I listen music every day.",
+      "fix": [["\\blisten to music every day\\b", "i"]],
+      "bad": [["listen music", "i"]]
+    },
+    {
+      "id": "E24",
+      "set": "dev",
+      "err": true,
+      "cat": ["preposition"],
+      "text": "We discussed about the plan.",
+      "fix": [["\\b(discussed the plan|talked about the plan)\\b", "i"]],
+      "bad": [["discussed about", "i"]]
+    },
+    {
+      "id": "E25",
+      "set": "dev",
+      "err": true,
+      "cat": ["tense"],
+      "text": "I have been to Kyoto last year.",
+      "fix": [["\\b(went|was) (to|in) Kyoto last year\\b", "i"]],
+      "bad": [["have been to Kyoto last year", "i"]]
+    },
+    {
+      "id": "E26",
+      "set": "dev",
+      "err": true,
+      "cat": ["tense"],
+      "text": "last night i watch a movie with my family",
+      "fix": [["\\bi watched a movie with my family\\b", "i"]],
+      "bad": [["i watch a movie", "i"]]
+    },
+    {
+      "id": "E27",
+      "set": "dev",
+      "err": true,
+      "cat": ["word-order"],
+      "text": "I don't know what is this.",
+      "fix": [["\\bwhat this is\\b", "i"]],
+      "bad": [["what is this", "i"]]
+    },
+    {
+      "id": "E28",
+      "set": "dev",
+      "err": true,
+      "cat": ["third-person-s", "plural"],
+      "text": "My brother go to school by bus every days.",
+      "fix": [
+        ["\\bbrother goes to school\\b", "i"],
+        ["\\bevery day\\b", "i"]
+      ],
+      "bad": [
+        ["brother go\\b", "i"],
+        ["every days", "i"]
+      ]
+    },
+    {
+      "id": "E29",
+      "set": "dev",
+      "err": true,
+      "cat": ["tense", "article"],
+      "text": "Yesterday I buy a apple.",
+      "fix": [
+        ["\\bbought\\b", "i"],
+        ["\\ban apple\\b", "i"]
+      ],
+      "bad": [
+        ["\\bI buy\\b", "i"],
+        ["\\ba apple\\b", "i"]
+      ]
+    },
+    {
+      "id": "E30",
+      "set": "dev",
+      "err": true,
+      "cat": ["third-person-s", "plural"],
+      "text": "she don't like cat",
+      "fix": [
+        ["\\bshe (doesn't|does not)\\b", "i"],
+        ["\\blike cats\\b", "i"]
+      ],
+      "bad": [
+        ["she (don't|do not)\\b", "i"],
+        ["like cat\\b", "i"]
+      ]
+    },
+    {
+      "id": "E31",
+      "set": "dev",
+      "err": true,
+      "cat": ["missing-be"],
+      "text": "I very tired today.",
+      "fix": [["\\b(I am|I'm|I was|I feel|I'm feeling) (very|really|so) tired today\\b", "i"]],
+      "bad": [["\\bI very tired\\b", "i"]]
+    },
+    {
+      "id": "E32",
+      "set": "dev",
+      "err": true,
+      "cat": ["third-person-s"],
+      "text": "Kenji play the guitar very well.",
+      "fix": [["\\bKenji plays the guitar very well\\b", "i"]],
+      "bad": [["Kenji play\\b", "i"]]
+    },
+    {
+      "id": "E33",
+      "set": "dev",
+      "err": true,
+      "cat": ["article"],
+      "text": "I went to the Osaka with Yuki.",
+      "fix": [["\\bwent to Osaka with Yuki\\b", "i"]],
+      "bad": [["the Osaka", "i"]]
+    },
+    {
+      "id": "E34",
+      "set": "dev",
+      "err": true,
+      "cat": ["missing-subject"],
+      "text": "yesterday went shopping with my mother",
+      "fix": [["\\b(I|we) went shopping with my mother\\b", "i"]],
+      "bad": [["^yesterday went", "i"]]
+    },
+    {
+      "id": "E35",
+      "set": "dev",
+      "err": true,
+      "cat": ["adjective-form"],
+      "text": "This one is more cheap.",
+      "fix": [["\\bthis one is cheaper\\b", "i"]],
+      "bad": [["more cheap", "i"]]
+    },
+    {
+      "id": "E36",
+      "set": "dev",
+      "err": true,
+      "cat": ["question"],
+      "text": "How much it costs?",
+      "fix": [["\\bhow much does it cost\\b", "i"]],
+      "bad": [["how much it costs", "i"]]
+    },
+    {
+      "id": "E37",
+      "set": "dev",
+      "err": true,
+      "cat": ["verb-form"],
+      "text": "I enjoyed to talk with you.",
+      "fix": [["\\benjoyed talking (with|to) you\\b", "i"]],
+      "bad": [["enjoyed to talk", "i"]]
+    },
+    {
+      "id": "E38",
+      "set": "dev",
+      "err": true,
+      "cat": ["verb-form"],
+      "text": "I am agree with you.",
+      "fix": [["^\\W*I agree with you\\b", "i"]],
+      "bad": [["am agree", "i"]]
+    },
+    {
+      "id": "C1",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I went to the park with my friend yesterday.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C2",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I usually take the train to work.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C3",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "My mother likes gardening, so she grows tomatoes.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C4",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I have two cats and a small dog.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C5",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "We had dinner at a Chinese restaurant last night.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C6",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I've been studying English for three years.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C7",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I'm going to visit my grandparents this weekend.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C8",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "What did you do last weekend?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C9",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I'm interested in learning how to cook Italian food.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C10",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "It was raining, so I stayed home and read a book.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C11",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "My brother lives in Osaka and works at a hotel.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C12",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I don't really like coffee, but I drink tea every day.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C13",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "i went to the park with my friend yesterday",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C14",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "yeah me too",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C15",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Yes.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C16",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Me too.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C17",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I'm gonna watch a movie tonight.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C18",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "i'm gonna go shopping with my mom later",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C19",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Do you like sushi?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C20",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "What kind of music do you listen to?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C21",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "My name is Shota Suzuki.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C22",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I live in Saitama with my wife and two kids.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C23",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Kenji and I went to Hokkaido last winter.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C24",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "that sounds fun",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C25",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "not really",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C26",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I think so too.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C27",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "sure why not",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C28",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "i wanna try natto someday",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C29",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "How about you?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C30",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I usually get up at six thirty.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C31",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "It's been a long week.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C32",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I don't have any pets.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C33",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "we had ramen at ichiran in shibuya",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C34",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I've never been abroad.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C35",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Could you say that again?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C36",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "oh really that's cool",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C37",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "My daughter is five years old.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "C38",
+      "set": "dev",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Thanks, you too.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "H1",
+      "set": "held",
+      "err": true,
+      "cat": ["article"],
+      "text": "I have dog.",
+      "fix": [["\\bhave a dog\\b", "i"]],
+      "bad": [["have dog", "i"]]
+    },
+    {
+      "id": "H2",
+      "set": "held",
+      "err": true,
+      "cat": ["article"],
+      "text": "my father is doctor",
+      "fix": [["\\bis a doctor\\b", "i"]],
+      "bad": [["is doctor", "i"]]
+    },
+    {
+      "id": "H3",
+      "set": "held",
+      "err": true,
+      "cat": ["article"],
+      "text": "I play the tennis every Sunday.",
+      "fix": [["\\bplay tennis every Sunday\\b", "i"]],
+      "bad": [["the tennis", "i"]]
+    },
+    {
+      "id": "H4",
+      "set": "held",
+      "err": true,
+      "cat": ["tense"],
+      "text": "Last summer I visit my uncle in Hiroshima.",
+      "fix": [["\\bI visited my uncle in Hiroshima\\b", "i"]],
+      "bad": [["I visit my", "i"]]
+    },
+    {
+      "id": "H5",
+      "set": "held",
+      "err": true,
+      "cat": ["tense"],
+      "text": "two days ago i eat sushi with my coworkers",
+      "fix": [["\\bi ate sushi with my coworkers\\b", "i"]],
+      "bad": [["i eat sushi", "i"]]
+    },
+    {
+      "id": "H6",
+      "set": "held",
+      "err": true,
+      "cat": ["tense"],
+      "text": "I have finished my homework yesterday.",
+      "fix": [["^\\W*I finished my homework yesterday\\b", "i"]],
+      "bad": [["have finished", "i"]]
+    },
+    {
+      "id": "H7",
+      "set": "held",
+      "err": true,
+      "cat": ["third-person-s"],
+      "text": "He live in Nagoya.",
+      "fix": [["\\bhe lives in Nagoya\\b", "i"]],
+      "bad": [["he live\\b", "i"]]
+    },
+    {
+      "id": "H8",
+      "set": "held",
+      "err": true,
+      "cat": ["third-person-s"],
+      "text": "my sister study english every night",
+      "fix": [["\\bsister studies english every night\\b", "i"]],
+      "bad": [["sister study\\b", "i"]]
+    },
+    {
+      "id": "H9",
+      "set": "held",
+      "err": true,
+      "cat": ["third-person-s"],
+      "text": "Does he likes baseball?",
+      "fix": [["\\bdoes he like baseball\\b", "i"]],
+      "bad": [["he likes", "i"]]
+    },
+    {
+      "id": "H10",
+      "set": "held",
+      "err": true,
+      "cat": ["plural"],
+      "text": "I have three sister.",
+      "fix": [["\\bthree sisters\\b", "i"]],
+      "bad": [["three sister\\b", "i"]]
+    },
+    {
+      "id": "H11",
+      "set": "held",
+      "err": true,
+      "cat": ["plural"],
+      "text": "we stayed there for five day",
+      "fix": [["\\bstayed there for five days\\b", "i"]],
+      "bad": [["five day\\b", "i"]]
+    },
+    {
+      "id": "H12",
+      "set": "held",
+      "err": true,
+      "cat": ["countable"],
+      "text": "I need some informations.",
+      "fix": [["\\bneed (some )?information\\b(?!s)", "i"]],
+      "bad": [["informations", "i"]]
+    },
+    {
+      "id": "H13",
+      "set": "held",
+      "err": true,
+      "cat": ["countable"],
+      "text": "There were many furnitures in the room.",
+      "fix": [["\\b(a lot of|lots of|much) furniture\\b(?!s)", "i"]],
+      "bad": [["furnitures", "i"]]
+    },
+    {
+      "id": "H14",
+      "set": "held",
+      "err": true,
+      "cat": ["preposition"],
+      "text": "I'm good in cooking.",
+      "fix": [["\\bgood at cooking\\b", "i"]],
+      "bad": [["good in cooking", "i"]]
+    },
+    {
+      "id": "H15",
+      "set": "held",
+      "err": true,
+      "cat": ["preposition"],
+      "text": "I usually go to home at seven.",
+      "fix": [["\\busually go home at seven\\b", "i"]],
+      "bad": [["go to home", "i"]]
+    },
+    {
+      "id": "H16",
+      "set": "held",
+      "err": true,
+      "cat": ["preposition"],
+      "text": "He married with a Japanese woman.",
+      "fix": [["\\bhe married a Japanese woman\\b", "i"]],
+      "bad": [["married with", "i"]]
+    },
+    {
+      "id": "H17",
+      "set": "held",
+      "err": true,
+      "cat": ["word-order"],
+      "text": "I don't know where is the station.",
+      "fix": [["\\bwhere the station is\\b", "i"]],
+      "bad": [["where is the station", "i"]]
+    },
+    {
+      "id": "H18",
+      "set": "held",
+      "err": true,
+      "cat": ["question"],
+      "text": "Why you are sad?",
+      "fix": [["\\bwhy are you sad\\b", "i"]],
+      "bad": [["why you are", "i"]]
+    },
+    {
+      "id": "H19",
+      "set": "held",
+      "err": true,
+      "cat": ["question"],
+      "text": "what time you usually wake up",
+      "fix": [["\\bwhat time do you usually wake up\\b", "i"]],
+      "bad": [["what time you usually", "i"]]
+    },
+    {
+      "id": "H20",
+      "set": "held",
+      "err": true,
+      "cat": ["adjective-form"],
+      "text": "I was surprising at the news.",
+      "fix": [["\\bI was surprised (at|by) the news\\b", "i"]],
+      "bad": [["surprising at", "i"]]
+    },
+    {
+      "id": "H21",
+      "set": "held",
+      "err": true,
+      "cat": ["adjective-form"],
+      "text": "The game was really excited.",
+      "fix": [["\\bgame was really exciting\\b", "i"]],
+      "bad": [["really excited", "i"]]
+    },
+    {
+      "id": "H22",
+      "set": "held",
+      "err": true,
+      "cat": ["missing-subject"],
+      "text": "Was very fun.",
+      "fix": [["\\bit was (very|really|so) fun\\b", "i"]],
+      "bad": [["^was very", "i"]]
+    },
+    {
+      "id": "H23",
+      "set": "held",
+      "err": true,
+      "cat": ["third-person-s", "plural"],
+      "text": "My friend have two child.",
+      "fix": [
+        ["\\bfriend has two\\b", "i"],
+        ["\\btwo children\\b", "i"]
+      ],
+      "bad": [
+        ["friend have\\b", "i"],
+        ["two child\\b", "i"]
+      ]
+    },
+    {
+      "id": "H24",
+      "set": "held",
+      "err": true,
+      "cat": ["tense", "tense", "plural"],
+      "text": "yesterday i go to a zoo and see many animal",
+      "fix": [
+        ["\\bwent to (a|the) zoo\\b", "i"],
+        ["\\bsaw many animals\\b", "i"]
+      ],
+      "bad": [
+        ["i go to", "i"],
+        ["see many animal\\b", "i"]
+      ]
+    },
+    {
+      "id": "K1",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I have a dog and two cats.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K2",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "My father is a doctor.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K3",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I play tennis every Sunday.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K4",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Last summer I visited my uncle in Hiroshima.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K5",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "two days ago i ate sushi with my coworkers",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K6",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I finished my homework yesterday.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K7",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "He lives in Nagoya.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K8",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "my sister studies english every night",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K9",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Does he like baseball?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K10",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "We stayed there for five days.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K11",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I need some information about the tour.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K12",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I'm good at cooking.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K13",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I usually go home at seven.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K14",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "She married a man from Kobe.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K15",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I don't know where the station is.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K16",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Why are you sad?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K17",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "what time do you usually wake up",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K18",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I was surprised at the news.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K19",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "The game was really exciting.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K20",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "It was very fun.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K21",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "okay sounds good",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K22",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "yeah i guess so",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K23",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "no problem",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K24",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I'm kinda tired today.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K25",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "gotta go to work early tomorrow",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K26",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Haha that's so funny.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K27",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I love it!",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K28",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Really?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K29",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Nice to meet you.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K30",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "My wife's name is Aiko.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K31",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "We went to Kinkakuji and Fushimi Inari.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K32",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Tanaka-san is my boss.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K33",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I work at Toyota in Aichi.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K34",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Have you ever been to Japan?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K35",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Can I ask you something?",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K36",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I've lived here since 2015.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K37",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "it takes about thirty minutes by train",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K38",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "I'd like to travel to Europe someday.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K39",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "The kids are playing outside.",
+      "fix": [],
+      "bad": []
+    },
+    {
+      "id": "K40",
+      "set": "held",
+      "err": false,
+      "cat": ["correct"],
+      "text": "Actually, I prefer summer to winter.",
+      "fix": [],
+      "bad": []
+    }
+  ],
+  "models": {
+    "qwen2.5:1.5b": [
+      {
+        "id": "E1",
+        "raw": "Yesterday I went to the park with my friend.",
+        "extracted": "Yesterday I went to the park with my friend.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense"],
+        "explanation": "「Yesterday」と過去のことを話しているので、「go」を過去形の「went」にします。"
+      },
+      {
+        "id": "E2",
+        "raw": "I bought a new bag at the station.",
+        "extracted": "I bought a new bag at the station.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a new bag」のように前に「a」を付けます。"
+      },
+      {
+        "id": "E3",
+        "raw": "I arrived in Tokyo at nine o'clock.",
+        "extracted": "I arrived in Tokyo at nine o'clock.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「arrived to」ではなく「arrived in」と言います。"
+      },
+      {
+        "id": "E4",
+        "raw": "I have two brothers and one sister.",
+        "extracted": "I have two brothers and one sister.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["plural"],
+        "explanation": "「two」の後なので、名詞は複数形の「brothers」にします。"
+      },
+      {
+        "id": "E5",
+        "raw": "I very much like Japanese food.",
+        "extracted": "I very much like Japanese food.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["word-order"],
+        "explanation": "「very」だけでは動詞「like」を強められないので、「very much」の形にします。"
+      },
+      {
+        "id": "E6",
+        "raw": "My father works at a bank.",
+        "extracted": "My father works at a bank.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「My father」（三人称単数）なので、動詞は「works」になります。"
+      },
+      {
+        "id": "E7",
+        "raw": "I was born on May 5th.",
+        "extracted": "I was born on May 5th.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "日付や曜日の前には「in」ではなく「on」を使います。"
+      },
+      {
+        "id": "E8",
+        "raw": "My sister is a nurse.",
+        "extracted": "My sister is a nurse.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a nurse」のように前に「a」を付けます。"
+      },
+      {
+        "id": "E9",
+        "raw": "I have watched that movie last week.",
+        "extracted": "I have watched that movie last week.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E10",
+        "raw": "I ate many breads this morning.",
+        "extracted": "I ate many breads this morning.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E11",
+        "raw": "What did you do last weekend?",
+        "extracted": "What did you do last weekend?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["question"],
+        "explanation": "疑問文では「did」を主語の前に置き、動詞は原形「do」にします。"
+      },
+      {
+        "id": "E12",
+        "raw": "I am interested in English movies.",
+        "extracted": "I am interested in English movies.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "人の気持ちを表すときは -ed の形「interested」を使います（「interesting」は「人をそう感じさせる」という意味です）。"
+      },
+      {
+        "id": "E13",
+        "raw": "she likes playing tennis on weekends.",
+        "extracted": "she likes playing tennis on weekends.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「she」（三人称単数）なので、動詞は「likes」になります。"
+      },
+      {
+        "id": "E14",
+        "raw": "i want to be a teacher in the future",
+        "extracted": "i want to be a teacher in the future",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a teacher」のように前に「a」を付けます。\n「将来」は「in the future」と、the を付けて言います。"
+      },
+      {
+        "id": "E15",
+        "raw": "It is very hot today.",
+        "extracted": "It is very hot today.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["missing-subject"],
+        "explanation": "英語では主語を省略できません。天気・気温・時間などを言うときは「it」を主語にします。"
+      },
+      {
+        "id": "E16",
+        "raw": "Where do you live?",
+        "extracted": "Where do you live?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["question"],
+        "explanation": "疑問文では「do」を主語の前に置き、動詞は原形にします。"
+      },
+      {
+        "id": "E17",
+        "raw": "Does she have a car?",
+        "extracted": "Does she have a car?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「she」（三人称単数）なので、「do」ではなく「does」を使います。"
+      },
+      {
+        "id": "E18",
+        "raw": "The movie was very boring.",
+        "extracted": "The movie was very boring.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "物や出来事の性質を表すときは -ing の形「boring」を使います（「bored」は「人がそう感じている」という意味です）。"
+      },
+      {
+        "id": "E19",
+        "raw": "i was very excited about the trip",
+        "extracted": "i was very excited about the trip",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "人の気持ちを表すときは -ed の形「excited」を使います（「exciting」は「人をそう感じさせる」という意味です）。"
+      },
+      {
+        "id": "E20",
+        "raw": "I have many homeworks today.",
+        "extracted": "I have many homeworks today.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E21",
+        "raw": "Can you give me some advice?",
+        "extracted": "Can you give me some advice?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["countable"],
+        "explanation": "「advice」は数えられない名詞なので、複数形にしません。"
+      },
+      {
+        "id": "E22",
+        "raw": "There are three dogs in my house.",
+        "extracted": "There are three dogs in my house.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["plural"],
+        "explanation": "「three」の後なので、名詞は複数形の「dogs」にします。"
+      },
+      {
+        "id": "E23",
+        "raw": "I listen to music every day.",
+        "extracted": "I listen to music every day.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「listen」の後には「to」が必要です（「listen to ～」）。"
+      },
+      {
+        "id": "E24",
+        "raw": "We discussed the plan.",
+        "extracted": "We discussed the plan.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「discussed」の後に「about」は要りません（「discussed ～」の形で使います）。"
+      },
+      {
+        "id": "E25",
+        "raw": "I have been to Kyoto last year.",
+        "extracted": "I have been to Kyoto last year.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E26",
+        "raw": "last night I watched a movie with my family.",
+        "extracted": "last night I watched a movie with my family.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense"],
+        "explanation": "「last night」と過去のことを話しているので、「watch」を過去形の「watched」にします。"
+      },
+      {
+        "id": "E27",
+        "raw": "I don't know what this is.",
+        "extracted": "I don't know what this is.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["word-order"],
+        "explanation": "文の途中に入った疑問詞のあとは、疑問文の語順ではなく「主語 + 動詞」の順（「this is」）にします。"
+      },
+      {
+        "id": "E28",
+        "raw": "My brother goes to school by bus every day.",
+        "extracted": "My brother goes to school by bus every day.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s", "plural"],
+        "explanation": "主語が「My brother」（三人称単数）なので、動詞は「goes」になります。\n「every」の後の名詞は単数形なので、「day」にします。"
+      },
+      {
+        "id": "E29",
+        "raw": "Yesterday I bought an apple.",
+        "extracted": "Yesterday I bought an apple.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense", "article"],
+        "explanation": "「Yesterday」と過去のことを話しているので、「buy」を過去形の「bought」にします。\n「apple」は母音の音で始まるので、「a」ではなく「an」を使います。"
+      },
+      {
+        "id": "E30",
+        "raw": "she doesn't like cats.",
+        "extracted": "she doesn't like cats.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s", "plural"],
+        "explanation": "主語が「she」（三人称単数）なので、「do」ではなく「does」を使います。\n数えられる名詞を「～というもの」全般の意味で言うときは、複数形の「cats」にします。"
+      },
+      {
+        "id": "E31",
+        "raw": "I'm very tired today.",
+        "extracted": "I'm very tired today.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["missing-be"],
+        "explanation": "「tired」は動詞ではないので、be 動詞「am」が必要です。"
+      },
+      {
+        "id": "E32",
+        "raw": "Kenji plays the guitar very well.",
+        "extracted": "Kenji plays the guitar very well.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「Kenji」（三人称単数）なので、動詞は「plays」になります。"
+      },
+      {
+        "id": "E33",
+        "raw": "I went to Osaka with Yuki.",
+        "extracted": "I went to Osaka with Yuki.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "「Osaka」のような地名や人の名前には、「the」を付けません。"
+      },
+      {
+        "id": "E34",
+        "raw": "yesterday, I went shopping with my mother.",
+        "extracted": "yesterday, I went shopping with my mother.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["missing-subject"],
+        "explanation": "英語では主語を省略できないので、「I」を補います。"
+      },
+      {
+        "id": "E35",
+        "raw": "This one is more cheap.",
+        "extracted": "This one is more cheap.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E36",
+        "raw": "How much does it cost?",
+        "extracted": "How much does it cost?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["question"],
+        "explanation": "疑問文では「does」を主語の前に置き、動詞は原形「cost」にします。"
+      },
+      {
+        "id": "E37",
+        "raw": "I enjoyed talking with you.",
+        "extracted": "I enjoyed talking with you.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["verb-form"],
+        "explanation": "「enjoyed」の後は「to + 動詞」ではなく、-ing の形「talking」を続けます。"
+      },
+      {
+        "id": "E38",
+        "raw": "I agree with you.",
+        "extracted": "I agree with you.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["verb-form"],
+        "explanation": "「agree」は動詞なので、be 動詞「am」は要りません。"
+      },
+      {
+        "id": "C1",
+        "raw": "I went to the park with my friend yesterday.",
+        "extracted": "I went to the park with my friend yesterday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C2",
+        "raw": "I usually take the train to work.",
+        "extracted": "I usually take the train to work.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C3",
+        "raw": "My mother likes gardening, so she grows tomatoes.",
+        "extracted": "My mother likes gardening, so she grows tomatoes.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C4",
+        "raw": "I have two cats and a small dog.",
+        "extracted": "I have two cats and a small dog.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C5",
+        "raw": "We had dinner at a Chinese restaurant last night.",
+        "extracted": "We had dinner at a Chinese restaurant last night.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C6",
+        "raw": "I've been studying English for three years.",
+        "extracted": "I've been studying English for three years.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C7",
+        "raw": "I'm going to visit my grandparents this weekend.",
+        "extracted": "I'm going to visit my grandparents this weekend.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C8",
+        "raw": "What did you do last weekend?",
+        "extracted": "What did you do last weekend?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C9",
+        "raw": "I'm interested in learning how to cook Italian food.",
+        "extracted": "I'm interested in learning how to cook Italian food.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C10",
+        "raw": "It was raining, so I stayed home and read a book.",
+        "extracted": "It was raining, so I stayed home and read a book.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C11",
+        "raw": "My brother lives in Osaka and works at a hotel.",
+        "extracted": "My brother lives in Osaka and works at a hotel.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C12",
+        "raw": "I don't really like coffee, but I drink tea every day.",
+        "extracted": "I don't really like coffee, but I drink tea every day.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C13",
+        "raw": "i went to the park with my friend yesterday",
+        "extracted": "i went to the park with my friend yesterday",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C14",
+        "raw": "yeah, me too",
+        "extracted": "yeah, me too",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C15",
+        "raw": "Yes.",
+        "extracted": "Yes.",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C16",
+        "raw": "Me too.",
+        "extracted": "Me too.",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C17",
+        "raw": "I'm gonna watch a movie tonight.",
+        "extracted": "I'm gonna watch a movie tonight.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C18",
+        "raw": "i'm gonna go shopping with my mom later",
+        "extracted": "i'm gonna go shopping with my mom later",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C19",
+        "raw": "Do you like sushi?",
+        "extracted": "Do you like sushi?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C20",
+        "raw": "What kind of music do you listen to?",
+        "extracted": "What kind of music do you listen to?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C21",
+        "raw": "My name is Shota Suzuki.",
+        "extracted": "My name is Shota Suzuki.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C22",
+        "raw": "I live in Saitama with my wife and two kids.",
+        "extracted": "I live in Saitama with my wife and two kids.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C23",
+        "raw": "Kenji and I went to Hokkaido last winter.",
+        "extracted": "Kenji and I went to Hokkaido last winter.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C24",
+        "raw": "that sounds fun",
+        "extracted": "that sounds fun",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C25",
+        "raw": "not really",
+        "extracted": "not really",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C26",
+        "raw": "I think so too.",
+        "extracted": "I think so too.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C27",
+        "raw": "sure, why not",
+        "extracted": "sure, why not",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C28",
+        "raw": "i wanna try natto someday",
+        "extracted": "i wanna try natto someday",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C29",
+        "raw": "How about you?",
+        "extracted": "How about you?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C30",
+        "raw": "I usually get up at six thirty.",
+        "extracted": "I usually get up at six thirty.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C31",
+        "raw": "It's been a long week.",
+        "extracted": "It's been a long week.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C32",
+        "raw": "I don't have any pets.",
+        "extracted": "I don't have any pets.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C33",
+        "raw": "we had ramen at ichiran in shibuya",
+        "extracted": "we had ramen at ichiran in shibuya",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C34",
+        "raw": "I've never been abroad.",
+        "extracted": "I've never been abroad.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C35",
+        "raw": "Could you say that again?",
+        "extracted": "Could you say that again?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C36",
+        "raw": "oh really that's cool",
+        "extracted": "oh really that's cool",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C37",
+        "raw": "My daughter is five years old.",
+        "extracted": "My daughter is five years old.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C38",
+        "raw": "Thanks, you too.",
+        "extracted": "Thanks, you too.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H1",
+        "raw": "I have a dog.",
+        "extracted": "I have a dog.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a dog」のように前に「a」を付けます。"
+      },
+      {
+        "id": "H2",
+        "raw": "my father is a doctor",
+        "extracted": "my father is a doctor",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a doctor」のように前に「a」を付けます。"
+      },
+      {
+        "id": "H3",
+        "raw": "I play tennis every Sunday.",
+        "extracted": "I play tennis every Sunday.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["unknown"],
+        "explanation": null
+      },
+      {
+        "id": "H4",
+        "raw": "Last summer I visited my uncle in Hiroshima.",
+        "extracted": "Last summer I visited my uncle in Hiroshima.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense"],
+        "explanation": "「Last summer」と過去のことを話しているので、「visit」を過去形の「visited」にします。"
+      },
+      {
+        "id": "H5",
+        "raw": "two days ago, I ate sushi with my coworkers.",
+        "extracted": "two days ago, I ate sushi with my coworkers.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense"],
+        "explanation": "「ago」と過去のことを話しているので、「eat」を過去形の「ate」にします。"
+      },
+      {
+        "id": "H6",
+        "raw": "I have finished my homework yesterday.",
+        "extracted": "I have finished my homework yesterday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H7",
+        "raw": "He lives in Nagoya.",
+        "extracted": "He lives in Nagoya.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「He」（三人称単数）なので、動詞は「lives」になります。"
+      },
+      {
+        "id": "H8",
+        "raw": "my sister studies English every night",
+        "extracted": "my sister studies English every night",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「my sister」（三人称単数）なので、動詞は「studies」になります。"
+      },
+      {
+        "id": "H9",
+        "raw": "Does he like baseball?",
+        "extracted": "Does he like baseball?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["unknown"],
+        "explanation": null
+      },
+      {
+        "id": "H10",
+        "raw": "I have three sisters.",
+        "extracted": "I have three sisters.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["plural"],
+        "explanation": "「three」の後なので、名詞は複数形の「sisters」にします。"
+      },
+      {
+        "id": "H11",
+        "raw": "we stayed there for five days.",
+        "extracted": "we stayed there for five days.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["plural"],
+        "explanation": "「five」の後なので、名詞は複数形の「days」にします。"
+      },
+      {
+        "id": "H12",
+        "raw": "I need some information.",
+        "extracted": "I need some information.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["countable"],
+        "explanation": "「information」は数えられない名詞なので、複数形にしません。"
+      },
+      {
+        "id": "H13",
+        "raw": "There were many furniture in the room.",
+        "extracted": "There were many furniture in the room.",
+        "verdict": "reject",
+        "reasons": ["count-quantifier+uncountable:many furniture"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H14",
+        "raw": "I'm good at cooking.",
+        "extracted": "I'm good at cooking.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「good in」ではなく「good at」と言います。"
+      },
+      {
+        "id": "H15",
+        "raw": "I usually go home at seven.",
+        "extracted": "I usually go home at seven.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「go」の後に「to」は要りません（「go ～」の形で使います）。"
+      },
+      {
+        "id": "H16",
+        "raw": "He married a Japanese woman.",
+        "extracted": "He married a Japanese woman.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「married」の後に「with」は要りません（「married ～」の形で使います）。"
+      },
+      {
+        "id": "H17",
+        "raw": "I don't know where the station is.",
+        "extracted": "I don't know where the station is.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["unknown"],
+        "explanation": null
+      },
+      {
+        "id": "H18",
+        "raw": "Why are you sad?",
+        "extracted": "Why are you sad?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["unknown"],
+        "explanation": null
+      },
+      {
+        "id": "H19",
+        "raw": "what time do you usually wake up",
+        "extracted": "what time do you usually wake up",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["question"],
+        "explanation": "疑問文では「do」を主語の前に置き、動詞は原形にします。"
+      },
+      {
+        "id": "H20",
+        "raw": "I was surprised at the news.",
+        "extracted": "I was surprised at the news.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "人の気持ちを表すときは -ed の形「surprised」を使います（「surprising」は「人をそう感じさせる」という意味です）。"
+      },
+      {
+        "id": "H21",
+        "raw": "The game was really exciting.",
+        "extracted": "The game was really exciting.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "物や出来事の性質を表すときは -ing の形「exciting」を使います（「excited」は「人がそう感じている」という意味です）。"
+      },
+      {
+        "id": "H22",
+        "raw": "Was very fun.",
+        "extracted": "Was very fun.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H23",
+        "raw": "My friend has two children.",
+        "extracted": "My friend has two children.",
+        "verdict": "reject",
+        "reasons": ["content-sub:child->children"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H24",
+        "raw": "yesterday, I went to a zoo and saw many animals.",
+        "extracted": "yesterday, I went to a zoo and saw many animals.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense", "plural"],
+        "explanation": "「yesterday」と過去のことを話しているので、「go」を過去形の「went」にします。\n「yesterday」と過去のことを話しているので、「see」を過去形の「saw」にします。\n「many」の後なので、名詞は複数形の「animals」にします。"
+      },
+      {
+        "id": "K1",
+        "raw": "I have a dog and two cats.",
+        "extracted": "I have a dog and two cats.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K2",
+        "raw": "My father is a doctor.",
+        "extracted": "My father is a doctor.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K3",
+        "raw": "I play tennis every Sunday.",
+        "extracted": "I play tennis every Sunday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K4",
+        "raw": "Last summer I visited my uncle in Hiroshima.",
+        "extracted": "Last summer I visited my uncle in Hiroshima.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K5",
+        "raw": "two days ago, i ate sushi with my coworkers.",
+        "extracted": "two days ago, i ate sushi with my coworkers.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K6",
+        "raw": "I finished my homework yesterday.",
+        "extracted": "I finished my homework yesterday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K7",
+        "raw": "He lives in Nagoya.",
+        "extracted": "He lives in Nagoya.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K8",
+        "raw": "my sister studies English every night",
+        "extracted": "my sister studies English every night",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K9",
+        "raw": "Does he like baseball?",
+        "extracted": "Does he like baseball?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K10",
+        "raw": "We stayed there for five days.",
+        "extracted": "We stayed there for five days.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K11",
+        "raw": "I need some information about the tour.",
+        "extracted": "I need some information about the tour.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K12",
+        "raw": "I'm good at cooking.",
+        "extracted": "I'm good at cooking.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K13",
+        "raw": "I usually go home at seven.",
+        "extracted": "I usually go home at seven.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K14",
+        "raw": "She married a man from Kobe.",
+        "extracted": "She married a man from Kobe.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K15",
+        "raw": "I don't know where the station is.",
+        "extracted": "I don't know where the station is.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K16",
+        "raw": "Why are you sad?",
+        "extracted": "Why are you sad?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K17",
+        "raw": "what time do you usually wake up",
+        "extracted": "what time do you usually wake up",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K18",
+        "raw": "I was surprised at the news.",
+        "extracted": "I was surprised at the news.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K19",
+        "raw": "The game was really exciting.",
+        "extracted": "The game was really exciting.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K20",
+        "raw": "It was very fun.",
+        "extracted": "It was very fun.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K21",
+        "raw": "okay, sounds good",
+        "extracted": "okay, sounds good",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K22",
+        "raw": "yeah, i guess so",
+        "extracted": "yeah, i guess so",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K23",
+        "raw": "no problem",
+        "extracted": "no problem",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K24",
+        "raw": "I'm kinda tired today.",
+        "extracted": "I'm kinda tired today.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K25",
+        "raw": "gotta go to work early tomorrow",
+        "extracted": "gotta go to work early tomorrow",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K26",
+        "raw": "Haha, that's so funny.",
+        "extracted": "Haha, that's so funny.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K27",
+        "raw": "I love it!",
+        "extracted": "I love it!",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K28",
+        "raw": "Really?",
+        "extracted": "Really?",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K29",
+        "raw": "Nice to meet you.",
+        "extracted": "Nice to meet you.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K30",
+        "raw": "My wife's name is Aiko.",
+        "extracted": "My wife's name is Aiko.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K31",
+        "raw": "We went to Kinkaku-ji and Fushimi Inari.",
+        "extracted": "We went to Kinkaku-ji and Fushimi Inari.",
+        "verdict": "reject",
+        "reasons": ["content-ins:kinkaku", "proper-noun:kinkakuji", "content-sub:kinkakuji->ji"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K32",
+        "raw": "Tanaka-san is my boss.",
+        "extracted": "Tanaka-san is my boss.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K33",
+        "raw": "I work at Toyota in Aichi.",
+        "extracted": "I work at Toyota in Aichi.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K34",
+        "raw": "Have you ever been to Japan?",
+        "extracted": "Have you ever been to Japan?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K35",
+        "raw": "Can I ask you something?",
+        "extracted": "Can I ask you something?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K36",
+        "raw": "I've lived here since 2015.",
+        "extracted": "I've lived here since 2015.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K37",
+        "raw": "it takes about thirty minutes by train",
+        "extracted": "it takes about thirty minutes by train",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K38",
+        "raw": "I'd like to travel to Europe someday.",
+        "extracted": "I'd like to travel to Europe someday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K39",
+        "raw": "The kids are playing outside.",
+        "extracted": "The kids are playing outside.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K40",
+        "raw": "Actually, I prefer summer to winter.",
+        "extracted": "Actually, I prefer summer to winter.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      }
+    ],
+    "llama3.2:3b": [
+      {
+        "id": "E1",
+        "raw": "Yesterday I went to the park with my friend.",
+        "extracted": "Yesterday I went to the park with my friend.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense"],
+        "explanation": "「Yesterday」と過去のことを話しているので、「go」を過去形の「went」にします。"
+      },
+      {
+        "id": "E2",
+        "raw": "I bought a new bag at the station.",
+        "extracted": "I bought a new bag at the station.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a new bag」のように前に「a」を付けます。"
+      },
+      {
+        "id": "E3",
+        "raw": "I arrived in Tokyo at nine o'clock.",
+        "extracted": "I arrived in Tokyo at nine o'clock.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「arrived to」ではなく「arrived in」と言います。"
+      },
+      {
+        "id": "E4",
+        "raw": "I have two brothers and one sister.",
+        "extracted": "I have two brothers and one sister.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["plural"],
+        "explanation": "「two」の後なので、名詞は複数形の「brothers」にします。"
+      },
+      {
+        "id": "E5",
+        "raw": "I very much like Japanese food.",
+        "extracted": "I very much like Japanese food.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["word-order"],
+        "explanation": "「very」だけでは動詞「like」を強められないので、「very much」の形にします。"
+      },
+      {
+        "id": "E6",
+        "raw": "My father works at a bank.",
+        "extracted": "My father works at a bank.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「My father」（三人称単数）なので、動詞は「works」になります。"
+      },
+      {
+        "id": "E7",
+        "raw": "I was born on May 5th.",
+        "extracted": "I was born on May 5th.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "日付や曜日の前には「in」ではなく「on」を使います。"
+      },
+      {
+        "id": "E8",
+        "raw": "My sister is a nurse.",
+        "extracted": "My sister is a nurse.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a nurse」のように前に「a」を付けます。"
+      },
+      {
+        "id": "E9",
+        "raw": "I have watched that movie last week.",
+        "extracted": "I have watched that movie last week.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E10",
+        "raw": "I ate many breads this morning.",
+        "extracted": "I ate many breads this morning.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E11",
+        "raw": "What did you do last weekend?",
+        "extracted": "What did you do last weekend?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["question"],
+        "explanation": "疑問文では「did」を主語の前に置き、動詞は原形「do」にします。"
+      },
+      {
+        "id": "E12",
+        "raw": "I am interested in English movies.",
+        "extracted": "I am interested in English movies.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "人の気持ちを表すときは -ed の形「interested」を使います（「interesting」は「人をそう感じさせる」という意味です）。"
+      },
+      {
+        "id": "E13",
+        "raw": "she likes playing tennis on weekends",
+        "extracted": "she likes playing tennis on weekends",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「she」（三人称単数）なので、動詞は「likes」になります。"
+      },
+      {
+        "id": "E14",
+        "raw": "i want to be a teacher in the future",
+        "extracted": "i want to be a teacher in the future",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a teacher」のように前に「a」を付けます。\n「将来」は「in the future」と、the を付けて言います。"
+      },
+      {
+        "id": "E15",
+        "raw": "It's very hot today.",
+        "extracted": "It's very hot today.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["missing-subject"],
+        "explanation": "英語では主語を省略できません。天気・気温・時間などを言うときは「it」を主語にします。"
+      },
+      {
+        "id": "E16",
+        "raw": "Where do you live?",
+        "extracted": "Where do you live?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["question"],
+        "explanation": "疑問文では「do」を主語の前に置き、動詞は原形にします。"
+      },
+      {
+        "id": "E17",
+        "raw": "Does she have a car?",
+        "extracted": "Does she have a car?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「she」（三人称単数）なので、「do」ではなく「does」を使います。"
+      },
+      {
+        "id": "E18",
+        "raw": "The movie was very boring.",
+        "extracted": "The movie was very boring.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "物や出来事の性質を表すときは -ing の形「boring」を使います（「bored」は「人がそう感じている」という意味です）。"
+      },
+      {
+        "id": "E19",
+        "raw": "I was very excited about the trip.",
+        "extracted": "I was very excited about the trip.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "人の気持ちを表すときは -ed の形「excited」を使います（「exciting」は「人をそう感じさせる」という意味です）。"
+      },
+      {
+        "id": "E20",
+        "raw": "I have many homeworks today.",
+        "extracted": "I have many homeworks today.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E21",
+        "raw": "Can you give me some advice?",
+        "extracted": "Can you give me some advice?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["countable"],
+        "explanation": "「advice」は数えられない名詞なので、複数形にしません。"
+      },
+      {
+        "id": "E22",
+        "raw": "There are three dogs in my house.",
+        "extracted": "There are three dogs in my house.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["plural"],
+        "explanation": "「three」の後なので、名詞は複数形の「dogs」にします。"
+      },
+      {
+        "id": "E23",
+        "raw": "I listen to music every day.",
+        "extracted": "I listen to music every day.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「listen」の後には「to」が必要です（「listen to ～」）。"
+      },
+      {
+        "id": "E24",
+        "raw": "We discussed the plan.",
+        "extracted": "We discussed the plan.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「discussed」の後に「about」は要りません（「discussed ～」の形で使います）。"
+      },
+      {
+        "id": "E25",
+        "raw": "I have been to Kyoto last year.",
+        "extracted": "I have been to Kyoto last year.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E26",
+        "raw": "last night i watched a movie with my family",
+        "extracted": "last night i watched a movie with my family",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense"],
+        "explanation": "「last night」と過去のことを話しているので、「watch」を過去形の「watched」にします。"
+      },
+      {
+        "id": "E27",
+        "raw": "I don't know what this is.",
+        "extracted": "I don't know what this is.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["word-order"],
+        "explanation": "文の途中に入った疑問詞のあとは、疑問文の語順ではなく「主語 + 動詞」の順（「this is」）にします。"
+      },
+      {
+        "id": "E28",
+        "raw": "My brother goes to school by bus every day.",
+        "extracted": "My brother goes to school by bus every day.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s", "plural"],
+        "explanation": "主語が「My brother」（三人称単数）なので、動詞は「goes」になります。\n「every」の後の名詞は単数形なので、「day」にします。"
+      },
+      {
+        "id": "E29",
+        "raw": "Yesterday I bought an apple.",
+        "extracted": "Yesterday I bought an apple.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense", "article"],
+        "explanation": "「Yesterday」と過去のことを話しているので、「buy」を過去形の「bought」にします。\n「apple」は母音の音で始まるので、「a」ではなく「an」を使います。"
+      },
+      {
+        "id": "E30",
+        "raw": "she doesn't like cats.",
+        "extracted": "she doesn't like cats.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s", "plural"],
+        "explanation": "主語が「she」（三人称単数）なので、「do」ではなく「does」を使います。\n数えられる名詞を「～というもの」全般の意味で言うときは、複数形の「cats」にします。"
+      },
+      {
+        "id": "E31",
+        "raw": "I am very tired today.",
+        "extracted": "I am very tired today.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["missing-be"],
+        "explanation": "「tired」は動詞ではないので、be 動詞「am」が必要です。"
+      },
+      {
+        "id": "E32",
+        "raw": "Kenji plays the guitar very well.",
+        "extracted": "Kenji plays the guitar very well.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「Kenji」（三人称単数）なので、動詞は「plays」になります。"
+      },
+      {
+        "id": "E33",
+        "raw": "I went to Osaka with Yuki.",
+        "extracted": "I went to Osaka with Yuki.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "「Osaka」のような地名や人の名前には、「the」を付けません。"
+      },
+      {
+        "id": "E34",
+        "raw": "yesterday went shopping with my mother",
+        "extracted": "yesterday went shopping with my mother",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "E35",
+        "raw": "This one is cheaper.",
+        "extracted": "This one is cheaper.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "「cheap」のような短い形容詞の比較級は「more cheap」ではなく「cheaper」にします。"
+      },
+      {
+        "id": "E36",
+        "raw": "How much does it cost?",
+        "extracted": "How much does it cost?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["question"],
+        "explanation": "疑問文では「does」を主語の前に置き、動詞は原形「cost」にします。"
+      },
+      {
+        "id": "E37",
+        "raw": "I enjoyed talking with you.",
+        "extracted": "I enjoyed talking with you.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["verb-form"],
+        "explanation": "「enjoyed」の後は「to + 動詞」ではなく、-ing の形「talking」を続けます。"
+      },
+      {
+        "id": "E38",
+        "raw": "I agree with you.",
+        "extracted": "I agree with you.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["verb-form"],
+        "explanation": "「agree」は動詞なので、be 動詞「am」は要りません。"
+      },
+      {
+        "id": "C1",
+        "raw": "I went to the park with my friend yesterday.",
+        "extracted": "I went to the park with my friend yesterday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C2",
+        "raw": "I usually take the train to work.",
+        "extracted": "I usually take the train to work.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C3",
+        "raw": "My mother likes gardening, so she grows tomatoes.",
+        "extracted": "My mother likes gardening, so she grows tomatoes.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C4",
+        "raw": "I have two cats and a small dog.",
+        "extracted": "I have two cats and a small dog.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C5",
+        "raw": "We had dinner at a Chinese restaurant last night.",
+        "extracted": "We had dinner at a Chinese restaurant last night.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C6",
+        "raw": "I've been studying English for three years.",
+        "extracted": "I've been studying English for three years.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C7",
+        "raw": "I'm going to visit my grandparents this weekend.",
+        "extracted": "I'm going to visit my grandparents this weekend.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C8",
+        "raw": "What did you do last weekend?",
+        "extracted": "What did you do last weekend?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C9",
+        "raw": "I'm interested in learning how to cook Italian food.",
+        "extracted": "I'm interested in learning how to cook Italian food.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C10",
+        "raw": "It was raining, so I stayed home and read a book.",
+        "extracted": "It was raining, so I stayed home and read a book.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C11",
+        "raw": "My brother lives in Osaka and works at a hotel.",
+        "extracted": "My brother lives in Osaka and works at a hotel.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C12",
+        "raw": "I don't really like coffee, but I drink tea every day.",
+        "extracted": "I don't really like coffee, but I drink tea every day.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C13",
+        "raw": "i went to the park with my friend yesterday",
+        "extracted": "i went to the park with my friend yesterday",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C14",
+        "raw": "yeah, me too",
+        "extracted": "yeah, me too",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C15",
+        "raw": "Yes.",
+        "extracted": "Yes.",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C16",
+        "raw": "Me too.",
+        "extracted": "Me too.",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C17",
+        "raw": "I'm gonna watch a movie tonight.",
+        "extracted": "I'm gonna watch a movie tonight.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C18",
+        "raw": "i'm gonna go shopping with my mom later",
+        "extracted": "i'm gonna go shopping with my mom later",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C19",
+        "raw": "Do you like sushi?",
+        "extracted": "Do you like sushi?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C20",
+        "raw": "What kind of music do you listen to?",
+        "extracted": "What kind of music do you listen to?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C21",
+        "raw": "My name is Shota Suzuki.",
+        "extracted": "My name is Shota Suzuki.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C22",
+        "raw": "I live in Saitama with my wife and two kids.",
+        "extracted": "I live in Saitama with my wife and two kids.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C23",
+        "raw": "Kenji and I went to Hokkaido last winter.",
+        "extracted": "Kenji and I went to Hokkaido last winter.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C24",
+        "raw": "that sounds fun",
+        "extracted": "that sounds fun",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C25",
+        "raw": "not really",
+        "extracted": "not really",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C26",
+        "raw": "I think so too.",
+        "extracted": "I think so too.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C27",
+        "raw": "sure, why not",
+        "extracted": "sure, why not",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C28",
+        "raw": "i want to try natto someday",
+        "extracted": "i want to try natto someday",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C29",
+        "raw": "How about you?",
+        "extracted": "How about you?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C30",
+        "raw": "I usually get up at six thirty.",
+        "extracted": "I usually get up at six thirty.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C31",
+        "raw": "It's been a long week.",
+        "extracted": "It's been a long week.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C32",
+        "raw": "I don't have any pets.",
+        "extracted": "I don't have any pets.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C33",
+        "raw": "we had ramen at ichiran in shibuya",
+        "extracted": "we had ramen at ichiran in shibuya",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C34",
+        "raw": "I've never been abroad.",
+        "extracted": "I've never been abroad.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C35",
+        "raw": "Could you say that again?",
+        "extracted": "Could you say that again?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C36",
+        "raw": "oh really, that's cool",
+        "extracted": "oh really, that's cool",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C37",
+        "raw": "My daughter is five years old.",
+        "extracted": "My daughter is five years old.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "C38",
+        "raw": "Thanks, you too.",
+        "extracted": "Thanks, you too.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H1",
+        "raw": "I have a dog.",
+        "extracted": "I have a dog.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a dog」のように前に「a」を付けます。"
+      },
+      {
+        "id": "H2",
+        "raw": "my father is a doctor",
+        "extracted": "my father is a doctor",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["article"],
+        "explanation": "数えられる名詞が 1 つのときは、「a doctor」のように前に「a」を付けます。"
+      },
+      {
+        "id": "H3",
+        "raw": "I play tennis every Sunday.",
+        "extracted": "I play tennis every Sunday.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["unknown"],
+        "explanation": null
+      },
+      {
+        "id": "H4",
+        "raw": "Last summer I visited my uncle in Hiroshima.",
+        "extracted": "Last summer I visited my uncle in Hiroshima.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense"],
+        "explanation": "「Last summer」と過去のことを話しているので、「visit」を過去形の「visited」にします。"
+      },
+      {
+        "id": "H5",
+        "raw": "two days ago i ate sushi with my coworkers",
+        "extracted": "two days ago i ate sushi with my coworkers",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense"],
+        "explanation": "「ago」と過去のことを話しているので、「eat」を過去形の「ate」にします。"
+      },
+      {
+        "id": "H6",
+        "raw": "I have finished my homework yesterday.",
+        "extracted": "I have finished my homework yesterday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H7",
+        "raw": "He lives in Nagoya.",
+        "extracted": "He lives in Nagoya.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「He」（三人称単数）なので、動詞は「lives」になります。"
+      },
+      {
+        "id": "H8",
+        "raw": "my sister studies english every night",
+        "extracted": "my sister studies english every night",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["third-person-s"],
+        "explanation": "主語が「my sister」（三人称単数）なので、動詞は「studies」になります。"
+      },
+      {
+        "id": "H9",
+        "raw": "Does he like baseball?",
+        "extracted": "Does he like baseball?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["unknown"],
+        "explanation": null
+      },
+      {
+        "id": "H10",
+        "raw": "I have three sisters.",
+        "extracted": "I have three sisters.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["plural"],
+        "explanation": "「three」の後なので、名詞は複数形の「sisters」にします。"
+      },
+      {
+        "id": "H11",
+        "raw": "we stayed there for five days",
+        "extracted": "we stayed there for five days",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["plural"],
+        "explanation": "「five」の後なので、名詞は複数形の「days」にします。"
+      },
+      {
+        "id": "H12",
+        "raw": "I need some information.",
+        "extracted": "I need some information.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["countable"],
+        "explanation": "「information」は数えられない名詞なので、複数形にしません。"
+      },
+      {
+        "id": "H13",
+        "raw": "There were many pieces of furniture in the room.",
+        "extracted": "There were many pieces of furniture in the room.",
+        "verdict": "reject",
+        "reasons": ["content-ins:pieces"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H14",
+        "raw": "I'm good at cooking.",
+        "extracted": "I'm good at cooking.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「good in」ではなく「good at」と言います。"
+      },
+      {
+        "id": "H15",
+        "raw": "I usually go home at seven.",
+        "extracted": "I usually go home at seven.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「go」の後に「to」は要りません（「go ～」の形で使います）。"
+      },
+      {
+        "id": "H16",
+        "raw": "He married a Japanese woman.",
+        "extracted": "He married a Japanese woman.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["preposition"],
+        "explanation": "「married」の後に「with」は要りません（「married ～」の形で使います）。"
+      },
+      {
+        "id": "H17",
+        "raw": "I don't know where the station is.",
+        "extracted": "I don't know where the station is.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["unknown"],
+        "explanation": null
+      },
+      {
+        "id": "H18",
+        "raw": "Why are you sad?",
+        "extracted": "Why are you sad?",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["unknown"],
+        "explanation": null
+      },
+      {
+        "id": "H19",
+        "raw": "what time do you usually wake up",
+        "extracted": "what time do you usually wake up",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["question"],
+        "explanation": "疑問文では「do」を主語の前に置き、動詞は原形にします。"
+      },
+      {
+        "id": "H20",
+        "raw": "I was surprised at the news.",
+        "extracted": "I was surprised at the news.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "人の気持ちを表すときは -ed の形「surprised」を使います（「surprising」は「人をそう感じさせる」という意味です）。"
+      },
+      {
+        "id": "H21",
+        "raw": "The game was really exciting.",
+        "extracted": "The game was really exciting.",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["adjective-form"],
+        "explanation": "物や出来事の性質を表すときは -ing の形「exciting」を使います（「excited」は「人がそう感じている」という意味です）。"
+      },
+      {
+        "id": "H22",
+        "raw": "Was very fun",
+        "extracted": "Was very fun",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H23",
+        "raw": "My friend has two children.",
+        "extracted": "My friend has two children.",
+        "verdict": "reject",
+        "reasons": ["content-sub:child->children"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "H24",
+        "raw": "yesterday i went to a zoo and saw many animals",
+        "extracted": "yesterday i went to a zoo and saw many animals",
+        "verdict": "accept",
+        "reasons": [],
+        "categories": ["tense", "plural"],
+        "explanation": "「yesterday」と過去のことを話しているので、「go」を過去形の「went」にします。\n「yesterday」と過去のことを話しているので、「see」を過去形の「saw」にします。\n「many」の後なので、名詞は複数形の「animals」にします。"
+      },
+      {
+        "id": "K1",
+        "raw": "I have a dog and two cats.",
+        "extracted": "I have a dog and two cats.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K2",
+        "raw": "My father is a doctor.",
+        "extracted": "My father is a doctor.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K3",
+        "raw": "I play tennis every Sunday.",
+        "extracted": "I play tennis every Sunday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K4",
+        "raw": "Last summer I visited my uncle in Hiroshima.",
+        "extracted": "Last summer I visited my uncle in Hiroshima.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K5",
+        "raw": "two days ago i ate sushi with my coworkers",
+        "extracted": "two days ago i ate sushi with my coworkers",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K6",
+        "raw": "I finished my homework yesterday.",
+        "extracted": "I finished my homework yesterday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K7",
+        "raw": "He lives in Nagoya.",
+        "extracted": "He lives in Nagoya.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K8",
+        "raw": "my sister studies english every night",
+        "extracted": "my sister studies english every night",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K9",
+        "raw": "Does he like baseball?",
+        "extracted": "Does he like baseball?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K10",
+        "raw": "We stayed there for five days.",
+        "extracted": "We stayed there for five days.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K11",
+        "raw": "I need some information about the tour.",
+        "extracted": "I need some information about the tour.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K12",
+        "raw": "I'm good at cooking.",
+        "extracted": "I'm good at cooking.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K13",
+        "raw": "I usually go home at seven.",
+        "extracted": "I usually go home at seven.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K14",
+        "raw": "She married a man from Kobe.",
+        "extracted": "She married a man from Kobe.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K15",
+        "raw": "I don't know where the station is.",
+        "extracted": "I don't know where the station is.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K16",
+        "raw": "Why are you sad?",
+        "extracted": "Why are you sad?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K17",
+        "raw": "what time do you usually wake up",
+        "extracted": "what time do you usually wake up",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K18",
+        "raw": "I was surprised at the news.",
+        "extracted": "I was surprised at the news.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K19",
+        "raw": "The game was really exciting.",
+        "extracted": "The game was really exciting.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K20",
+        "raw": "It was very fun.",
+        "extracted": "It was very fun.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K21",
+        "raw": "okay, sounds good",
+        "extracted": "okay, sounds good",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K22",
+        "raw": "yeah, i guess so",
+        "extracted": "yeah, i guess so",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K23",
+        "raw": "no problem",
+        "extracted": "no problem",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K24",
+        "raw": "I'm kinda tired today.",
+        "extracted": "I'm kinda tired today.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K25",
+        "raw": "gotta go to work early tomorrow",
+        "extracted": "gotta go to work early tomorrow",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K26",
+        "raw": "Haha, that's so funny.",
+        "extracted": "Haha, that's so funny.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K27",
+        "raw": "I love it!",
+        "extracted": "I love it!",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K28",
+        "raw": "Really?",
+        "extracted": "Really?",
+        "verdict": "skip",
+        "reasons": ["too-short"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K29",
+        "raw": "Nice to meet you.",
+        "extracted": "Nice to meet you.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K30",
+        "raw": "My wife's name is Aiko.",
+        "extracted": "My wife's name is Aiko.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K31",
+        "raw": "We went to Kinkaku-ji and Fushimi Inari.",
+        "extracted": "We went to Kinkaku-ji and Fushimi Inari.",
+        "verdict": "reject",
+        "reasons": ["content-ins:kinkaku", "proper-noun:kinkakuji", "content-sub:kinkakuji->ji"],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K32",
+        "raw": "Tanaka-san is my boss.",
+        "extracted": "Tanaka-san is my boss.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K33",
+        "raw": "I work at Toyota in Aichi.",
+        "extracted": "I work at Toyota in Aichi.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K34",
+        "raw": "Have you ever been to Japan?",
+        "extracted": "Have you ever been to Japan?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K35",
+        "raw": "Can I ask you something?",
+        "extracted": "Can I ask you something?",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K36",
+        "raw": "I've lived here since 2015.",
+        "extracted": "I've lived here since 2015.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K37",
+        "raw": "it takes about thirty minutes by train",
+        "extracted": "it takes about thirty minutes by train",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K38",
+        "raw": "I'd like to travel to Europe someday.",
+        "extracted": "I'd like to travel to Europe someday.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K39",
+        "raw": "The kids are playing outside.",
+        "extracted": "The kids are playing outside.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      },
+      {
+        "id": "K40",
+        "raw": "Actually, I prefer summer to winter.",
+        "extracted": "Actually, I prefer summer to winter.",
+        "verdict": "nochange",
+        "reasons": [],
+        "categories": null,
+        "explanation": null
+      }
+    ]
+  }
+}

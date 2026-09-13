@@ -9,6 +9,7 @@
  */
 import type { Mode } from './conversation-prompt.js'
 import { extractJsonObjectSlice, matchJsonStringField } from './json-salvage.js'
+import { containsNonLatinScript, isJapaneseVocabMeaning } from '../shared/text-guards.js'
 
 export interface Feedback {
   user_said: string
@@ -62,12 +63,78 @@ export function isVocabItem(x: unknown): x is VocabItem {
   return typeof r.word === 'string' && typeof r.meaning === 'string'
 }
 
+/**
+ * 単語カードを検証して整える(最大 3 件)。**意味が日本語でないものは落とす**。
+ * 標準プロファイルの実モデル評価で、llama3.2:3b の単語カードの意味が日本語だったのは
+ * 90 件中 26 件だけだった(判定は shared/text-guards.ts の isJapaneseVocabMeaning)。
+ * enrich(ストリーミング経路)と非ストリーミング経路の JSON の両方がここを通る。
+ */
+export function sanitizeVocabulary(value: unknown, tag = '[chat]'): VocabItem[] {
+  if (!Array.isArray(value)) return []
+  const items = value.filter(isVocabItem)
+  // 見出し語は AI の **英語の** 返答から拾う語なので、英語であること(ラテン文字があり、
+  // 非ラテン文字体系を含まない)も求める。実モデル(llama3.2:3b)の出力を見ると、意味の欄が
+  // 中国語や崩れた日本語でも「かな / 漢字がある」ので意味の検証だけでは通ってしまうが、
+  // そういう項目は見出し語の方も「我是」「日本」のように英語ではなかった。
+  const japanese = items.filter(
+    (v) =>
+      /[A-Za-z]/.test(v.word) &&
+      !containsNonLatinScript(v.word) &&
+      isJapaneseVocabMeaning(v.meaning),
+  )
+  if (japanese.length < items.length) {
+    console.warn(
+      `${tag} dropping ${items.length - japanese.length} vocabulary item(s) whose meaning is not Japanese`,
+    )
+  }
+  return japanese
+    .slice(0, 3)
+    .map((v) => ({ word: v.word, meaning: v.meaning, example: v.example ?? null }))
+}
+
+/**
+ * 出力契約に書いてある **例示の文言** をそのまま返したか。
+ *
+ * small の JSON 契約は `{"reply_en":"your 1-2 sentence English reply", ...}` という
+ * 1 行の例を見せている。llama3.2:1b は会話ターン 12 件中 6 件でこれを一字一句
+ * 返した。例示を契約から消す案は評価で複数モデルを悪化させたので、契約はそのまま
+ * にして **返ってきたら失敗として扱う**(次の attempt に回る)。
+ */
+const CONTRACT_PLACEHOLDER_RE =
+  /^(?:string\s*-\s*)?your\s+(?:\d+(?:\s*-\s*\d+)?\s+sentences?\s+)?english\s+(?:reply|response)[.!]?$/i
+
+export function isContractPlaceholder(replyEn: string): boolean {
+  return CONTRACT_PLACEHOLDER_RE.test(replyEn.trim())
+}
+
+/**
+ * JSON のキーの前後の空白を取り除く。llama3.2:1b は `" reply_ja"` のように
+ * 先頭に空白の入ったキーを書く(挨拶 12 件中 9 件)。完全一致で読むと
+ * モデルが書いた日本語訳が捨てられ、ローマ字を出しがちな補完経路に落ちていた。
+ * 同じキーが空白違いで 2 つあるときは、空白の無い方(正規の書き方)を優先する。
+ */
+function trimKeys(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(obj)) {
+    const trimmed = key.trim()
+    if (trimmed !== key && Object.prototype.hasOwnProperty.call(obj, trimmed)) continue
+    out[trimmed] = value
+  }
+  return out
+}
+
 export function parseChatReply(content: string, fallbackMode: Mode): ChatReply | null {
   try {
-    const parsed = JSON.parse(content) as Record<string, unknown>
+    const json: unknown = JSON.parse(content)
+    if (typeof json !== 'object' || json === null || Array.isArray(json)) return null
+    const parsed = trimKeys(json as Record<string, unknown>)
     // reply_en は必須。reply_ja は欠落/非文字列でも parse 失敗にせず空文字に正規化する。
     // (小型モデルが reply_ja を省略するケースを救い、後段の en→ja 補完に回すため)
     if (typeof parsed.reply_en !== 'string') {
+      return null
+    }
+    if (isContractPlaceholder(parsed.reply_en)) {
+      console.warn('[chat] reply_en is the contract placeholder; treating as a failed attempt')
       return null
     }
     const replyJa = typeof parsed.reply_ja === 'string' ? parsed.reply_ja : ''
@@ -81,16 +148,7 @@ export function parseChatReply(content: string, fallbackMode: Mode): ChatReply |
       })
       feedback = null
     }
-    const vocabulary: VocabItem[] = Array.isArray(parsed.vocabulary)
-      ? parsed.vocabulary
-          .filter(isVocabItem)
-          .slice(0, 3)
-          .map((v) => ({
-            word: v.word,
-            meaning: v.meaning,
-            example: v.example ?? null,
-          }))
-      : []
+    const vocabulary = sanitizeVocabulary(parsed.vocabulary)
 
     const mode: Mode =
       parsed.mode === 'japanese_help' || parsed.mode === 'mixed' || parsed.mode === 'normal'
@@ -149,7 +207,7 @@ export function salvageChatReply(content: string, fallbackMode: Mode): ChatReply
 
   // 2) 切断された JSON から本文だけ拾う
   const replyEn = matchJsonStringField(content, 'reply_en')
-  if (!replyEn || !isSaneSalvagedReplyEn(replyEn)) return null
+  if (!replyEn || !isSaneSalvagedReplyEn(replyEn) || isContractPlaceholder(replyEn)) return null
 
   const replyJa = matchJsonStringField(content, 'reply_ja') ?? ''
   return {

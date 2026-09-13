@@ -30,6 +30,7 @@ import {
   FEATURE_CHAT_ENRICH,
   FEATURE_CHAT_OPENING_STREAM,
   FEATURE_CHAT_STREAM,
+  FEATURE_GRAMMAR_CHECK,
   FEATURE_MODEL_PROFILE,
   hasFeature,
   NO_FEATURES,
@@ -38,10 +39,13 @@ import {
 import { BUNDLED_LLM_MODEL, resolveProfileLevel, type ModelProfileLevel } from '../storage/settings'
 import type {
   ChatEnrichment,
+  StreamFeedback,
   ChatStreamEffect,
   ChatStreamError,
 } from '../utils/chat-stream-reducer'
 import { SentenceAccumulator, splitIntoSpeechSegments } from '../utils/sentence-stream'
+import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
+import { storedJapaneseTranslation } from '../utils/stored-translation'
 import { useAudioRecorder } from './useAudioRecorder'
 import { useSpeechQueue } from './useSpeechQueue'
 import { getDefaultVoicePreference, useTextToSpeech, type SpeakOptions } from './useTextToSpeech'
@@ -299,7 +303,8 @@ export function useConversationLoop() {
     // 対象に含める。訳の無い行に再取得ボタンが出ないのが一番まずい。
     if (!enrichPendingIds.value.has(id)) {
       const message = conversation.messages.find((m) => m.id === id)
-      if (!message || message.replyJa?.trim()) return
+      // 「訳がある」の判定は画面と同じ(検証を通らない保存済みの訳は無いものとして扱う)。
+      if (!message || storedJapaneseTranslation(message).trim()) return
     }
     const pending = new Set(enrichPendingIds.value)
     pending.delete(id)
@@ -363,28 +368,65 @@ export function useConversationLoop() {
   }
 
   /** enrich の結果を DB とストアへ反映する(保存する形は現行リリースと同一)。 */
-  async function applyEnrichment(messageId: string, enrichment: ChatEnrichment): Promise<void> {
+  async function applyEnrichment(
+    messageId: string,
+    enrichment: ChatEnrichment,
+    /** 検証に使う英文。ストアに無いメッセージ(会話終了後の一括 enrich)は呼び出し側が渡す。 */
+    knownReplyEn?: string,
+  ): Promise<boolean> {
     // 日本語訳が空の enrich は **成功ではない**。ここで pending を解除すると
     // 「訳も無い・エラーも無い・再取得ボタンも無い」行になり、DB の replyJa も
     // null のまま残る。取得できなかったものとして再取得できる状態にする。
-    if (!enrichment.replyJa.trim()) {
-      console.warn('[loop] enrich に日本語訳が無いので失敗として扱う:', messageId)
+    //
+    // 訳として使えないもの(ローマ字・英語の続き・他の文字体系)も同じ扱い。
+    // 新しい backend は送る前に同じ規則で弾いているが、Electron では
+    // 「frontend だけ新しい」組み合わせが普通に起こるので、表示の直前でも確かめる。
+    const replyEn =
+      knownReplyEn ?? conversation.messages.find((m) => m.id === messageId)?.replyEn ?? ''
+    // 英文が分からない行は検証できないので採用しない(検証をすり抜けた訳を表示しない)。
+    const replyJa = acceptJapaneseTranslation(enrichment.replyJa, replyEn)
+    if (!replyJa) {
+      console.warn('[loop] enrich に使える日本語訳が無いので失敗として扱う:', messageId)
       markEnrichFailed(messageId)
-      return
+      return false
     }
+    const checked = checkedFeedback(enrichment.feedback)
     const updated = await messagesRepo.update(messageId, {
-      replyJa: enrichment.replyJa || null,
-      feedback: enrichment.feedback
-        ? {
-            userSaid: enrichment.feedback.user_said,
-            corrected: enrichment.feedback.corrected,
-            explanation: enrichment.feedback.explanation,
-          }
-        : null,
+      replyJa,
+      // 添削は **あるときだけ書く**(null で上書きしない)。ストリーミングでは添削が
+      // enrich の後に別イベントで届くので、ここで null を書くと、先に保存された添削を
+      // 後から消しかねない(DB の更新は get + put なので書き込みの順序が前後しうる)。
+      ...(checked ? { feedback: toStoredFeedback(checked) } : {}),
       vocabulary: enrichment.vocabulary,
     })
     if (updated) conversation.updateMessage(updated)
     clearEnrichPending(messageId)
+    return true
+  }
+
+  /**
+   * 表示してよい添削か。**grammar-check を申告した backend の添削だけ**を通す。
+   * 申告の無い backend の feedback はモデルが JSON に書いたもの(説明が英語 /
+   * 崩れた日本語 / 中国語になりうる)なので捨てる。Electron では
+   * 「frontend だけ新しい」組み合わせが普通に起こる。
+   */
+  function checkedFeedback(feedback: StreamFeedback | null | undefined): StreamFeedback | null {
+    if (!feedback) return null
+    return hasFeature(backendFeatures.value, FEATURE_GRAMMAR_CHECK) ? feedback : null
+  }
+
+  function toStoredFeedback(feedback: StreamFeedback): NonNullable<Message['feedback']> {
+    return {
+      userSaid: feedback.user_said,
+      corrected: feedback.corrected,
+      explanation: feedback.explanation,
+    }
+  }
+
+  /** ストリーミングの `feedback` イベント(enrich の後に届く添削)を DB とストアへ反映する。 */
+  async function applyFeedback(messageId: string, feedback: StreamFeedback): Promise<void> {
+    const updated = await messagesRepo.update(messageId, { feedback: toStoredFeedback(feedback) })
+    if (updated) conversation.updateMessage(updated)
   }
 
   /** そのメッセージの直前のユーザー発話(enrich の添削材料)。 */
@@ -404,13 +446,18 @@ export function useConversationLoop() {
     if (!message?.replyEn) return
     markEnrichPending(messageId)
     try {
-      const enrichment = await chatEnrich(message.replyEn, previousUserText(messageId), {
-        aiName: settings.settings.aiCharacter.name,
-        level: conversation.level,
-        topic: conversation.topic,
-        model: settings.settings.llmModel,
-        ...profilePatch(),
-      })
+      const enrichment = await chatEnrich(
+        message.replyEn,
+        previousUserText(messageId),
+        {
+          aiName: settings.settings.aiCharacter.name,
+          level: conversation.level,
+          topic: conversation.topic,
+          model: settings.settings.llmModel,
+          ...profilePatch(),
+        },
+        { retry: true },
+      )
       await applyEnrichment(messageId, enrichment)
     } catch (e) {
       console.warn('[loop] enrich retry failed:', e)
@@ -466,6 +513,8 @@ export function useConversationLoop() {
       replyJa: null as string | null,
       persistedId: null as string | null,
       stashedEnrichment: null as ChatEnrichment | null,
+      /** 永続化より先に届いた添削(保存できてから反映する)。 */
+      stashedFeedback: null as StreamFeedback | null,
       enrichApplied: false,
       streamFinished: false,
     }
@@ -519,6 +568,19 @@ export function useConversationLoop() {
           } else {
             // done の直後・永続化の途中に来た場合。保存できてから反映する。
             turn.stashedEnrichment = effect.enrichment
+          }
+          break
+        }
+        case 'feedback': {
+          // 添削は enrich の後に届く。マイクはこれを待たない(ターンは done + 読み上げ終わりで終わる)。
+          // `feedback` イベントを送るのは grammar-check を持つ backend だけなので、中身は検証済み。
+          const persistedId = turn.persistedId
+          if (persistedId) {
+            void applyFeedback(persistedId, effect.feedback).catch((e) => {
+              console.warn('[loop] applying feedback failed:', e)
+            })
+          } else {
+            turn.stashedFeedback = effect.feedback
           }
           break
         }
@@ -620,6 +682,11 @@ export function useConversationLoop() {
       // 既にストリームが閉じていた(= enrich は永遠に来ない)なら、その場で
       // 「取得できませんでした + 再取得」に切り替える。準備中のまま固まらせない。
       if (turn.streamFinished && !turn.enrichApplied) markEnrichFailed(messageId)
+    }
+    if (turn.stashedFeedback) {
+      await applyFeedback(messageId, turn.stashedFeedback).catch((e) => {
+        console.warn('[loop] applying stashed feedback failed:', e)
+      })
     }
 
     // ターンの終わりは「done」AND「読み上げ終わり」の両方。
@@ -793,12 +860,14 @@ export function useConversationLoop() {
       userText: null,
       inputLanguage: null,
       replyEn: reply.reply_en,
-      replyJa: reply.reply_ja,
+      replyJa: acceptJapaneseTranslation(reply.reply_ja ?? '', reply.reply_en) || null,
       feedback: null,
       vocabulary: reply.vocabulary,
       mode: 'normal',
     })
     conversation.appendMessage(aiMsg)
+    // 使える訳が無ければ「取得できませんでした + 再取得」にする(空行のまま放置しない)。
+    if (!aiMsg.replyJa) markEnrichFailed(aiMsg.id)
     lastAiReplyEn.value = reply.reply_en
 
     // Phase 3: 読み上げ(失敗してもメッセージは画面に出ているので、
@@ -905,9 +974,14 @@ export function useConversationLoop() {
         conversation.appendMessage(userMsg)
 
         conversation.setMode('thinking')
+        // 末尾は今保存したばかりの今回の発話。backend は userText として 1 回だけ
+        // 足すので、履歴には含めない(含めると同じ発話が 2 回続けてモデルに見える)。
+        const history = buildHistory()
+        const lastItem = history[history.length - 1]
+        if (lastItem?.role === 'user' && lastItem.text === trans.text) history.pop()
         const turnContext: ChatRequestContext = {
           ...buildRequestContext(input, inputMode),
-          conversationHistory: buildHistory().slice(-20),
+          conversationHistory: history.slice(-20),
         }
         const turnTtsOverrides: SpeakOptions = (() => {
           const opts = buildTtsOptions()
@@ -997,18 +1071,26 @@ export function useConversationLoop() {
           userText: null,
           inputLanguage: null,
           replyEn: reply.reply_en,
-          replyJa: reply.reply_ja,
-          feedback: reply.feedback
-            ? {
-                userSaid: reply.feedback.user_said,
-                corrected: reply.feedback.corrected,
-                explanation: reply.feedback.explanation,
-              }
-            : null,
+          // 日本語入力ターンの reply_ja は訳ではなく定型の案内文なので検証しない。
+          // 判定はモデルが書いた reply.mode ではなく、こちらで判定した入力モードで行う。
+          replyJa:
+            inputMode === 'normal'
+              ? acceptJapaneseTranslation(reply.reply_ja ?? '', reply.reply_en) || null
+              : reply.reply_ja,
+          // 添削は grammar-check を申告した backend のものだけ(古い backend はモデルが書いた添削を返す)。
+          feedback: (() => {
+            const checked = checkedFeedback(reply.feedback)
+            return checked ? toStoredFeedback(checked) : null
+          })(),
           vocabulary: reply.vocabulary,
-          mode: reply.mode,
+          // モデルが JSON に書いた mode は信用しない(ストリーミング経路と同じ)。
+          // 古い backend は英語のターンでもモデルの "mixed" をそのまま返すので、
+          // 使うと「言ってみて」状態に入り、バッジが出て「参考訳」の札も消える。
+          mode: inputMode,
         })
         conversation.appendMessage(aiMsg)
+        // 使える訳が無ければ「取得できませんでした + 再取得」にする(空行のまま放置しない)。
+        if (inputMode === 'normal' && !aiMsg.replyJa) markEnrichFailed(aiMsg.id)
 
         lastAiReplyEn.value = reply.reply_en
         conversation.setMode('aiSpeaking')
@@ -1024,7 +1106,7 @@ export function useConversationLoop() {
 
         if (stopRequested.value) break
 
-        if (reply.mode === 'japanese_help' || reply.mode === 'mixed') {
+        if (inputMode === 'japanese_help' || inputMode === 'mixed') {
           promptedAttempts.value = 1
           conversation.setMode('awaitingPromptedSpeech')
         }
@@ -1163,7 +1245,8 @@ export function useConversationLoop() {
     try {
       const rows = await messagesRepo.listByConversation(conversationId)
       const targets = rows
-        .filter((m) => m.role === 'ai' && m.replyEn?.trim() && !m.replyJa?.trim())
+        // 検証を通らない保存済みの訳(v1.2.0 のローマ字など)も欠けているものとして埋め直す。
+        .filter((m) => m.role === 'ai' && m.replyEn?.trim() && !storedJapaneseTranslation(m).trim())
         .slice(0, MAX_BACKFILL_MESSAGES)
       if (targets.length === 0) return 0
       console.log(`[loop] 会話終了後の一括 enrich: ${targets.length} 件`)
@@ -1182,11 +1265,12 @@ export function useConversationLoop() {
         try {
           const enrichment = await chatEnrich(target.replyEn!, userText, context, {
             signal: ctrl.signal,
+            // 会話中に取れなかった行のやり直しなので、同じ失敗を繰り返さない梯子を使う。
+            retry: true,
           })
           // 保存・ストア反映・pending 解除はセッション中と同じ経路に通す
           // (日本語訳が空なら applyEnrichment が失敗として扱う)。
-          await applyEnrichment(target.id, enrichment)
-          if (enrichment.replyJa?.trim()) filled += 1
+          if (await applyEnrichment(target.id, enrichment, target.replyEn!)) filled += 1
         } catch (e) {
           if (ctrl.signal.aborted || isAbortError(e)) break
           console.warn('[loop] 一括 enrich に失敗(この行は日本語訳なしのまま):', e)

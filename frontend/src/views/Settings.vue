@@ -29,12 +29,17 @@ import {
   isAllowedLlmModel,
   LLM_CATALOG,
   llmParameterBillions,
-  RECOMMENDED_DOWNLOAD_LLM_MODEL,
   VALID_WHISPER_MODELS,
   type ModelProfilePref,
   type WhisperModel,
 } from '../storage/settings'
-import { FEATURE_MODEL_PROFILE_PREVIEW, hasFeature } from '../utils/backend-features'
+import {
+  FEATURE_MODEL_PROFILE_PREVIEW,
+  hasFeature,
+  NO_FEATURES,
+  type BackendFeatures,
+} from '../utils/backend-features'
+import { correctionsAvailable, lightModeOutputsLabel } from '../utils/correction-wording'
 import { watchProfilePreviewInputs } from '../utils/profile-preview-watch'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore } from '../stores/theme'
@@ -214,9 +219,11 @@ async function loadInstalledModels() {
 }
 
 // LLM pull
-// 取得フォームの初期値は「同梱の軽量モデルから標準モードへ戻すのに要るモデル」。
-// ここを固定文字列で書くと、同梱物を変えたときに真っ先に嘘になる。
-const newLlmName = ref<string>(RECOMMENDED_DOWNLOAD_LLM_MODEL)
+// 取得フォームの初期値は同梱モデル(消してしまった人が取り直せる)。**何かを薦める値ではない**。
+// 以前は「標準モードに戻すのに要るモデル」(llama3.2:3b)を初期値にしていたが、
+// 評価で 3B の日本語訳は同梱モデルより良くならず、添削もプロファイルに依らず出るようになったため
+// 取得を薦める理由が無くなった。ここを固定文字列で書くと、同梱物を変えたときに真っ先に嘘になる。
+const newLlmName = ref<string>(BUNDLED_LLM_MODEL)
 const llmPulling = ref(false)
 const llmPullProgress = ref(0)
 const llmPullStatus = ref('')
@@ -462,6 +469,14 @@ const llmSelectOptions = computed(() => {
 const profilePreview = ref<ModelProfilePreview | null>(null)
 /** backend がプレビューに対応しているか。null = まだ確認できていない。 */
 const profilePreviewSupported = ref<boolean | null>(null)
+/**
+ * backend の機能一覧(プレビューの問い合わせで取ったもの)。
+ * 「添削は出ます」と書くのは grammar-check を申告した backend のときだけ(correction-wording.ts)。
+ */
+const backendFeatures = ref<BackendFeatures>(NO_FEATURES)
+/** 軽量モードでも出るものの呼び名(「日本語訳と添削」/「日本語訳」)。 */
+const lightOutputsLabel = computed(() => lightModeOutputsLabel(backendFeatures.value))
+const showCorrectionWording = computed(() => correctionsAvailable(backendFeatures.value))
 
 /**
  * 問い合わせの世代。モデルとモードを続けて変えると問い合わせが並走し、
@@ -478,6 +493,7 @@ async function refreshProfilePreview() {
 
   const features = await probeBackendFeatures()
   if (generation !== previewGeneration) return
+  backendFeatures.value = features
   if (!hasFeature(features, FEATURE_MODEL_PROFILE_PREVIEW)) {
     profilePreviewSupported.value = false
     profilePreview.value = null
@@ -498,8 +514,8 @@ async function refreshProfilePreview() {
 
 const profileOptions: { value: ModelProfilePref; label: string }[] = [
   { value: 'auto', label: '自動(モデルの大きさで決める / 推奨)' },
-  { value: 'standard', label: '標準に固定(詳しい指示・添削あり)' },
-  { value: 'small', label: '軽量に固定(短い指示・日本語訳のみ)' },
+  { value: 'standard', label: '標準に固定(詳しい指示・長めの返答)' },
+  { value: 'small', label: '軽量に固定(短い指示・単語カードなし)' },
 ]
 
 /**
@@ -524,7 +540,7 @@ const modelSubstituted = computed(
   () => profilePreview.value !== null && !profilePreview.value.modelAccepted,
 )
 
-/** 添削・単語が出ない状態か(backend の申告)。 */
+/** 単語カードが出ない状態か(backend の申告)。添削はどちらのモードでも出る(grammar-check の申告があれば)。 */
 const enrichmentReduced = computed(() => profilePreview.value?.enrichment === 'translation-only')
 
 function updateModelProfile(e: Event) {
@@ -586,19 +602,11 @@ function updateLlm(e: Event) {
   // バッジの問い合わせは watchProfilePreviewInputs が行う(二重に聞かない)。
 }
 
-/** 同梱モデル / 追加ダウンロードの案内に使う表示名。 */
+/** 同梱モデルの説明に使う表示名。 */
 const bundledLlmLabel = computed(() => {
   const entry = findCatalogEntry(BUNDLED_LLM_MODEL)
   return entry ? `${entry.label}(${entry.sizeLabel})` : BUNDLED_LLM_MODEL
 })
-const recommendedDownloadLabel = computed(() => {
-  const entry = findCatalogEntry(RECOMMENDED_DOWNLOAD_LLM_MODEL)
-  return entry ? `${entry.label}(${entry.sizeLabel})` : RECOMMENDED_DOWNLOAD_LLM_MODEL
-})
-/** 追加ダウンロードのモデルが既に入っているか(案内を出すかどうか)。 */
-const recommendedDownloadInstalled = computed(() =>
-  ollamaModels.value.some((m) => m.name === RECOMMENDED_DOWNLOAD_LLM_MODEL),
-)
 function updateDarkMode(e: Event) {
   settings.update({
     darkMode: (e.target as HTMLSelectElement).value as 'system' | 'light' | 'dark',
@@ -905,26 +913,20 @@ async function handleDeleteAll() {
             ※ 未取得モデルは下の「インストール済みモデル」セクションの「+ 取得」ボタンで先に DL
           </p>
           <p
-            v-if="!recommendedDownloadInstalled"
-            class="mt-2 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:bg-sky-900/20 dark:text-sky-200"
-          >
-            💡 DMG に同梱しているのは <strong>{{ bundledLlmLabel }}</strong> だけです(ネット無しで
-            すぐ会話できます)。これは小さいモデルなので
-            <strong>軽量モード</strong>で動き、<strong>添削と単語カードは出ません</strong>。
-            メモリに余裕がある Mac なら、下の「インストール済みモデル」で
-            <strong>{{ recommendedDownloadLabel }}</strong>
-            を取得すると<strong>標準モードに戻り、添削と単語カードが出るようになります</strong>。
-          </p>
-          <p
             class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
           >
-            💡 精度重視なら <strong>Gemma 9B</strong> または <strong>Qwen 14B</strong> がおすすめ。
+            💡 同梱の <strong>{{ bundledLlmLabel }}</strong> はネット無しですぐ会話でき、メモリ 8GB
+            の Mac でも動きます。軽量モードで動き、<strong
+              >{{ lightOutputsLabel }}は出ますが、単語カードは出ません</strong
+            >。
+            <template v-if="showCorrectionWording">
+              添削はどのモデルでも、説明をきちんと付けられる直しだけを表示します。
+            </template>
             <strong>Llama 3.2 3B</strong>
-            は軽量・高速ですが、英文の添削や日本語→英語の翻訳が不正確になることがあり、誤った添削・誤訳が表示される場合があります。
-            同梱の
-            <strong>Qwen 2.5 1.5B</strong>
-            はさらに精度が落ちます(添削は出しません)が、日本語訳は安定していて、メモリ 8GB の Mac
-            でも会話になります。 <strong>Llama 3.2 1B</strong>
+            以上のモデルを選ぶと標準モードになりますが、評価では日本語訳は同梱モデルより良くならず、単語カードもほとんど出ませんでした。
+            <strong>Gemma 2 9B</strong> / <strong>Qwen 2.5 14B</strong>
+            は精度を計測していません(重く、メモリ 16GB 以上向けです)。
+            <strong>Llama 3.2 1B</strong>
             は日本語を公式にサポートしておらず日本語訳が崩れやすいため、おすすめしません(入っている場合は
             Qwen 2.5 1.5B への切り替えを推奨します)。
           </p>
@@ -960,8 +962,9 @@ async function handleDeleteAll() {
           <p class="mt-1 text-xs text-text-muted">
             小さいモデル(2B 以下)は長い指示を守れないため、<strong class="text-text"
               >軽量モード</strong
-            >では AI への指示を短くし、会話履歴を減らし、返答を 1〜2
-            文に制限します。添削と単語は出さず、日本語訳だけを作ります(小さいモデルの添削は誤りが多いため)。
+            >では AI への指示を短くし、会話履歴を減らし、返答を 1〜2 文に制限します。{{
+              lightOutputsLabel
+            }}は出ますが、単語カードは出しません(小さいモデルの単語抽出は役に立たないことが多いため)。
           </p>
           <p class="mt-1 text-xs text-text-muted">
             「自動」はモデル名のパラメータ数で判定します(2B 以下 = 軽量)。 上のバッジは<strong
@@ -993,11 +996,9 @@ async function handleDeleteAll() {
             v-else-if="enrichmentReduced"
             class="mt-2 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:bg-sky-900/20 dark:text-sky-200"
           >
-            ℹ️
-            いまの組み合わせでは<strong>添削と単語カードは出ません</strong>(日本語訳は必ず出ます)。
-            小さいモデルの添削は誤りが多く、間違った学習材料を出すより出さない方がよいためです。
-            <strong>{{ recommendedDownloadLabel }}</strong> 以上のモデルを取得して選ぶと、
-            標準モードに戻って添削と単語カードが出るようになります。
+            ℹ️ いまの組み合わせでは<strong>単語カードは出ません</strong>({{
+              lightOutputsLabel
+            }}は出ます)。 小さいモデルの単語抽出は役に立たないことが多いためです。
           </p>
         </div>
       </div>

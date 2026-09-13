@@ -3,9 +3,18 @@ import {
   findCatalogEntry,
   isAllowedLlmModel,
   LLM_CATALOG,
-  RECOMMENDED_DOWNLOAD_LLM_MODEL,
   type LlmCatalogEntry,
 } from '../storage/settings'
+
+/**
+ * メモリに余裕がある Mac で、**既に入っていれば**選ぶモデル(標準モード = 単語カードあり)。
+ *
+ * ⚠️ **薦めるためのものではない**。未取得なら選ばないし、取得も案内しない。
+ * 以前はここを「追加ダウンロード推奨」(RECOMMENDED_DOWNLOAD_LLM_MODEL)として
+ * 取得を案内していたが、評価で 3B の日本語訳は同梱モデルより良くならず、添削も
+ * プロファイルに依らず出るようになったので、案内はやめた(backend/src/shared/llm-models.ts)。
+ */
+const PREFERRED_IF_INSTALLED_ON_HIGH_MEMORY = 'llama3.2:3b'
 
 /**
  * オンボーディングの LLM 選択。**「実在しないモデルを選んだ状態にしない」**ための純関数。
@@ -42,12 +51,6 @@ export interface OnboardingLlmSelection {
   model: string
   /** それが本当にインストール済みか。false = 何も入っていない異常時のみ。 */
   installed: boolean
-  /**
-   * 「メモリに余裕があるので薦めたいが、まだ入っていない」モデル。
-   * null なら案内しない。**これがあっても選択は installed 側のまま**にする
-   * (薦めるのと、取得できないものを選ばせるのは別の話)。
-   */
-  recommendedDownload: string | null
 }
 
 /**
@@ -67,7 +70,7 @@ function preferenceOrder(lowMemory: boolean, memoryKnown: boolean): string[] {
     ...ONBOARDING_LLM_CHOICES.filter((e) => e.lightweight).map((e) => e.tag),
   ]
   if (lowMemory || !memoryKnown) return lightweightFirst
-  return [RECOMMENDED_DOWNLOAD_LLM_MODEL, ...lightweightFirst]
+  return [PREFERRED_IF_INSTALLED_ON_HIGH_MEMORY, ...lightweightFirst]
 }
 
 /**
@@ -77,32 +80,25 @@ function preferenceOrder(lowMemory: boolean, memoryKnown: boolean): string[] {
  *  1. **インストール済みのモデルが 1 つでもあれば、必ずその中から選ぶ。**
  *     ここが崩れると「次へ」が押せない初回起動に戻る。
  *  2. 1 つも無い異常時だけ、同梱モデルを選ぶ(DL ステップがそれを提示する)。
- *  3. メモリに余裕があって 3B が未取得なら `recommendedDownload` に入れる。
- *     選択は入っているものから動かさない。**オフラインでも先へ進めること**が
- *     案内より優先される。
+ *  3. **何も薦めない**。メモリに余裕があっても、未取得のモデルの取得を案内しない
+ *     (3B の日本語訳は同梱モデルより良くならず、添削はプロファイルに依らず出る)。
  */
 export function chooseOnboardingLlm(input: OnboardingLlmInput): OnboardingLlmSelection {
   const usable = input.installed.filter((name) => isAllowedLlmModel(name))
   const order = preferenceOrder(input.lowMemory, input.memoryKnown)
 
-  const highMemory = input.memoryKnown && !input.lowMemory
-  const recommendedDownload =
-    highMemory && !usable.includes(RECOMMENDED_DOWNLOAD_LLM_MODEL)
-      ? RECOMMENDED_DOWNLOAD_LLM_MODEL
-      : null
-
   const preferred = order.find((tag) => usable.includes(tag))
-  if (preferred) return { model: preferred, installed: true, recommendedDownload }
+  if (preferred) return { model: preferred, installed: true }
 
   // 好みの順には無いが何かは入っている(自分で pull した量子化タグ等)。
-  // 「実在するものを選ぶ」方が「薦めたい名前を選ぶ」より強い。
+  // 「実在するものを選ぶ」方が「好みの名前を選ぶ」より強い。
   if (usable.length > 0) {
-    return { model: usable[0]!, installed: true, recommendedDownload }
+    return { model: usable[0]!, installed: true }
   }
 
   // 何も入っていない = 同梱物の展開に失敗しているか、dev 環境。
   // 同梱モデルを選んで DL ステップに取得させる(そこが唯一の出口)。
-  return { model: BUNDLED_LLM_MODEL, installed: false, recommendedDownload }
+  return { model: BUNDLED_LLM_MODEL, installed: false }
 }
 
 export interface OnboardingLlmOption {

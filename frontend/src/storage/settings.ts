@@ -20,7 +20,7 @@ const STORAGE_KEY = 'speaky:settings'
  * - 3: modelProfile(auto / standard / small)を新設。
  *      **キーが増えただけなら版を上げる必要は無い**(merge が欠落を埋める)。
  *      上げているのは 1 点だけのため: 既に `gemma2:2b` を選んでいる人は
- *      'auto' だと small プロファイル(短いプロンプト・短い生成・添削なし)へ
+ *      'auto' だと small プロファイル(短いプロンプト・短い生成・当時は添削なし)へ
  *      落ちて **挙動が変わる**。その人だけ明示的に 'standard' を書き込んで
  *      据え置く。これは冪等でない移行(= この仕組みが存在する理由そのもの)。
  * - 4: v1.1.0 の既定 LLM(`llama3.2:3b`)のまま保存されている人を、同梱の
@@ -100,7 +100,6 @@ export {
   isAllowedLlmModel,
   LLM_CATALOG,
   llmParameterBillions,
-  RECOMMENDED_DOWNLOAD_LLM_MODEL,
   resolveProfileLevel,
   type LlmCatalogEntry,
   type ModelProfileLevel,
@@ -135,8 +134,9 @@ export interface AppSettings {
   /**
    * 会話プロファイルの指定。
    * - 'auto'     : モデル名のパラメータ数から backend が推定(2B 以下 = small)
-   * - 'standard' : 常に従来設定(長いプロンプト / 履歴 10 往復 / 添削あり)
-   * - 'small'    : 常に軽量設定(短いプロンプト / 履歴 4 往復 / 日本語訳のみ)
+   * - 'standard' : 常に従来設定(長いプロンプト / 履歴 10 往復 / 単語カードあり)
+   * - 'small'    : 常に軽量設定(短いプロンプト / 履歴 4 往復 / 単語カードなし)
+   * 添削(grammar-check)はどちらでも出る。
    */
   modelProfile: ModelProfilePref
   whisperModel: WhisperModel
@@ -189,8 +189,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // 既定が同梱物でないと、ネットの無い初回起動が「選ばれているモデルを取得できない」
   // 行き止まりになる。v1.2.0 で 3B → llama3.2:1b、次のリリースで日本語訳の品質のため
   // qwen2.5:1.5b に変更した(理由と評価の数字は llm-models.ts の BUNDLED_LLM_MODEL)。
-  // 1.5B は自動判定で軽量モード(短い返答 / 添削・単語なし)になる — これは意図した
-  // 結果で、メモリに余裕のある人には設定画面から 3B の取得を案内する。
+  // 1.5B は自動判定で軽量モード(短い返答 / 日本語訳と添削あり / 単語カードなし)になる。
+  // これは意図した結果で、どの画面も追加ダウンロードは薦めない(3B の日本語訳は良くならなかった)。
   llmModel: DEFAULT_LLM_MODEL,
   // 新規ユーザーは自動判定。1B / 1.5B を選べば自動で軽量モードになる。
   modelProfile: 'auto',
@@ -285,7 +285,7 @@ export function loadSettings(): AppSettings {
       }
     }
     // --- スキーマ移行(2 → 3): 既存ユーザーの会話プロファイルを据え置く ---
-    // v2 までは全モデルが standard 相当(長いプロンプト / 履歴 10 往復 / 添削あり)
+    // v2 までは全モデルが standard 相当(長いプロンプト / 履歴 10 往復 / 当時は添削あり)
     // で動いていた。新設の 'auto' は 2B 以下を small へ落とすので、
     // **既に 2B を選んでいた人だけ黙って挙動が変わる**。その人には明示的に
     // 'standard' を書き込んで現状維持し、それ以外(新規含む)は 'auto' にする。

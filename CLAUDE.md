@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （`npm test` = frontend → backend の順に vitest。**frontend 281 件 / backend 459 件**）
+   （`npm test` = frontend → backend の順に vitest。**frontend 281 件 / backend 467 件**）
    backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
    LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
    `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
@@ -217,6 +217,17 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   - 翻訳（ja→en / en→ja）の stop に **`'\n\n'` を入れない**。出力が空行で始まるモデルは
     1 文字も出さずに止まり、温度 0 では引き直しても訳が空のままになる。2 段落目以降は
     `firstTranslationParagraph` が捨てる（検証に続きを渡さない）。
+  - **翻訳出力の取り出しは「曖昧なら弾いて引き直す。曖昧なものは決して通さない」**
+    （`services/translation.ts`）。正しい訳を弾いた損は引き直し 1 回ぶんの待ちだけだが、
+    間違ったものを通すと学習者は **訳ではないもの（モデルの返事・半分だけの訳）を訳として読む**。
+    段落をつなげる / 原文の繰り返しを読み飛ばす / 先頭の段落の文の数で足りるとみなす、
+    といった推測はレビューのたびに新しい誤採用が見つかったので全部やめた。推測は足すより消す。
+    - en→ja は英文の改行・空行を空白にして **1 段落にしてから** 頼み、その形で検証する
+      （`normalizeTranslationSource`）。だから検証の「空行を含む訳は落とす」に例外は無い
+      （会話 JSON の `reply_ja` に空行があれば、`reply_en` に空行があっても落として en→ja に回す）。
+    - 段落は 1 つだけ選ぶ（前置き・相づち・見出しの段落だけ読み飛ばす）。後ろに日本語
+      （後ろの段落 / 2 行目 / 生成上限での切断）があり、訳の文末の数が英文の文の数より少なければ弾く。
+    - `done_reason === 'length'` で選んだ段落が出力の最後の段落なら弾く（訳の中で切れている）。
   - 日本語訳の検証（`shared/text-guards.ts`）の長さ上限は **max(18, 英文 × 0.9)**。
     下限 12 は「Wow.」→「わあ、それはすごいですね！」を落としていた。20 にすると
     較正ケース（ちょうど 20 文字の崩れた訳）が通るので 18。

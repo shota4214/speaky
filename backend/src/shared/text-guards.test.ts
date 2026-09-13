@@ -565,15 +565,13 @@ describe('judgeJapaneseTranslation(2 段落目)', () => {
     expect(judgeJapaneseTranslation('\n\nいいね！\n\n', 'Nice!')).toBe('ok')
   })
 
-  it('英文自体に空行があれば、空行を含む訳を落とさない(波括弧の規則と同じ)', () => {
+  it('英文自体に空行があっても、空行を含む訳は落とす(英文は 1 段落にしてから訳すので例外にしない)', () => {
     const en = 'Hi!\n\nHow are you today?'
-    expect(judgeJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe('ok')
+    expect(judgeJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe('multi-paragraph')
     expect(
       judgeJapaneseTranslation('やあ！\r\n\r\n今日の調子はどう？', 'Hi!\r\n\r\nHow are you?'),
-    ).toBe('ok')
-    expect(acceptJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe(
-      'やあ！\n\n今日の調子はどう？',
-    )
+    ).toBe('multi-paragraph')
+    expect(acceptJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe('')
     // 英文の空行が絵文字だけの行の跡なら、英文に空行は無い扱い
     expect(judgeJapaneseTranslation('いいね！\n\nそれで', 'Nice!\n😊\nSo')).toBe('multi-paragraph')
   })

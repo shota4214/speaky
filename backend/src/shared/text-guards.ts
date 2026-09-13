@@ -118,7 +118,7 @@ function codePointLength(text: string): number {
  *     (13 文字)のような短い相づちの自然な訳まで落としていたので 18 に上げた。
  *     長い英文の続きを捕まえるのは比率 0.9 の方なので、比率は変えていない。
  *  6) 英文に無い ASCII の波括弧 { } を含まない(壊れた JSON の残骸)
- *  7) 空行を含まない(訳の後ろに 2 段落目を書いた出力)。英文自体に空行があれば除外
+ *  7) 空行を含まない(訳の後ろに 2 段落目を書いた出力)。英文自体に空行があっても除外しない
  *     6 と 7 は評価の後に足した規則で、**較正ケースの判定を変えないよう最後に置く**
  *     (「」} </td>…」の較正ケースは 4 で latin-heavy のまま)。
  *
@@ -160,13 +160,14 @@ export function judgeJapaneseTranslation(ja: string, en: string): JapaneseTransl
   //    角括弧は見ない: 「[笑]」は訳として普通にありうる。
   if (/[{}]/.test(t) && !/[{}]/.test((en ?? '').normalize('NFKC'))) return 'json-remnant'
   // 7) 空行を含む = 訳の後ろに 2 段落目(返事の続き・補足説明)を書いている。
-  //    翻訳経路は firstTranslationParagraph で最初の段落に切ってから来るので、
+  //    翻訳経路は extractTranslationParagraphs で 1 段落に切ってから来るので、
   //    ここで落ちるのは JSON 経路(会話の reply_ja / 標準プロファイルの enrich)の
   //    出力だけで、落ちたものは en→ja 翻訳で訳し直される。
-  //    **英文自体に空行があるときは落とさない**(6 の波括弧と同じ扱い)。
-  //    「Hi!\n\nHow are you today?」の正しい訳は「やあ！\n\n今日の調子はどう？」で、
-  //    これを落とすと訳し直しも同じ形になり、どちらも捨てられて訳が出なくなる。
-  if (hasBlankLine(t) && !hasBlankLine(stripEmojiLines(en ?? ''))) return 'multi-paragraph'
+  //    **英文自体に空行があっても例外にしない**(6 の波括弧とは扱いが違う)。
+  //    en→ja 翻訳は英文を 1 段落にしてから頼む(translation.ts の normalizeTranslationSource)
+  //    ので、訳に空行が入る正当な理由は無い。空行のある訳が「訳の 2 段落目」なのか
+  //    「訳の後ろに書いた返事」なのかは文字だけでは分からず、曖昧なものは通さない。
+  if (hasBlankLine(t)) return 'multi-paragraph'
   return 'ok'
 }
 

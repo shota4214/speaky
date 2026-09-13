@@ -132,6 +132,19 @@ describe('finalizeReply', () => {
     }
   })
 
+  it('reply_en に空行があっても、空行のある reply_ja は空にする(1 段落にした英文での en→ja 翻訳に回る)', () => {
+    // standard は文数で英文を切らないので、空になるのは検証(multi-paragraph)だけによる
+    const r = finalizeReply(
+      reply({
+        reply_en: 'Curry is so good!\n\nDid you make it spicy?',
+        reply_ja: 'カレーはおいしいね！\n\n辛くしたの？',
+      }),
+      MODEL_PROFILES.standard,
+    )
+    expect(r?.reply_en).toBe('Curry is so good!\n\nDid you make it spicy?')
+    expect(r?.reply_ja).toBe('')
+  })
+
   it('モデルが JSON に書いた mode は使わず、このターンのモードにする', () => {
     expect(finalizeReply(reply({ mode: 'mixed' }), MODEL_PROFILES.small, 'normal')?.mode).toBe(
       'normal',

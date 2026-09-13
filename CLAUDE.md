@@ -32,9 +32,10 @@
 
 ## 🔴 次にやるべき最優先タスク（このセッションからの引き継ぎ）
 
-現在地: **v1.1.0（低スペック機向けパフォーマンス対応）をブランチ `perf/low-spec-tier2` で作業中**。
-v1.0.0 は一般公開済み。Tier1（Whisper 既定の縮小・無音検出短縮・whisper.cpp の
-`-DGGML_NATIVE=OFF` ビルド・`verify:arm64` 拡張）は `perf/low-spec-tier1` でマージ済み。
+現在地: **v1.2.1 をリリースビルド済み（2026-09-13）。残りは M1 MacBook Air での実機検証だけ**。
+v1.0.0 は一般公開済み。v1.2.0 は M1 での検証で日本語訳の崩れが見つかり、公開していない。
+低スペック機向けの作業は Tier1（#23）・Tier2（#24）、その後の修正は #26〜#30 ですべて main にマージ済み。
+検証が通ったら DMG を配布し、`update-channel/latest.json` を更新する（この時点で既存ユーザーに通知が出る）。
 
 Tier2 で入ったもの（すべてこのブランチ内）:
 
@@ -50,17 +51,20 @@ Tier2 で入ったもの（すべてこのブランチ内）:
 - **同梱 LLM を Llama 3.2 3B → 1B に変更**（DMG 約 2.67GB → 約 1.9GB(v1.2.0 実測)）
 - **同梱 LLM を `llama3.2:1b` → `qwen2.5:1.5b` に変更**（`feat/bundle-qwen2.5-1.5b`。
   M1 実機で 1B の日本語訳が崩れたため。理由と数字は下の「同梱 LLM」節。
-  DMG は **約 1.6GB の見積もり・未実測**（モデルが約 0.33GB 小さくなった分を引いただけ。
-  次のビルド後に実測値へ直すこと）)
+  DMG は **1.71GB（1,714,488,337 バイト、v1.2.1 実測）**)
 - 設定画面の「会話モード」バッジを backend への問い合わせ結果に変更
 
-### 残っているのは 1 つだけ: リリースビルド + **M1 MacBook Air 実機検証**
+### 残っているのは 1 つだけ: **M1 MacBook Air 実機検証**（v1.2.1 はビルド済み）
 
-コードは完成していて全検証が pass しているが、**実機で確かめていない**。
+v1.2.1 の DMG は `electron/dist-app/Speaky-v1.2.1.dmg`。ビルド後に次を確認済み:
+署名（Developer ID）・公証・staple（アプリと DMG の両方）/ Gatekeeper accepted /
+同梱 LLM は `qwen2.5/1.5b` だけ（`ollama-data` 940MB）/ Whisper は small だけ /
+whisper-cli の M5 専用命令 0 / バージョン 1.2.1。**実機で確かめていない**のは下の項目。
+再ビルドする場合の手順も下に残す。
 
 ```bash
 . ~/.nvm/nvm.sh && nvm use 22
-# ⚠️ 最初に root と electron の package.json を **v1.2.0 より上**に bump すること。
+# ⚠️ v1.2.1 には bump 済み（#30）。次にリリースするときも、必ず root と electron の package.json の version を上げること。
 #    このリリースも **version bump が必須**。同梱 LLM を llama3.2:1b → qwen2.5:1.5b に
 #    差し替えた。同梱モデルの blob / manifest 自体は ensureBundledOllamaModel が
 #    version gate と独立に足すが、既定モデル（= BUNDLED_LLM_MODEL）とカタログは
@@ -70,7 +74,7 @@ Tier2 で入ったもの（すべてこのブランチ内）:
 npm run prep:vendor:whisper-cli -w backend   # -DGGML_NATIVE=OFF で作り直す
 npm run prep:vendor:llama-model -w electron  # qwen2.5:1.5b を vendor + 旧 llama3.2 ファミリーの残骸を掃除
 npm run verify:arm64 -w backend              # ここが OK になってから dist
-npm run dist                                 # DMG ~1.6GB(見積もり・未実測)、5〜10分 + 公証で計 15〜40分
+npm run dist                                 # DMG 1.71GB(v1.2.1 実測)、prep + ビルド + 公証で計 20 分前後(v1.2.1 実績)
 
 # vendor 後に「旧同梱の llama3.2 が残っていないこと」を目で確認する（DMG が太る）
 ls electron/build-resources/ollama-data/manifests/registry.ollama.ai/library/
@@ -166,12 +170,12 @@ du -sh electron/build-resources/ollama-data/
     - 次のどれかで会話が戻る: 設定で `llama3.2:3b` を選び直す / `ollama pull qwen2.5:1.5b` /
       自前の Ollama を止めて Speaky を再起動する（同梱の Ollama が起動し、同梱モデルが使われる）
 
-## 同梱物の事実（LLM 以外は実機ビルドで確認済み）
+## 同梱物の事実（v1.2.1 の実機ビルドで確認済み）
 
 DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべて同梱**（初回 DL 不要）:
 
 - LLM: **Qwen 2.5 1.5B**（`qwen2.5:1.5b`。`ollama-data/blobs/` + manifest）。
-  **次のビルドで実機確認が必要**（v1.1.0 までは `llama3.2:3b`、v1.2.0 は `llama3.2:1b` を同梱して実機確認済み）。
+  v1.2.1 のビルドで、同梱が `qwen2.5/1.5b` だけ（`ollama-data` 940MB）であることを確認済み（v1.1.0 までは `llama3.2:3b`、v1.2.0 は `llama3.2:1b`）。
   同梱を差し替えた理由と、既存ユーザーのモデルが消えない理由は下の「同梱 LLM」節を参照。
 - Whisper small（`ggml-small.bin` 約488MB。低スペック機対策で medium から変更）
 - whisper-cli / ffmpeg-static

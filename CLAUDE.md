@@ -238,7 +238,8 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
     `ensureBundledOllamaModel` が走らず同梱モデルが届かない = 切り替えると毎ターン MODEL_NOT_FOUND）。
     ローダーは `bundledLlmMigration = 'pending'` を付けて版を上げるだけで、
     `utils/bundled-llm-migration.ts` が起動後に `/api/models/ollama` を見て決める
-    （起動は `components/BundledLlmMigrationNotice.vue`、文言は `utils/bundled-llm-migration-notice.ts`。**文言は暫定**）:
+    （起動は `components/BundledLlmMigrationNotice.vue`、文言は `utils/bundled-llm-migration-notice.ts`。日本語訳が安定し速くなる / 返答が短くなり単語カードは出ない /
+    戻し方を伝え、**添削には触れない**（3B でも実質出ておらず、出るかは backend 次第のため。テストが固定）:
     - 同梱モデルあり かつ backend の既定 = 同梱モデル → 切り替え + `modelProfile='auto'` + 通知（`'notice'`）。閉じたら `'idle'`
     - 一覧に `llama3.2:3b` は載っているが同梱モデルなし → **切り替えない・通知も出さない・再確認もしない**（`'idle'`。
       自前 Ollama の人が後で qwen を pull したときに黙って 3B から切り替えないため）

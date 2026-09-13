@@ -440,9 +440,21 @@ describe('移行通知の文言', () => {
     expect(BUNDLED_LLM_NOTICE.howToRevert).toContain(LEGACY_DEFAULT_LLM_MODEL)
   })
 
-  // 添削機能は評価中。暫定の文言で約束しない。
-  it('添削・単語カードについて何も約束しない', () => {
+  // 同梱モデルは軽量モードで動き、単語カードは出ない。切り替わった人が
+  // 「壊れた」と思わないよう、出なくなることを必ず伝える。
+  it('単語カードが表示されなくなることを伝える', () => {
+    expect(BUNDLED_LLM_NOTICE.changes).toMatch(/単語カード[^。]*表示されなく/)
+  })
+
+  // 添削には触れない。3B の人も実質的に添削は出ておらず、軽量モードで添削が出るかは
+  // backend 側の対応次第なので、「出る」「出ない」のどちらを書いても誤解を招く。
+  it('添削について何も言わない', () => {
     const all = Object.values(BUNDLED_LLM_NOTICE).join('\n')
-    expect(all).not.toMatch(/添削|単語/)
+    expect(all).not.toMatch(/添削/)
+  })
+
+  // 戻し方は設定画面の実際の表記(「モデル」カードの「LLM」)に合わせる。
+  it('戻し方は設定画面の LLM 欄を指す', () => {
+    expect(BUNDLED_LLM_NOTICE.howToRevert).toContain('「LLM」')
   })
 })

@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express'
+import { topicPromptLabel } from '../shared/topics.js'
 import { endAborted, isClientAbort, watchClientAbort } from '../services/client-abort.js'
 import { chatWithOllama, OllamaError, type OllamaChatMessage } from '../services/ollama.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
@@ -32,7 +33,7 @@ summarizeRouter.post('/summarize', async (req: Request, res: Response) => {
     .map((t) => `${t.role === 'user' ? 'User' : 'AI'}: ${t.text}`)
     .join('\n')
 
-  const topicLine = topic ? `Topic: ${topic}\n\n` : ''
+  const topicLine = topic ? `Topic: ${topicPromptLabel(topic)}\n\n` : ''
 
   const userPrompt = `${topicLine}Transcript:\n${dialogText}\n\nSummarize the above in Japanese (1-2 sentences).`
 

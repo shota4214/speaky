@@ -63,6 +63,27 @@ export interface ModelProfile {
    * **学習者を積極的に間違った方向へ引っ張る**。日本語訳は製品の約束なので残す。
    */
   enrichment: 'full' | 'translation-only'
+  /**
+   * 英語の返答をこの文数で打ち切る(null = 打ち切らない)。
+   * small は「1〜2 文」を指示しても qwen2.5:1.5b が挨拶 12/12 で破ったため 2。
+   * standard(3B 以上)は長さを守れているので打ち切らない。
+   */
+  maxReplySentences: number | null
+  /**
+   * 最初の挨拶(opening)だけに使う文数の上限(null = 打ち切らない)。
+   * small で 2 文にすると挨拶が「Hello! How are you today?」で切れて、
+   * 学習者が選んだ **トピックの質問が落ちる**(qwen2.5:1.5b は「Hello! + 一般的な
+   * 挨拶の質問 + トピックの質問」の 3 文で書くことが多い)。トピックは会話を
+   * 始めるためにあるので、opening だけ 3 文まで許す。
+   * 「2 文ちょうど(挨拶 + トピックの質問)」をプロンプトで指示する案も実モデルで
+   * 測ったが、トピックの質問はかえって減った(ストリーミング 30/36 → 20/36)。
+   */
+  maxOpeningSentences: number | null
+  /**
+   * 英語の返答から非ラテン文字体系(漢字・かな・ハングル・キリル等)を含む文を落とすか。
+   * 小型モデルは英語の返答に日本語や他言語を混ぜることがある。
+   */
+  dropNonLatinReply: boolean
 }
 
 const STANDARD_PROFILE: ModelProfile = {
@@ -79,6 +100,9 @@ const STANDARD_PROFILE: ModelProfile = {
   topP: 0.92,
   repeatPenalty: 1.15,
   enrichment: 'full',
+  maxReplySentences: null,
+  maxOpeningSentences: null,
+  dropNonLatinReply: false,
 }
 
 const SMALL_PROFILE: ModelProfile = {
@@ -102,6 +126,9 @@ const SMALL_PROFILE: ModelProfile = {
   // 小型モデルは同じ言い回し("That sounds great!")に張り付きやすい。
   repeatPenalty: 1.2,
   enrichment: 'translation-only',
+  maxReplySentences: 2,
+  maxOpeningSentences: 3,
+  dropNonLatinReply: true,
 }
 
 export const MODEL_PROFILES: Record<ModelProfileLevel, ModelProfile> = {
@@ -141,8 +168,8 @@ export interface ResolvedTurnModel {
  * (`/api/model-profile/preview`)だけが解決後の名前から決めていた。
  * 両者が一致するのは「リクエストされた名前が allowlist を通るとき」だけで、
  * 通らないとき — たとえば設定に古い `mistral:7b` が残っている人 — は
- *   - プレビュー: 差し替え先(同梱 1B)のプロファイル = 軽量
- *   - 会話:       同梱 1B を **7B 用の長いプロンプト** で回す = 標準
+ *   - プレビュー: 差し替え先(同梱の小型モデル)のプロファイル = 軽量
+ *   - 会話:       同梱の小型モデルを **7B 用の長いプロンプト** で回す = 標準
  * という食い違いが出る。**バッジが嘘になるのは、まさにこのバッジが
  * 暴くために存在する状況**(黙ってモデルが差し替わったとき)だった。
  * 解決とプロファイル決定を 1 つの関数に閉じ込めて、呼び分けの余地を無くす。

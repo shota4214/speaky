@@ -10,7 +10,11 @@ import {
 } from './request-budget.js'
 import { chatAttempts, openingAttempts } from '../routes/chat.js'
 import { EXTRACT_FACTS_ATTEMPTS } from '../routes/extract-facts.js'
-import { TRANSLATION_ATTEMPTS } from '../services/translation.js'
+import {
+  EN_TO_JA_ATTEMPTS,
+  EN_TO_JA_FRESH_ATTEMPTS,
+  TRANSLATION_ATTEMPTS,
+} from '../services/translation.js'
 import { MODEL_PROFILES } from '../services/model-profile.js'
 
 /**
@@ -33,17 +37,19 @@ describe('リトライ梯子とクライアント締め切りの結合', () => {
     expect(chatAttempts(MODEL_PROFILES.small)).toHaveLength(OLLAMA_ATTEMPTS.chat)
     expect(openingAttempts(MODEL_PROFILES.standard)).toHaveLength(OLLAMA_ATTEMPTS.opening)
     expect(TRANSLATION_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.translation)
+    expect(EN_TO_JA_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.translationEnToJa)
+    expect(EN_TO_JA_FRESH_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.translationEnToJa)
     expect(EXTRACT_FACTS_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.extractFacts)
   })
 
   it('各ルートの最悪値が「予算 × 試行回数 + 後追いの補完」になっている', () => {
-    // /api/chat: 会話 LLM 2 回 + reply_ja が空だったときの en→ja 補完 1 回
-    expect(BACKEND_WORST_CASE_MS.chat).toBe(90_000 * 2 + 60_000)
-    expect(BACKEND_WORST_CASE_MS.opening).toBe(90_000 * 2 + 60_000)
+    // /api/chat: 会話 LLM 2 回 + reply_ja が空 / 検証落ちのときの en→ja 補完(最大 2 回)
+    expect(BACKEND_WORST_CASE_MS.chat).toBe(90_000 * 2 + 60_000 * 2)
+    expect(BACKEND_WORST_CASE_MS.opening).toBe(90_000 * 2 + 60_000 * 2)
     // /api/chat の日本語入力(japanese_help / mixed)は翻訳経路だけを通る
     expect(BACKEND_WORST_CASE_MS.chatTranslate).toBe(60_000 * 2)
-    // /api/chat/enrich: JSON 生成 1 回 + 日本語訳が空だったときの補完 1 回
-    expect(BACKEND_WORST_CASE_MS.enrich).toBe(60_000 + 60_000)
+    // /api/chat/enrich: JSON 生成 1 回 + 日本語訳が空 / 検証落ちのときの補完(最大 2 回)
+    expect(BACKEND_WORST_CASE_MS.enrich).toBe(60_000 + 60_000 * 2)
     expect(BACKEND_WORST_CASE_MS.summarize).toBe(60_000)
     expect(BACKEND_WORST_CASE_MS.extractFacts).toBe(60_000 * 2)
   })

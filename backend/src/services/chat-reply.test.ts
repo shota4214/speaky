@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseChatReply, salvageChatReply } from './chat-reply.js'
+import { isContractPlaceholder, parseChatReply, salvageChatReply } from './chat-reply.js'
 
 /**
  * 返答の救済ルール。ここで一番大事なのは「切れた英文を返さない」こと:
@@ -89,5 +89,48 @@ describe('parseChatReply', () => {
 
   it('reply_en が無ければ null', () => {
     expect(parseChatReply('{"reply_ja":"訳だけ"}', 'normal')).toBeNull()
+  })
+})
+
+describe('parseChatReply のキーの空白と例示文言', () => {
+  it('キーの前後の空白を無視して読む(llama3.2:1b の " reply_ja")', () => {
+    const raw =
+      '{"reply_en":"Nice to meet you!", " reply_ja":"はじめまして！", "feedback":null,"vocabulary":[], "mode":"normal"}'
+    expect(parseChatReply(raw, 'normal')?.reply_ja).toBe('はじめまして！')
+  })
+
+  it('空白なしの正規のキーがあればそちらを優先する', () => {
+    const raw = '{"reply_en":"Hi!","reply_ja":"やあ！"," reply_ja":"ちがう"}'
+    expect(parseChatReply(raw, 'normal')?.reply_ja).toBe('やあ！')
+  })
+
+  it('契約の例示文言をそのまま返したら失敗扱い(次の attempt へ)', () => {
+    const raw =
+      '{"reply_en":"Your 1-2 sentence English reply","reply_ja":"映画を観ることが趣味です。","feedback":null,"vocabulary":[],"mode":"normal"}'
+    expect(parseChatReply(raw, 'normal')).toBeNull()
+    expect(salvageChatReply(raw, 'normal')).toBeNull()
+    // 切断された JSON からの救済でも拾わない
+    expect(
+      salvageChatReply('{"reply_en":"your 1-2 sentence English reply","reply_ja":"', 'normal'),
+    ).toBeNull()
+  })
+
+  it('配列など、オブジェクト以外の JSON は null', () => {
+    expect(parseChatReply('["reply_en"]', 'normal')).toBeNull()
+  })
+})
+
+describe('isContractPlaceholder', () => {
+  it.each([
+    'your 1-2 sentence English reply',
+    'Your 1-2 sentence English reply.',
+    // 実モデル評価で llama3.2:1b が実際に書いた変形
+    'Your 1 sentence English reply',
+    'string - your English response',
+  ])('例示文言: %s', (text) => {
+    expect(isContractPlaceholder(text)).toBe(true)
+  })
+  it.each(['Your English is really good!', 'I like your reply.'])('普通の返答: %s', (text) => {
+    expect(isContractPlaceholder(text)).toBe(false)
   })
 })

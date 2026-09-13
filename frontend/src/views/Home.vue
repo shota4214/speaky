@@ -6,6 +6,7 @@ import BaseButton from '../components/BaseButton.vue'
 import BaseCard from '../components/BaseCard.vue'
 import LevelBadge from '../components/LevelBadge.vue'
 import TopicChip from '../components/TopicChip.vue'
+import { BUILT_IN_TOPICS } from '../../../backend/src/shared/topics'
 import { conversationsRepo } from '../db/repos/conversations'
 import { customTopicsRepo } from '../db/repos/customTopics'
 import type { CustomTopic, Level } from '../db/types'
@@ -34,15 +35,15 @@ interface TopicOption {
   custom: boolean
 }
 
-const defaultTopics: TopicOption[] = [
-  { key: 'daily', label: '日常会話', topicValue: 'daily', custom: false },
-  { key: 'business', label: 'ビジネス', topicValue: 'business', custom: false },
-  { key: 'travel', label: '旅行', topicValue: 'travel', custom: false },
-  { key: 'shopping', label: 'ショッピング', topicValue: 'shopping', custom: false },
-  { key: 'restaurant', label: 'レストラン', topicValue: 'restaurant', custom: false },
-  { key: 'hobby', label: '趣味', topicValue: 'hobby', custom: false },
-  { key: 'news', label: 'ニュース話題', topicValue: 'news', custom: false },
-]
+// 組み込みトピックの一覧は backend/src/shared/topics.ts が唯一の出典。
+// backend はキー('daily')をプロンプト用の英語('daily life')に置き換えるので、
+// ここで手書きすると置き換え表から漏れたトピックが「単語そのもの」として渡る。
+const defaultTopics: TopicOption[] = BUILT_IN_TOPICS.map((t) => ({
+  key: t.key,
+  label: t.label,
+  topicValue: t.key,
+  custom: false,
+}))
 
 const customTopics = ref<CustomTopic[]>([])
 const allTopics = computed<TopicOption[]>(() => [

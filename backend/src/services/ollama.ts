@@ -46,6 +46,7 @@ type OllamaChatRequest = {
     repeat_penalty?: number
     num_predict?: number
     num_ctx?: number
+    stop?: string[]
   }
 }
 
@@ -95,6 +96,12 @@ export type OllamaChatResponse = {
   created_at: string
   message: { role: string; content: string }
   done: boolean
+  /**
+   * 生成が止まった理由。`'stop'`(自然に終わった / stop 文字列)、`'length'`
+   * (num_predict の上限で切れた)など。古い Ollama は返さないので省略可。
+   * en→ja 翻訳は `'length'` で切れた訳を弾くのに使う(services/translation.ts)。
+   */
+  done_reason?: string
 }
 
 export type OllamaErrorCode = 'NOT_RUNNING' | 'MODEL_NOT_FOUND' | 'TIMEOUT' | 'ABORTED' | 'UNKNOWN'
@@ -165,6 +172,11 @@ export interface ChatWithOllamaOptions {
    * 省略時は既定の 4096。env の OLLAMA_NUM_CTX があればそちらが勝つ。
    */
   numCtx?: number
+  /**
+   * 生成を止める文字列。翻訳プロンプトの区切りタグ(`<en>` 等)や空行で止めて、
+   * 小型モデルが訳の後に「次の例」や説明を書き続けるのを防ぐ。
+   */
+  stop?: string[]
   model?: string
   /**
    * 最初のトークンが返るまでの許容時間 (ms)。0 で無効化。既定 60 秒。
@@ -267,6 +279,7 @@ export async function chatWithOllama(
         seed,
         repeat_penalty: repeatPenalty,
         ...(options.numPredict !== undefined && { num_predict: options.numPredict }),
+        ...(options.stop !== undefined && options.stop.length > 0 && { stop: options.stop }),
       },
     }
     if (jsonFormat) body.format = 'json'
@@ -420,6 +433,7 @@ export async function startOllamaChatStream(
         seed,
         repeat_penalty: repeatPenalty,
         ...(options.numPredict !== undefined && { num_predict: options.numPredict }),
+        ...(options.stop !== undefined && options.stop.length > 0 && { stop: options.stop }),
       },
     }
     if (jsonFormat) body.format = 'json'

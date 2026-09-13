@@ -12,6 +12,7 @@ import type { Message, VocabItem } from '../db/types'
 import { useConversationStore } from '../stores/conversation'
 import { useSettingsStore } from '../stores/settings'
 import { useVocabularyStore } from '../stores/vocabulary'
+import { storedJapaneseTranslation } from '../utils/stored-translation'
 
 const router = useRouter()
 const conversation = useConversationStore()
@@ -242,9 +243,17 @@ function isEnrichPending(message: Message): boolean {
 function isEnrichFailed(message: Message): boolean {
   return loop.enrichFailedIds.value.has(message.id)
 }
+/**
+ * 日本語訳の欄に「参考訳」と添えるか。AI の返答の訳は小型モデルだと
+ * 3 分の 1 程度が部分的にしか合っていないので、正確な訳のように見せない。
+ * 日本語入力のターン(「〜と言えますよ」)は訳ではなく案内文なので付けない。
+ */
+function isReferenceTranslation(message: Message): boolean {
+  return message.mode !== 'japanese_help' && message.mode !== 'mixed'
+}
 function showJapaneseLine(message: Message): boolean {
   if (!settings.settings.showJapanese) return false
-  return !!message.replyJa || isEnrichPending(message) || isEnrichFailed(message)
+  return !!storedJapaneseTranslation(message) || isEnrichPending(message) || isEnrichFailed(message)
 }
 async function retryJapanese(message: Message) {
   await loop.retryEnrich(message.id)
@@ -270,7 +279,7 @@ async function retryJapanese(message: Message) {
               <span
                 v-if="loop.activeProfile.value === 'small'"
                 class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300"
-                title="小さいモデル向けの設定で動いています(返答は1〜2文・添削と単語は出ません)"
+                title="小さいモデル向けの設定で動いています(返答は1〜2文・最初の挨拶だけは3文まで・添削と単語は出ません)"
               >
                 🪶 軽量モード
               </span>
@@ -326,7 +335,14 @@ async function retryJapanese(message: Message) {
               >
                 <div class="text-sm">{{ m.replyEn }}</div>
                 <div v-if="showJapaneseLine(m)" class="mt-1 text-xs text-text-muted">
-                  <template v-if="m.replyJa">{{ m.replyJa }}</template>
+                  <template v-if="storedJapaneseTranslation(m)">
+                    <span
+                      v-if="isReferenceTranslation(m)"
+                      class="mr-1 rounded border border-border px-1 text-[10px]"
+                      title="AI による参考の訳です。細かいニュアンスは違うことがあります"
+                      >参考訳</span
+                    >{{ storedJapaneseTranslation(m) }}
+                  </template>
                   <template v-else-if="isEnrichPending(m)">
                     <span class="opacity-60">日本語訳を準備中...</span>
                   </template>

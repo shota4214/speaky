@@ -476,7 +476,8 @@ function complete() {
             </p>
             <p class="mt-1 text-xs text-text-muted">
               2B 以下のモデルを選ぶと <strong class="text-text">軽量モード</strong> で動きます(AI
-              への指示を短くし、返答を 1〜2 文に制限。<strong class="text-text"
+              への指示を短くし、返答を 1〜2 文に制限(最初の挨拶だけは 3 文まで)。<strong
+                class="text-text"
                 >添削と単語カードは出ず</strong
               >、日本語訳だけを作ります)。 同梱の {{ bundledLlmName }} もこれに当たります —
               小さいモデルの添削は誤りが多く、 間違った学習材料を出すより出さない方がよいためです。

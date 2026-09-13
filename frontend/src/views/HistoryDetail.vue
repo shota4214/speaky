@@ -10,6 +10,8 @@ import { conversationsRepo } from '../db/repos/conversations'
 import { messagesRepo } from '../db/repos/messages'
 import type { Conversation, Message } from '../db/types'
 import { chatEnrich, probeBackendFeatures } from '../services/api'
+import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
+import { storedJapaneseTranslation, withEffectiveAiModes } from '../utils/stored-translation'
 import { useSettingsStore } from '../stores/settings'
 import {
   FEATURE_CHAT_ENRICH,
@@ -32,6 +34,12 @@ const speechQueue = useSpeechQueue(tts)
 
 const conversation = ref<Conversation | null>(null)
 const messages = ref<Message[]>([])
+/**
+ * 表示用の行。AI の行の mode は直前のユーザーの行から導き直す
+ * (古いバージョンはモデルが書いた mode を保存していた。withEffectiveAiModes の注記)。
+ * 「参考訳」の札・訳の検証・再取得ボタンはすべてこちらの mode で決める。
+ */
+const displayMessages = computed(() => withEffectiveAiModes(messages.value))
 const loading = ref(true)
 
 /**
@@ -64,9 +72,18 @@ onMounted(async () => {
   backendFeatures.value = await probeBackendFeatures()
 })
 
-/** 日本語訳が欠けている AI 返答か(= 再取得の対象)。 */
+/** 日本語訳に「参考訳」と添えるか(日本語入力ターンの案内文には付けない)。 */
+function isReferenceTranslation(m: Message): boolean {
+  return m.mode !== 'japanese_help' && m.mode !== 'mixed'
+}
+
+/**
+ * 日本語訳が欠けている AI 返答か(= 再取得の対象)。
+ * 検証を通らない保存済みの訳(v1.2.0 が保存したローマ字など)も欠けている扱い
+ * (storedJapaneseTranslation の注記)。
+ */
 function isJapaneseMissing(m: Message): boolean {
-  return m.role === 'ai' && !!m.replyEn?.trim() && !m.replyJa?.trim()
+  return m.role === 'ai' && !!m.replyEn?.trim() && !storedJapaneseTranslation(m).trim()
 }
 
 /** そのメッセージの直前のユーザー発話(添削の材料)。 */
@@ -91,17 +108,23 @@ async function retryJapanese(message: Message): Promise<void> {
   setFlag(retryingIds, message.id, true)
   setFlag(retryFailedIds, message.id, false)
   try {
-    const enrichment = await chatEnrich(message.replyEn, previousUserText(message.id), {
-      aiName: settings.settings.aiCharacter.name,
-      level: conversation.value?.level,
-      topic: conversation.value?.topic,
-      model: settings.settings.llmModel,
-      ...(hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)
-        ? { modelProfile: settings.settings.modelProfile }
-        : {}),
-    })
-    // 訳が空の enrich は成功ではない。会話画面(applyEnrichment)と同じ判定にする。
-    if (!enrichment.replyJa.trim()) {
+    const enrichment = await chatEnrich(
+      message.replyEn,
+      previousUserText(message.id),
+      {
+        aiName: settings.settings.aiCharacter.name,
+        level: conversation.value?.level,
+        topic: conversation.value?.topic,
+        model: settings.settings.llmModel,
+        ...(hasFeature(backendFeatures.value, FEATURE_MODEL_PROFILE)
+          ? { modelProfile: settings.settings.modelProfile }
+          : {}),
+      },
+      { retry: true },
+    )
+    // 訳が空 / 訳として使えない enrich は成功ではない。会話画面(applyEnrichment)と同じ判定にする。
+    const replyJa = acceptJapaneseTranslation(enrichment.replyJa, message.replyEn)
+    if (!replyJa) {
       setFlag(retryFailedIds, message.id, true)
       return
     }
@@ -110,7 +133,7 @@ async function retryJapanese(message: Message): Promise<void> {
     // しかも小さいかもしれない)の出力で差し替えると、黙って劣化させることになる。
     // 空のときだけ埋める。
     const updated = await messagesRepo.update(message.id, {
-      replyJa: enrichment.replyJa,
+      replyJa,
       ...(message.feedback || !enrichment.feedback
         ? {}
         : {
@@ -192,7 +215,7 @@ function replay(text: string) {
       </BaseCard>
 
       <div class="mt-6 space-y-3">
-        <div v-for="m in messages" :key="m.id">
+        <div v-for="m in displayMessages" :key="m.id">
           <div v-if="m.role === 'user'" class="flex justify-end">
             <div class="max-w-[75%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-white">
               <div class="text-sm">{{ m.userText }}</div>
@@ -211,7 +234,14 @@ function replay(text: string) {
                   日本語訳は後追い(enrich)で入るため、届かないまま保存された行が
                   ありうる。無条件に出すと空行だけが残るので、あるときだけ描画する。
                 -->
-                <div v-if="m.replyJa" class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
+                <div v-if="storedJapaneseTranslation(m)" class="mt-1 text-xs text-text-muted">
+                  <span
+                    v-if="isReferenceTranslation(m)"
+                    class="mr-1 rounded border border-border px-1 text-[10px]"
+                    title="AI による参考の訳です。細かいニュアンスは違うことがあります"
+                    >参考訳</span
+                  >{{ storedJapaneseTranslation(m) }}
+                </div>
                 <div v-else-if="isJapaneseMissing(m)" class="mt-1 text-xs text-text-muted">
                   <span class="opacity-60">
                     {{

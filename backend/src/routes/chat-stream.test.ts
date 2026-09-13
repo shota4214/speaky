@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { findScaffoldOpener, looksLikeJsonScaffold } from '../services/json-salvage.js'
 import { sanitizeJapaneseTranslation } from '../services/translation.js'
-import { parseEnrichment, salvagePlainReply } from './chat-stream.js'
+import { MODEL_PROFILES } from '../services/model-profile.js'
+import { buildEnrichment, parseEnrichment, salvagePlainReply } from './chat-stream.js'
 
 /**
  * ストリーミング経路の「JSON を読み上げさせない」防波堤のテスト。
@@ -126,5 +127,44 @@ describe('sanitizeJapaneseTranslation', () => {
   })
   it('拾えない JSON は捨てる(画面に JSON を出さない)', () => {
     expect(sanitizeJapaneseTranslation('{"unexpected": "shape"}')).toBe('')
+  })
+})
+
+describe('buildEnrichment(空行のある reply_ja)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('reply_en に空行があっても、空行のある reply_ja は捨てて 1 段落にした英文で訳し直す', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sent: { messages: { content: string }[] }[] = []
+    const replies = [
+      JSON.stringify({
+        reply_ja: 'カレーはおいしいね！\n\n辛くしたの？',
+        feedback: null,
+        vocabulary: [],
+      }),
+      'カレーはおいしいね！辛くしたの？',
+    ]
+    vi.stubGlobal('fetch', async (_url: unknown, init: { body: string }) => {
+      sent.push(JSON.parse(init.body) as { messages: { content: string }[] })
+      const content = replies[Math.min(sent.length - 1, replies.length - 1)]
+      return new Response(JSON.stringify({ message: { role: 'assistant', content }, done: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    const result = await buildEnrichment({
+      replyEn: 'Curry is so good!\n\nDid you make it spicy?',
+      userText: 'I made curry.',
+      context: {},
+      profile: MODEL_PROFILES.standard,
+    })
+    expect(result.replyJa).toBe('カレーはおいしいね！辛くしたの？')
+    expect(sent).toHaveLength(2)
+    expect(sent[1]!.messages.at(-1)!.content).toBe(
+      '<en>Curry is so good! Did you make it spicy?</en>',
+    )
   })
 })

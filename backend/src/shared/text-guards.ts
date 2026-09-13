@@ -69,7 +69,102 @@ const JA_ALLOWED_RE =
   /^[\u3040-\u30FF\u4E00-\u9FFF\u3005\u3007\u3010\u3011\u201C\u201D\u2018\u2019\u3000-\u3002\u300C-\u300F\uFF08\uFF09\uFF01\uFF1F\uFF1A\uFF5E\u301C\u2026\u30FB\u2014\u2015\x20-\x7E\s]*$/
 const KANA_RE = /[\u3040-\u30FF]/g
 const HAN_RE = /[\u4E00-\u9FFF\u3005]/g
-const LATIN_RE = /[A-Za-z]/g
+/** \u30E9\u30C6\u30F3\u6587\u5B57\u306E\u8A9E(\u9023\u7D9A\u3057\u305F\u82F1\u5B57)\u3002\u539F\u6587\u3068\u8A33\u306E\u4E21\u65B9\u3092\u3053\u306E\u540C\u3058\u533A\u5207\u308A\u3067\u8A9E\u306B\u5206\u3051\u308B\u3002 */
+const LATIN_WORD_RE = /[A-Za-z]+/g
+
+/**
+ * \u8A9E\u3068\u8A9E\u306E\u9593\u306B\u3053\u308C\u304C\u3042\u308C\u3070\u3001\u6B21\u306E\u8A9E\u306F **\u6587\u306E\u5148\u982D** \u3068\u307F\u306A\u3059(\u6587\u982D\u306E\u5927\u6587\u5B57\u306F\u540D\u524D\u306E\u8A3C\u62E0\u306B\u306A\u3089\u306A\u3044)\u3002
+ * \u5F15\u7528\u7B26\u30FB\u62EC\u5F27\u30FB\u30B3\u30ED\u30F3\u306E\u76F4\u5F8C\u3082\u6587\u982D\u6271\u3044\u306B\u3059\u308B\u3002\u6587\u982D\u3092\u591A\u3081\u306B\u898B\u7A4D\u3082\u3063\u3066\u3082\u3001\u9664\u5916\u304C\u6E1B\u3063\u3066
+ * \u691C\u8A3C\u304C\u53B3\u3057\u3044\u5074\u306B\u5012\u308C\u308B\u3060\u3051(\u300CMr. Smith\u300D\u306E Smith \u306F\u9664\u5916\u3055\u308C\u306A\u3044\u3002\u305D\u308C\u3067\u3088\u3044)\u3002
+ */
+const SENTENCE_BREAK_RE = /[.!?:;"\u201C(\n]/
+
+/**
+ * \u5927\u6587\u5B57\u3067\u66F8\u304B\u308C\u3066\u3044\u3066\u3082 **\u540D\u524D\u3067\u306F\u306A\u3044** \u666E\u901A\u306E\u8A9E\u3002\u8A33\u3067\u306F\u3053\u308C\u3089\u3092\u65E5\u672C\u8A9E\u306B\u3059\u308B\u3079\u304D\u3067\u3001
+ * \u30E9\u30C6\u30F3\u6587\u5B57\u306E\u307E\u307E\u6B8B\u3063\u3066\u3044\u308C\u3070\u8A33\u3057\u304D\u308C\u3066\u3044\u306A\u3044\u3002
+ *  - \u4EE3\u540D\u8A5E\u306E I(\u5E38\u306B\u5927\u6587\u5B57)\u30021 \u6587\u5B57\u306E\u8A9E\u306F\u305D\u3082\u305D\u3082\u540D\u524D\u3068\u307F\u306A\u3055\u306A\u3044\u304C\u3001\u660E\u793A\u3057\u3066\u304A\u304F
+ *  - OK / \u9593\u6295\u8A5E / \u5F37\u8ABF(\u30C1\u30E3\u30C3\u30C8\u3067\u5168\u90E8\u5927\u6587\u5B57\u306B\u306A\u308A\u3084\u3059\u3044: WOW, SO, LOL)\u3002
+ *    \u5168\u90E8\u5927\u6587\u5B57\u306E\u8A9E\u306F\u6587\u4E2D\u306E\u4F4D\u7F6E\u306B\u3088\u3089\u305A\u540D\u524D\u3068\u307F\u306A\u3059\u898F\u5247\u306A\u306E\u3067\u3001\u3053\u3053\u3067\u6B62\u3081\u308B
+ *  - \u66DC\u65E5\u30FB\u6708\u30FB\u8A00\u8A9E\u540D\u3002\u82F1\u8A9E\u306E\u6587\u6CD5\u3067\u5927\u6587\u5B57\u306B\u3059\u308B\u3060\u3051\u3067\u56FA\u6709\u306E\u540D\u524D\u3067\u306F\u306A\u304F\u3001
+ *    \u65E5\u672C\u8A9E\u306B\u306F\u6C7A\u307E\u3063\u305F\u8A00\u3044\u65B9(\u6708\u66DC\u65E5\u30FB5 \u6708\u30FB\u82F1\u8A9E)\u304C\u3042\u308B
+ * \u5C0F\u3055\u304F\u4FDD\u3064\u3053\u3068\u3002\u3053\u3053\u306B\u7121\u3044\u666E\u901A\u306E\u8A9E\u304C\u5927\u6587\u5B57\u3067\u66F8\u304B\u308C\u3066\u3044\u3066\u3082\u3001\u9664\u5916\u3055\u308C\u308B\u306E\u306F
+ * **\u539F\u6587\u306B\u3082\u305D\u306E\u8A9E\u304C\u3042\u308B** \u3068\u304D\u3060\u3051\u3067\u3001\u8A33\u306E\u4ED6\u306E\u30E9\u30C6\u30F3\u6587\u5B57\u306F\u6570\u3048\u7D9A\u3051\u308B\u3002
+ */
+const PROPER_NOUN_STOPLIST: ReadonlySet<string> = new Set([
+  'i',
+  'ok',
+  'okay',
+  'oh',
+  'wow',
+  'yes',
+  'no',
+  'yay',
+  'hey',
+  'hi',
+  'hello',
+  'so',
+  'very',
+  'really',
+  'lol',
+  'omg',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+  'january',
+  'february',
+  'march',
+  'april',
+  'may',
+  'june',
+  'july',
+  'august',
+  'september',
+  'october',
+  'november',
+  'december',
+  'english',
+  'japanese',
+])
+
+/**
+ * \u82F1\u6587\u306E\u4E2D\u3067 **\u540D\u524D\u3089\u3057\u304F\u66F8\u304B\u308C\u3066\u3044\u308B\u8A9E**(\u5C0F\u6587\u5B57\u306B\u3057\u305F\u3082\u306E)\u3002\u8A33\u306B\u30E9\u30C6\u30F3\u6587\u5B57\u306E\u307E\u307E\u6B8B\u3063\u3066\u3044\u3066\u3082
+ * \u8A33\u3057\u304D\u308C\u3066\u3044\u306A\u3044\u3068\u306F\u307F\u306A\u3055\u306A\u3044(\u300CDo you like Netflix?\u300D\u2192\u300CNetflix\u306F\u597D\u304D\uFF1F\u300D)\u3002
+ *
+ * \u540D\u524D\u3089\u3057\u3044\u3068\u307F\u306A\u3059\u306E\u306F\u6B21\u306E\u3069\u308C\u304B(\u30B9\u30C8\u30C3\u30D7\u30EA\u30B9\u30C8\u306E\u8A9E\u306F\u9664\u304F):
+ *  - 2 \u6587\u5B57\u76EE\u4EE5\u964D\u306B\u5927\u6587\u5B57\u304C\u3042\u308B(iPhone, YouTube)\u3002\u5168\u90E8\u5927\u6587\u5B57\u306E 2 \u6587\u5B57\u4EE5\u4E0A(NBA)\u3082\u3053\u308C\u306B\u5F53\u305F\u308B
+ *  - \u5148\u982D\u3060\u3051\u304C\u5927\u6587\u5B57\u306E 2 \u6587\u5B57\u4EE5\u4E0A\u306E\u8A9E\u3067\u3001**\u6587\u306E\u5148\u982D\u3067\u306F\u306A\u3044**(\u2026 on Netflix)
+ */
+export function sourceProperNouns(en: string): Set<string> {
+  const names = new Set<string>()
+  const text = (en ?? '').normalize('NFKC')
+  let atSentenceStart = true
+  let gapStart = 0
+  for (const m of text.matchAll(LATIN_WORD_RE)) {
+    const word = m[0]
+    const index = m.index ?? 0
+    if (SENTENCE_BREAK_RE.test(text.slice(gapStart, index))) atSentenceStart = true
+    gapStart = index + word.length
+    const looksLikeName =
+      /[A-Z]/.test(word.slice(1)) || (!atSentenceStart && /^[A-Z][a-z]/.test(word))
+    atSentenceStart = false
+    const key = word.toLowerCase()
+    if (looksLikeName && !PROPER_NOUN_STOPLIST.has(key)) names.add(key)
+  }
+  return names
+}
+
+/** \u8A33\u306E\u30E9\u30C6\u30F3\u6587\u5B57\u306E\u6570\u3002\u539F\u6587\u3067\u540D\u524D\u3089\u3057\u304F\u66F8\u304B\u308C\u305F\u8A9E(\u5927\u6587\u5B57\u5C0F\u6587\u5B57\u3092\u554F\u308F\u305A\u8A9E\u5168\u4F53\u3067\u4E00\u81F4)\u306F\u6570\u3048\u306A\u3044\u3002 */
+function countLatinOutsideNames(text: string, names: ReadonlySet<string>): number {
+  let n = 0
+  for (const m of text.matchAll(LATIN_WORD_RE)) {
+    if (!names.has(m[0].toLowerCase())) n += m[0].length
+  }
+  return n
+}
 
 export type JapaneseTranslationVerdict =
   | 'ok'
@@ -111,14 +206,15 @@ function codePointLength(text: string): number {
  *  3) かなが 1 文字以上あり、かな / (かな + 漢字) が 25% 以上
  *     (かなの無い出力 = ローマ字 / 英語の続き / 中国語)
  *  4) ラテン文字が日本語の文字数の半分以下
- *     (「お店に行った。 carrot、tomato、lettuce etc.」のような半訳を落とす)
+ *     (「お店に行った。 carrot、tomato、lettuce etc.」のような半訳を落とす)。
+ *     英文で名前らしく書かれた語(Netflix / iPhone / NBA)は数えない(sourceProperNouns)
  *  5) 長さが max(18, 英文の長さ × 0.9) 以下
  *     (翻訳ではなく「返事の続き」を書き始めた出力を落とす)
  *     下限は validator_v2 では 12 だったが、「Wow.」→「わあ、それはすごいですね！」
  *     (13 文字)のような短い相づちの自然な訳まで落としていたので 18 に上げた。
  *     長い英文の続きを捕まえるのは比率 0.9 の方なので、比率は変えていない。
  *  6) 英文に無い ASCII の波括弧 { } を含まない(壊れた JSON の残骸)
- *  7) 空行を含まない(訳の後ろに 2 段落目を書いた出力)。英文自体に空行があれば除外
+ *  7) 空行を含まない(訳の後ろに 2 段落目を書いた出力)。英文自体に空行があっても除外しない
  *     6 と 7 は評価の後に足した規則で、**較正ケースの判定を変えないよう最後に置く**
  *     (「」} </td>…」の較正ケースは 4 で latin-heavy のまま)。
  *
@@ -142,7 +238,11 @@ export function judgeJapaneseTranslation(ja: string, en: string): JapaneseTransl
   if (!JA_ALLOWED_RE.test(t)) return 'disallowed-char'
   const kana = count(t, KANA_RE)
   const han = count(t, HAN_RE)
-  const latin = count(t, LATIN_RE)
+  // 4) の数え方: 英文に名前らしく書かれた語(sourceProperNouns)は数えない。
+  //    固有名詞をラテン文字のまま残すのは普通の訳で、7 文字のブランド名 1 つに
+  //    かな漢字 14 文字が要ると、25 文字未満の英文の訳(「Netflixは好き？」)は長さの上限と
+  //    両立せず、決して通らなかった。英文が分からない呼び出し(en が空)では除外は起きない。
+  const latin = countLatinOutsideNames(t, sourceProperNouns(en))
   if (kana < 1) return 'no-kana'
   if (kana / (kana + han) < 0.25) return 'kana-share'
   if (latin > (kana + han) / 2) return 'latin-heavy'
@@ -160,13 +260,14 @@ export function judgeJapaneseTranslation(ja: string, en: string): JapaneseTransl
   //    角括弧は見ない: 「[笑]」は訳として普通にありうる。
   if (/[{}]/.test(t) && !/[{}]/.test((en ?? '').normalize('NFKC'))) return 'json-remnant'
   // 7) 空行を含む = 訳の後ろに 2 段落目(返事の続き・補足説明)を書いている。
-  //    翻訳経路は firstTranslationParagraph で最初の段落に切ってから来るので、
+  //    翻訳経路は extractTranslationParagraphs で 1 段落に切ってから来るので、
   //    ここで落ちるのは JSON 経路(会話の reply_ja / 標準プロファイルの enrich)の
   //    出力だけで、落ちたものは en→ja 翻訳で訳し直される。
-  //    **英文自体に空行があるときは落とさない**(6 の波括弧と同じ扱い)。
-  //    「Hi!\n\nHow are you today?」の正しい訳は「やあ！\n\n今日の調子はどう？」で、
-  //    これを落とすと訳し直しも同じ形になり、どちらも捨てられて訳が出なくなる。
-  if (hasBlankLine(t) && !hasBlankLine(stripEmojiLines(en ?? ''))) return 'multi-paragraph'
+  //    **英文自体に空行があっても例外にしない**(6 の波括弧とは扱いが違う)。
+  //    en→ja 翻訳は英文を 1 段落にしてから頼む(translation.ts の normalizeTranslationSource)
+  //    ので、訳に空行が入る正当な理由は無い。空行のある訳が「訳の 2 段落目」なのか
+  //    「訳の後ろに書いた返事」なのかは文字だけでは分からず、曖昧なものは通さない。
+  if (hasBlankLine(t)) return 'multi-paragraph'
   return 'ok'
 }
 
@@ -230,7 +331,9 @@ export function isJapaneseVocabMeaning(meaning: string): boolean {
   if (!JA_ALLOWED_RE.test(t)) return false
   const kana = count(t, KANA_RE)
   const han = count(t, HAN_RE)
-  const latin = count(t, LATIN_RE)
+  // ラテン文字は 1 文字ずつ数える(訳の検証は語単位 + 固有名詞の除外に変わったが、
+  // 単語カードの意味には固有名詞を除く根拠が無いので、文字数の規則のまま)。
+  const latin = count(t, /[A-Za-z]/g)
   if (kana + han < 1) return false
   if (latin > (kana + han) / 2) return false
   return true

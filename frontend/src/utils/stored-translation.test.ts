@@ -71,9 +71,9 @@ describe('storedJapaneseTranslation(隠すのは v1.2.0 の症状だけ)', () =>
 
   it.each([
     [
-      'latin-heavy(固有名詞の多い正しい訳)',
-      'Did you watch Stranger Things on Netflix?',
-      'Netflix で Stranger Things を見たの？',
+      'latin-heavy(英文に無い固有名詞をラテン文字で書いた訳)',
+      'What did you watch last night?',
+      'Stranger Things を見たの？',
     ],
     ['too-long', 'Hi!', 'こんにちは、元気ですか？今日は何をしていましたか？'],
     ['json-remnant', 'Hello!', 'こんにちは”},{'],

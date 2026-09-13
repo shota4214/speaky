@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （`npm test` = frontend → backend の順に vitest。**frontend 285 件 / backend 794 件**）
+   （`npm test` = frontend → backend の順に vitest。**frontend 285 件 / backend 819 件**）
    backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
    LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
    `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
@@ -221,9 +221,31 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   - 翻訳（ja→en / en→ja）の stop に **`'\n\n'` を入れない**。出力が空行で始まるモデルは
     1 文字も出さずに止まり、温度 0 では引き直しても訳が空のままになる。2 段落目以降は
     `firstTranslationParagraph` が捨てる（検証に続きを渡さない）。
+  - **翻訳出力の取り出しは「曖昧なら弾いて引き直す。曖昧なものは決して通さない」**
+    （`services/translation.ts`）。正しい訳を弾いた損は引き直し 1 回ぶんの待ちだけだが、
+    間違ったものを通すと学習者は **訳ではないもの（モデルの返事・半分だけの訳）を訳として読む**。
+    段落をつなげる / 原文の繰り返しを読み飛ばす / 先頭の段落の文の数で足りるとみなす、
+    といった推測はレビューのたびに新しい誤採用が見つかったので全部やめた。推測は足すより消す。
+    - en→ja は英文の改行・空行を空白にして **1 段落にしてから** 頼み、その形で検証する
+      （`normalizeTranslationSource`）。だから検証の「空行を含む訳は落とす」に例外は無い
+      （会話 JSON の `reply_ja` に空行があれば、`reply_en` に空行があっても落として en→ja に回す）。
+    - 段落は 1 つだけ選ぶ（前置き・相づち・見出しの段落だけ読み飛ばす。en→ja で日本語を含む
+      コロン終わりの段落は、決まった見出しの言い回しに当たらなければ訳の本文として選ぶ）。
+      **選んだ段落の後ろに日本語（後ろの段落 / 2 行目）が残れば、文の数によらず必ず弾く**。
+      例外は補足の行（行全体が括弧書き / Note: などのメタ説明）だけで、その判定は表示前に
+      補足を落とす `sanitizeJapaneseTranslation` と同じ `isTranslationNoteLine` 1 つに揃えてある。
+      以前の「訳の文末の数が英文の文の数に足りれば通す」は、数が偶然そろう半分の訳を通していた。
+    - `done_reason === 'length'`（生成上限で切れた）なら、どこで切れていても弾く
+      （切れた先に訳の続きがあったかもしれない）。
   - 日本語訳の検証（`shared/text-guards.ts`）の長さ上限は **max(18, 英文 × 0.9)**。
     下限 12 は「Wow.」→「わあ、それはすごいですね！」を落としていた。20 にすると
     較正ケース（ちょうど 20 文字の崩れた訳）が通るので 18。
+  - 検証の latin-heavy（ラテン文字 > かな漢字の半分）は、**英文で名前らしく書かれた語を数えない**
+    （`sourceProperNouns`: 2 文字目以降に大文字がある iPhone / NBA、または文頭でない大文字始まりの語。
+    I / OK / 間投詞 / 曜日・月・言語名はストップリストで除く）。これが無いと「Netflixは好き？」のような
+    短い英文の訳は長さ上限と両立せず決して通らなかった。除外は英文に語全体で現れる語だけなので、
+    英文が分からない呼び出し（en が空）や原文の繰り返し・ローマ字は従来どおり落ちる。
+    文頭の固有名詞（「Netflix is fun.」の Netflix）は除外されない（厳しい側に倒している）。
   - 選択は設定の `modelProfile`（`auto` / `standard` / `small`、既定 `auto`）。
     `auto` は **タグのパラメータ数**から推定（2B 以下 = small）。ファミリー部分は見ない
     （`llama3.2` の "3.2" を拾うと 1B が small にならない）。
@@ -404,7 +426,8 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 
 - **統合検証の結果**（このブランチの実 backend + 同梱 Ollama v0.30.4 を記録用プロキシ越しに、140 件 × 3 経路 × 2 モデル。
   ビルド機 Apple M5 / 2026-09-13。基底は `fix/small-model-output-quality` の `e988fd3` で、
-  `8b0d9e4`（翻訳の取り出し方針の変更）を merge する **前**に計測した。添削の数字はこの変更に依存しない）:
+  `8b0d9e4` / `d713745`（翻訳の取り出し方針の変更）を merge する **前**に計測した。添削の数字はこの変更に
+  依存しないが、下の「訳 220 ms」「enrich 1821 ms」など翻訳側の時間は merge 前の値）:
 
   | モデル / 経路                   | 正しい文の書き換え | 誤りを直して表示 | 間違った説明 | 研究と同一 | 経路の失敗 |
   | ------------------------------- | ------------------ | ---------------- | ------------ | ---------- | ---------- |

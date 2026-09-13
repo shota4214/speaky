@@ -4,6 +4,7 @@ import {
   containsNonLatinScript,
   JA_LENGTH_FLOOR,
   judgeJapaneseTranslation,
+  sourceProperNouns,
   stripEmoji,
   stripEmojiLines,
   stripLoneSurrogates,
@@ -565,15 +566,13 @@ describe('judgeJapaneseTranslation(2 段落目)', () => {
     expect(judgeJapaneseTranslation('\n\nいいね！\n\n', 'Nice!')).toBe('ok')
   })
 
-  it('英文自体に空行があれば、空行を含む訳を落とさない(波括弧の規則と同じ)', () => {
+  it('英文自体に空行があっても、空行を含む訳は落とす(英文は 1 段落にしてから訳すので例外にしない)', () => {
     const en = 'Hi!\n\nHow are you today?'
-    expect(judgeJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe('ok')
+    expect(judgeJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe('multi-paragraph')
     expect(
       judgeJapaneseTranslation('やあ！\r\n\r\n今日の調子はどう？', 'Hi!\r\n\r\nHow are you?'),
-    ).toBe('ok')
-    expect(acceptJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe(
-      'やあ！\n\n今日の調子はどう？',
-    )
+    ).toBe('multi-paragraph')
+    expect(acceptJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe('')
     // 英文の空行が絵文字だけの行の跡なら、英文に空行は無い扱い
     expect(judgeJapaneseTranslation('いいね！\n\nそれで', 'Nice!\n😊\nSo')).toBe('multi-paragraph')
   })
@@ -600,6 +599,70 @@ describe('judgeJapaneseTranslation(validator_v2 が落としていた正しい�
     ['Well done! ⭐', 'よくできました！⭐'],
   ])('%s → %s', (en, ja) => {
     expect(judgeJapaneseTranslation(ja, en)).toBe('ok')
+  })
+})
+
+describe('judgeJapaneseTranslation(英文の固有名詞はラテン文字のままでよい)', () => {
+  it.each([
+    ['Do you like Netflix?', 'Netflixは好き？'],
+    ['I watched a new drama on Netflix yesterday.', '昨日Netflixで新しいドラマを見たよ'],
+    ['Do you use an iPhone?', 'iPhoneを使ってる？'],
+    ['Which do you like better, YouTube or Netflix?', 'YouTubeとNetflix、どっちが好き？'],
+    ['Did you watch the NBA game?', 'NBAの試合を見た？'],
+    // 大文字小文字を問わず、語全体で一致すればよい
+    ['Do you like Netflix?', 'NETFLIXは好き？'],
+  ])('%j → %j は通す', (en, ja) => {
+    expect(judgeJapaneseTranslation(ja, en)).toBe('ok')
+  })
+
+  it('ローマ字の訳は、英文の固有名詞を含んでいても弾く', () => {
+    expect(
+      judgeJapaneseTranslation('Anata wa Netflix ga suki desu ka?', 'Do you like Netflix?'),
+    ).not.toBe('ok')
+  })
+
+  it('原文の繰り返しは弾く(名前以外の語は数える)', () => {
+    expect(
+      judgeJapaneseTranslation('Do you like Netflix? Netflixは好き？', 'Do you like Netflix?'),
+    ).toBe('latin-heavy')
+    // 語のほとんどが名前の英文でも、名前ではない語と文頭の語は数える
+    expect(
+      judgeJapaneseTranslation('Netflix, YouTube, or Hulu? どれ？', 'Netflix, YouTube, or Hulu?'),
+    ).toBe('latin-heavy')
+    expect(
+      judgeJapaneseTranslation(
+        'I love Taylor Swift and Ed Sheeran. 大好き！',
+        'I love Taylor Swift and Ed Sheeran.',
+      ),
+    ).toBe('latin-heavy')
+  })
+
+  it('英文に無いラテン文字の語は数える / 英文が分からなければ除外しない', () => {
+    expect(judgeJapaneseTranslation('Huluは好き？', 'Do you like Netflix?')).toBe('latin-heavy')
+    expect(judgeJapaneseTranslation('Netflixは好き？', '')).toBe('latin-heavy')
+    // 英文にあっても一部だけ一致する語は数える(語全体で一致させる)
+    expect(judgeJapaneseTranslation('Netflixerは好き？', 'Do you like Netflix?')).toBe(
+      'latin-heavy',
+    )
+  })
+
+  it('文頭の大文字の語・ストップリストの語は名前とみなさない', () => {
+    expect(judgeJapaneseTranslation('Pizzaは最高！', 'Pizza is great. Do you like it?')).toBe(
+      'latin-heavy',
+    )
+    expect(judgeJapaneseTranslation('Sushiは最高！', 'I agree. Sushi is great!')).toBe(
+      'latin-heavy',
+    )
+    expect(judgeJapaneseTranslation('Mondayね！', 'See you on Monday!')).toBe('latin-heavy')
+    expect(judgeJapaneseTranslation('OKだよ！', 'That is OK with me.')).toBe('latin-heavy')
+  })
+
+  it('sourceProperNouns', () => {
+    expect(
+      sourceProperNouns('Did you watch the NBA game on YouTube with Ken? I think so. OK!'),
+    ).toEqual(new Set(['nba', 'youtube', 'ken']))
+    expect(sourceProperNouns('Mr. Smith likes iPhone apps.')).toEqual(new Set(['iphone']))
+    expect(sourceProperNouns('')).toEqual(new Set())
   })
 })
 

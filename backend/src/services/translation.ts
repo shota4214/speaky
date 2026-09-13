@@ -138,6 +138,20 @@ function stripPairedQuotes(text: string): string {
 /** 行全体が括弧で囲まれている(「（カジュアルな言い方です）」)。全角は NFKC で ASCII に寄せてから見る。 */
 const BRACKETED_LINE_RE = /^(?:\([^()]*\)|\[[^[\]]*\]|【[^【】]*】)$/
 
+/**
+ * 訳に添えられた補足の行か(行全体が括弧書き / メタ説明の行)。
+ * **sanitizeJapaneseTranslation が落とす行と、looksLikeSplitTranslation が「後ろの日本語」から
+ * 除く行は、必ずこの 1 つの判定で決める**。別々に書くと、表示では落ちる補足を「訳の続き」と
+ * みなして正しい訳を弾く(あるいはその逆)ずれが起きる。
+ */
+export function isTranslationNoteLine(line: string): boolean {
+  const t = line.trim()
+  return t.length > 0 && (BRACKETED_LINE_RE.test(t.normalize('NFKC')) || META_LINE_PATTERN.test(t))
+}
+
+/** かな / 漢字を含むか。 */
+const JAPANESE_CHAR_RE = /[\u3040-\u30FF\u4E00-\u9FFF\u3005]/
+
 /** 末尾がコロン(「Here is the Japanese translation:」「日本語訳：」のような見出し)。 */
 const ENDS_WITH_COLON_RE = /[:：]\s*$/
 
@@ -185,148 +199,92 @@ function comparable(text: string): string {
 /**
  * 先頭の段落が「訳の前置き」か。**先頭の段落(かつ後ろに段落がある)ときだけ** 呼ぶ。
  *
- *  - 原文をそのまま繰り返した段落(原文「OK!」→「OK!」)は前置きではない
- *    (読み飛ばすと後ろの補足「(そのまま通じます)」を訳として出してしまう)
+ *  - 原文をそのまま繰り返した段落(原文「Did you watch it?」→「Did you watch it?」)は
+ *    前置きではない。読み飛ばすと後ろの段落を訳として出すが、それが訳(「見た？」)なのか
+ *    返事(「うん、見たよ！」)なのかは文字だけでは分からない。繰り返しのまま返して
+ *    検証で弾き、引き直す
  *  - 前置きだけの段落(stripTranslationPreamble で空になる「Here's the translation:」)
  *  - en→ja の相づちだけの段落(「Sure!」)。ja→en では相づちそのものが訳でありうるので見ない
  *  - 末尾がコロンで、訳について述べる見出し(「Here's a natural way to say it:」「日本語訳：」)。
  *    原文がコロンで終わっていても読み飛ばす(その訳もコロンで終わるので、見出しかどうかは
  *    言い回しでしか分からない)
  *  - それ以外の末尾がコロンの段落は、**原文にコロンが無く、しかも短い** ときだけ見出しとみなす。
- *    原文にコロンがあるなら、コロンで終わる段落は訳の一部である
- *    (「Here's my tip: drink lots of water.」→「私のアドバイス：\n\nたくさん水を飲んでね。」)
+ *    ただし en→ja で日本語を含む段落は見出しとみなさない(訳の本文の前半でありうる)
  */
 function isLeadInParagraph(
   paragraph: string,
   direction: 'ja-to-en' | 'en-to-ja',
   source: string,
-  following: readonly string[],
 ): boolean {
   const echo = comparable(paragraph)
-  if (echo && echo === comparable(source)) {
-    // en→ja で「Did you watch it?\n\n見た？」のように、原文を繰り返してから訳した出力は
-    // 繰り返しを読み飛ばす(返すと no-kana で弾かれ、温度 0 の引き直しも同じ形になる)。
-    // ただし後ろが **1 段落だけ** で、括弧書きで始まらず、原文の英単語を含まないときに限る。
-    // 「OK!\n\n（そのまま「OK!」で通じます）」の補足は訳ではないので、繰り返しのまま返して弾く。
-    return (
-      direction === 'en-to-ja' &&
-      following.length === 1 &&
-      !OPENING_BRACKET_RE.test(following[0]!) &&
-      !sharesEnglishWord(following[0]!, source)
-    )
-  }
+  if (echo && echo === comparable(source)) return false
   if (!stripTranslationPreamble(paragraph)) return true
   if (direction === 'en-to-ja' && INTERJECTION_ONLY_RE.test(paragraph)) return true
   if (!ENDS_WITH_COLON_RE.test(paragraph)) return false
   const heading = paragraph.replace(ENDS_WITH_COLON_RE, '').trim()
   if (META_LEAD_IN_RE.test(heading) || JA_HEADING_RE.test(heading)) return true
+  // en→ja で日本語を含むコロン終わりの段落は、上の言い回しに当たらなければ訳の本文である
+  // (「いくつか選択肢があるよ：」)。読み飛ばすと後ろの段落だけが訳として出て、前半が消える。
+  // 本文として選べば、後ろに日本語が残るので looksLikeSplitTranslation が弾く。
+  if (direction === 'en-to-ja' && JAPANESE_CHAR_RE.test(paragraph)) return false
   return !hasColon(source) && Array.from(paragraph).length <= LEAD_IN_MAX_CHARS
 }
 
 export interface ExtractedTranslation {
-  /** 訳として検証へ渡す文字列。 */
+  /** 訳として検証へ渡す段落(1 つだけ。段落をつなげることはしない)。 */
   text: string
   /**
-   * 出力の最後の段落まで使ったか。生成上限(num_predict)で切れた出力では、
-   * これが true のときだけ **訳そのものが切れている**(false なら切れたのは後ろの余談)。
+   * 選んだ段落が出力の最後の段落で、出力が空行で終わっていないか。生成上限(num_predict)で
+   * 切れた出力では、これが true のときだけ **選んだ段落の中で切れている**。
    */
   reachesEnd: boolean
+  /** 選んだ段落より後ろの段落(訳が分かれていないかの判定 looksLikeSplitTranslation に使う)。 */
+  following: string[]
 }
 
 /**
- * 翻訳出力から **訳の部分** だけを取り出す(空行で区切られた後ろの段落は捨てる)。
+ * 翻訳出力から、訳として検証する段落を **1 つだけ** 選ぶ。
  *
  * v1.2.0 直後の実装は stop に `'\n\n'` を入れて 2 段落目を生成させなかったが、
  * それだと **出力が空行で始まるモデルは 1 文字も出さずに止まる**。温度 0 では
  * 引き直しても同じなので、訳が永久に空になる。stop からは外し、ここで切る。
  *
+ * ── 方針: 曖昧な出力は通さず、弾いて引き直す ──
+ * 正しい訳を弾いたときの損は 1 回の引き直し(数秒の待ち)だけだが、間違ったものを通すと
+ * 学習者は **訳ではないもの(返事・半分だけの訳)を訳として読む**。段落をつなげる /
+ * 原文の繰り返しを読み飛ばす / 先頭の段落の文の数で「足りている」とみなす、といった推測は
+ * レビューのたびに新しい誤採用が見つかったので、すべてやめた。推測を足すより消す方を選ぶ。
+ *
  *  - 先頭の空行は読み飛ばす(これが直したい症状)
- *  - **先頭の段落が前置き**(isLeadInParagraph)なら、それだけを読み飛ばす。
- *    前置きの段落を返すと検証で弾かれ、後ろにあった本物の訳まで捨てる
- *    (「Sure!\n\nこんにちは！」が 1 回分の試行ごと無駄になる)
- *  - それ以外は **先頭の段落で打ち切る**。2 段落目以降は「返事の続き」や補足説明で、
- *    日本語で書かれていても訳ではない(原文「Did you watch it?」→
- *    「Yes, I watched it last night!\n\nうん、昨日の夜見たよ！」の 2 段落目は返事)。
- *    先頭の段落が訳でなければ検証で弾かれて引き直される。それでよい
- *  - 例外 1: en→ja で **英文自体が複数の段落** なら、訳も同じ数の段落までつなげて返す
- *    (「Hi!\n\nHow are you today?」→「やあ！\n\n今日の調子はどう？」の 1 段落目だけを返すと、
- *    半分だけの訳が検証を通って表示される)
- *  - 例外 2: 原文の途中にコロンがあり、先頭の段落がコロンで終わるなら、次の段落とつなげる
- *    (「私のアドバイス：」+「たくさん水を飲んでね。」)
+ *  - **先頭の段落が前置き**(isLeadInParagraph)で、後ろに段落があるときだけ、それを読み飛ばす
+ *  - それ以外は **先頭の段落**。先頭の段落が訳でなければ検証で弾かれて引き直される。それでよい
+ *  - en→ja の英文は translateEnglishToJapanese が 1 段落にしてから頼むので、
+ *    訳が複数の段落になる正当な理由は無い。後ろの段落に日本語が残っていれば(補足の行を除いて)
+ *    looksLikeSplitTranslation が弾く
  */
 export function extractTranslationParagraphs(
   raw: string,
   options: { direction: 'ja-to-en' | 'en-to-ja'; source?: string },
 ): ExtractedTranslation {
   const paragraphs = splitParagraphs(raw)
-  if (paragraphs.length === 0) return { text: '', reachesEnd: true }
+  if (paragraphs.length === 0) return { text: '', reachesEnd: true, following: [] }
   // 出力が空行で終わっている = 最後の段落は書き終わっていて、生成上限で切れたのは
-  // その後ろの(空の)段落。訳が完結しているのに「切れた」と数えない。
+  // その後ろの(空の)段落。選んだ段落の中で切れたとは数えない。
   const openTail = !TRAILING_BLANK_LINE_RE.test(raw)
-  const source = options.source ?? ''
   const start =
     paragraphs.length > 1 &&
-    isLeadInParagraph(paragraphs[0]!, options.direction, source, paragraphs.slice(1))
+    isLeadInParagraph(paragraphs[0]!, options.direction, options.source ?? '')
       ? 1
       : 0
-  const head = paragraphs[start]!
-
-  const sourceParagraphs = splitParagraphs(source).length
-  if (options.direction === 'en-to-ja' && sourceParagraphs > 1) {
-    // 先頭の段落だけで英文全体の訳になっていれば、つなげない(後ろの段落はモデルの返事)。
-    // 検証だけでは「やあ！」(英文 2 段落の前半だけの訳)も通るので、文の数も見る。
-    if (passesJapaneseValidator(head, source) && sentenceCount(head) >= sourceParagraphs) {
-      return { text: head, reachesEnd: start + 1 === paragraphs.length && openTail }
-    }
-    const end = Math.min(paragraphs.length, start + sourceParagraphs)
-    return {
-      text: paragraphs.slice(start, end).join('\n\n'),
-      reachesEnd: end === paragraphs.length && openTail,
-    }
+  return {
+    text: paragraphs[start]!,
+    reachesEnd: start + 1 === paragraphs.length && openTail,
+    following: paragraphs.slice(start + 1),
   }
-
-  const next = paragraphs[start + 1]
-  const colonInMiddle = hasColon(source) && !ENDS_WITH_COLON_RE.test(source.trim())
-  if (next !== undefined && ENDS_WITH_COLON_RE.test(head) && colonInMiddle) {
-    return {
-      text: head + (options.direction === 'en-to-ja' ? '' : ' ') + next,
-      reachesEnd: start + 2 === paragraphs.length && openTail,
-    }
-  }
-  return { text: head, reachesEnd: start + 1 === paragraphs.length && openTail }
 }
 
 /** 空行(= 次の段落の始まり)で終わっている。 */
 const TRAILING_BLANK_LINE_RE = /\r?\n[^\S\r\n]*\r?\n\s*$/
-
-/** 括弧書きの始まり(「（そのまま通じます）」「【補足】」)。 */
-const OPENING_BRACKET_RE = /^[（(「『【［[]/
-
-/** 原文の英単語を 1 つでも含むか(「そのまま OK で通じます」は原文「OK!」の補足)。 */
-function sharesEnglishWord(text: string, source: string): boolean {
-  const words = (s: string) =>
-    s
-      .normalize('NFKC')
-      .toLowerCase()
-      .match(/[a-z]+/g) ?? []
-  const sourceWords = new Set(words(source))
-  return words(text).some((w) => sourceWords.has(w))
-}
-
-/** 文の数(文末の約物か改行で区切る)。 */
-function sentenceCount(text: string): number {
-  return text.split(/[。！？!?]+|\n/).filter((s) => s.trim().length > 0).length
-}
-
-/** translateEnglishToJapanese と同じ整形をしたうえで、日本語訳の検証を通るか。 */
-function passesJapaneseValidator(text: string, source: string): boolean {
-  return (
-    acceptJapaneseTranslation(
-      stripTags(sanitizeJapaneseTranslation(text, source), 'en'),
-      source,
-    ) !== ''
-  )
-}
 
 /** extractTranslationParagraphs の訳の部分だけを返す。 */
 export function firstTranslationParagraph(
@@ -334,6 +292,50 @@ export function firstTranslationParagraph(
   options: { direction: 'ja-to-en' | 'en-to-ja'; source?: string },
 ): string {
   return extractTranslationParagraphs(raw, options).text
+}
+
+/**
+ * 訳させる英文を **1 段落** にする(改行と空行の並びを空白 1 つにする)。
+ *
+ * 英文に空行があると、正しい訳にも空行が入りうる。そうすると「訳の 2 段落目」と
+ * 「訳の後ろに書いた返事」を文字だけで見分けなければならず、その推測(段落をつなげる等)が
+ * 半分だけの訳や返事を通していた。英文を 1 段落にしてしまえば、訳の空行は常に余計なものである。
+ */
+export function normalizeTranslationSource(text: string): string {
+  return text.replace(/\s*\n\s*/g, ' ').trim()
+}
+
+/** 補足の行(isTranslationNoteLine)を除いて、日本語を含む行の数。 */
+function countJapaneseLines(paragraph: string): number {
+  return paragraph.split('\n').filter((l) => !isTranslationNoteLine(l) && JAPANESE_CHAR_RE.test(l))
+    .length
+}
+
+/**
+ * 選んだ段落の後ろに **日本語が残っているか**(残っていれば弾いて引き直す)。
+ *
+ * 「後ろに日本語がある」のは次のどれか:
+ *  - 選んだ段落より後ろの段落に日本語がある(「わあ！すごいね！\n\n何をしたの？」)
+ *  - 選んだ段落の中に日本語の行が 2 行以上ある(sanitizeJapaneseTranslation は最初の行しか残さない)
+ *  - 生成上限で切れている(切れた先に訳の続きがあったかもしれない。「やあ！\n\n」で止まった出力)
+ *
+ * **訳の文の数は数えない**。以前は「訳の文末の数が英文の文の数に足りていれば通す」としていたが、
+ * 数が偶然そろう半分の訳(「Wow, that's great! What did you do?」→「わあ！すごいね！」)や、
+ * 英文の文を少なく数える書き方(絵文字で区切った文)で前半だけが通っていた。後ろに日本語が
+ * 残る出力は、訳の続きなのか返事なのか文字だけでは分からないので、全部弾く。
+ *
+ * 例外は補足の行(isTranslationNoteLine: 行全体が括弧書き / メタ説明)だけ。表示の前に
+ * sanitizeJapaneseTranslation が同じ判定で落とすので、訳の続きではない。
+ */
+export function looksLikeSplitTranslation(
+  extracted: ExtractedTranslation,
+  truncated: boolean,
+): boolean {
+  return (
+    truncated ||
+    countJapaneseLines(extracted.text) > 1 ||
+    extracted.following.some((p) => countJapaneseLines(p) > 0)
+  )
 }
 
 /**
@@ -458,17 +460,21 @@ export async function translateToNaturalEnglish(
       jsonFormat: false,
       signal: options.signal,
     })
-    const raw = ollamaRes.message?.content ?? ''
-    const candidate = stripLoneSurrogates(
-      stripTags(
-        stripTranslationPreamble(firstTranslationParagraph(raw, { direction: 'ja-to-en', source })),
-        'ja',
-      ),
-    ).trim()
+    const extracted = extractTranslationParagraphs(ollamaRes.message?.content ?? '', {
+      direction: 'ja-to-en',
+      source,
+    })
+    // コロンで終わる段落の後ろに段落が続く出力(「My tip:\n\nDrink lots of water.」)は、
+    // 先頭の段落だけでは訳の前半かもしれない。つなげずに弾いて引き直す
+    // (extractTranslationParagraphs の方針: 曖昧な出力は通さない)。
+    const cutAtColon = extracted.following.length > 0 && ENDS_WITH_COLON_RE.test(extracted.text)
+    const candidate = cutAtColon
+      ? ''
+      : stripLoneSurrogates(stripTags(stripTranslationPreamble(extracted.text), 'ja')).trim()
     if (candidate && isAcceptableEnglishRendering(candidate)) return candidate
     console.warn(
       `[chat:translate] rejected ja→en output at temperature=${a.temperature}:`,
-      candidate.slice(0, 120),
+      (candidate || extracted.text).slice(0, 120),
     )
   }
   return ''
@@ -522,29 +528,15 @@ export const EN_TO_JA_FRESH_ATTEMPTS: readonly { temperature: number; seed?: num
  * 中の reply_ja を拾えれば拾い、拾えなければ空にする(空 = 取得失敗として
  * 扱われ、UI に再取得ボタンが出る。JSON を見せるよりはるかにまし)。
  */
-export function sanitizeJapaneseTranslation(raw: string, source = ''): string {
-  // 括弧で囲まれただけの行(「（カジュアルな言い方です）」)とメタ説明の行は、
-  // 行数に関わらず先に落とす(複数行の英文の経路では下の行ごとの処理が拾わなかった)。
+export function sanitizeJapaneseTranslation(raw: string): string {
+  // 括弧で囲まれただけの行(「（カジュアルな言い方です）」)とメタ説明の行は先に落とす。
   const text = raw
     .split('\n')
-    .filter((line) => {
-      const t = line.trim()
-      return !t || !(BRACKETED_LINE_RE.test(t.normalize('NFKC')) || META_LINE_PATTERN.test(t))
-    })
+    .filter((line) => !isTranslationNoteLine(line))
     .join('\n')
   const stripped = stripTranslationPreamble(text, 'paired')
   if (looksLikeJsonScaffold(stripped)) return jsonTranslationField(stripped)
-  if (!source.includes('\n')) return stripped
-  // 英文自体が複数行なら、訳の行も残す。stripTranslationPreamble は **最初の行だけ** を
-  // 残すので(ja→en の補足説明を捨てるための動き)、そのまま通すと
-  // 「やあ！\n\n今日の調子はどう？」が「やあ！」になり、半分の訳が検証を通ってしまう。
-  if (looksLikeJsonScaffold(text.trim())) return jsonTranslationField(text.trim())
-  return text
-    .trim()
-    .split('\n')
-    .map((line) => (line.trim() ? stripTranslationPreamble(line, 'paired') : ''))
-    .join('\n')
-    .trim()
+  return stripped
 }
 
 function jsonTranslationField(json: string): string {
@@ -565,8 +557,9 @@ export async function translateEnglishToJapanese(
   },
 ): Promise<string> {
   // 絵文字は訳させない(訳に絵文字や「笑顔」が混ざる / 検証の長さ判定が狂う)。
-  // 絵文字だけの行は行ごと消す(検証と同じ扱い。消した跡を空行 = 段落の区切りにしない)。
-  const source = stripTags(stripEmojiLines(englishText), 'en').trim()
+  // 絵文字だけの行は行ごと消してから、改行を空白にして **英文を 1 段落にする**
+  // (normalizeTranslationSource の注記)。プロンプトにも検証にもこの形を使う。
+  const source = normalizeTranslationSource(stripTags(stripEmojiLines(englishText), 'en'))
   if (!source) return ''
   const messages: OllamaChatMessage[] = [
     { role: 'system', content: EN_TO_JA_INSTRUCTION },
@@ -605,22 +598,31 @@ export async function translateEnglishToJapanese(
       }
       continue
     }
+    const truncated = ollamaRes.done_reason === 'length'
     const extracted = extractTranslationParagraphs(ollamaRes.message?.content ?? '', {
       direction: 'en-to-ja',
       source,
     })
-    // 生成上限で切れ、しかも **訳の段落そのもの** が最後まで書けていない出力は、
-    // 文字だけ見ると正しい訳の前半なので検証を通ってしまう。試行ごと捨てる。
-    // (訳の後ろの余談が切れただけなら、訳は完結しているので使う)
-    if (ollamaRes.done_reason === 'length' && extracted.reachesEnd) {
+    // 生成上限で切れ、しかも **選んだ段落の中で** 切れた出力は、文字だけ見ると正しい訳の
+    // 前半なので検証を通ってしまう。試行ごと捨てる。
+    // (出力が空行で終わっていれば選んだ段落は書き終わっているが、後ろに訳の続きが
+    // あったかもしれないので、それも looksLikeSplitTranslation が弾く)
+    if (truncated && extracted.reachesEnd) {
       console.warn(
         `[chat] rejected en→ja translation at temperature=${a.temperature}: 生成上限(num_predict=${numPredict})で切れた:`,
         extracted.text.slice(0, 120),
       )
       continue
     }
-    const raw = sanitizeJapaneseTranslation(extracted.text, source)
+    const raw = sanitizeJapaneseTranslation(extracted.text)
     const ja = acceptJapaneseTranslation(stripTags(raw, 'en'), source)
+    if (ja && looksLikeSplitTranslation(extracted, truncated)) {
+      console.warn(
+        `[chat] rejected en→ja translation at temperature=${a.temperature}: 選んだ段落の後ろに日本語が残っている(訳の続きか返事か分からない):`,
+        ja.slice(0, 120),
+      )
+      continue
+    }
     if (ja) return ja
     console.warn(
       `[chat] rejected en→ja translation at temperature=${a.temperature}:`,

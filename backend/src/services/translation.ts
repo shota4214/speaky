@@ -138,6 +138,20 @@ function stripPairedQuotes(text: string): string {
 /** 行全体が括弧で囲まれている(「（カジュアルな言い方です）」)。全角は NFKC で ASCII に寄せてから見る。 */
 const BRACKETED_LINE_RE = /^(?:\([^()]*\)|\[[^[\]]*\]|【[^【】]*】)$/
 
+/**
+ * 訳に添えられた補足の行か(行全体が括弧書き / メタ説明の行)。
+ * **sanitizeJapaneseTranslation が落とす行と、looksLikeSplitTranslation が「後ろの日本語」から
+ * 除く行は、必ずこの 1 つの判定で決める**。別々に書くと、表示では落ちる補足を「訳の続き」と
+ * みなして正しい訳を弾く(あるいはその逆)ずれが起きる。
+ */
+export function isTranslationNoteLine(line: string): boolean {
+  const t = line.trim()
+  return t.length > 0 && (BRACKETED_LINE_RE.test(t.normalize('NFKC')) || META_LINE_PATTERN.test(t))
+}
+
+/** かな / 漢字を含むか。 */
+const JAPANESE_CHAR_RE = /[\u3040-\u30FF\u4E00-\u9FFF\u3005]/
+
 /** 末尾がコロン(「Here is the Japanese translation:」「日本語訳：」のような見出し)。 */
 const ENDS_WITH_COLON_RE = /[:：]\s*$/
 
@@ -194,7 +208,8 @@ function comparable(text: string): string {
  *  - 末尾がコロンで、訳について述べる見出し(「Here's a natural way to say it:」「日本語訳：」)。
  *    原文がコロンで終わっていても読み飛ばす(その訳もコロンで終わるので、見出しかどうかは
  *    言い回しでしか分からない)
- *  - それ以外の末尾がコロンの段落は、**原文にコロンが無く、しかも短い** ときだけ見出しとみなす
+ *  - それ以外の末尾がコロンの段落は、**原文にコロンが無く、しかも短い** ときだけ見出しとみなす。
+ *    ただし en→ja で日本語を含む段落は見出しとみなさない(訳の本文の前半でありうる)
  */
 function isLeadInParagraph(
   paragraph: string,
@@ -208,6 +223,10 @@ function isLeadInParagraph(
   if (!ENDS_WITH_COLON_RE.test(paragraph)) return false
   const heading = paragraph.replace(ENDS_WITH_COLON_RE, '').trim()
   if (META_LEAD_IN_RE.test(heading) || JA_HEADING_RE.test(heading)) return true
+  // en→ja で日本語を含むコロン終わりの段落は、上の言い回しに当たらなければ訳の本文である
+  // (「いくつか選択肢があるよ：」)。読み飛ばすと後ろの段落だけが訳として出て、前半が消える。
+  // 本文として選べば、後ろに日本語が残るので looksLikeSplitTranslation が弾く。
+  if (direction === 'en-to-ja' && JAPANESE_CHAR_RE.test(paragraph)) return false
   return !hasColon(source) && Array.from(paragraph).length <= LEAD_IN_MAX_CHARS
 }
 
@@ -240,7 +259,7 @@ export interface ExtractedTranslation {
  *  - **先頭の段落が前置き**(isLeadInParagraph)で、後ろに段落があるときだけ、それを読み飛ばす
  *  - それ以外は **先頭の段落**。先頭の段落が訳でなければ検証で弾かれて引き直される。それでよい
  *  - en→ja の英文は translateEnglishToJapanese が 1 段落にしてから頼むので、
- *    訳が複数の段落になる正当な理由は無い。後ろの段落に日本語があって訳が足りなければ
+ *    訳が複数の段落になる正当な理由は無い。後ろの段落に日本語が残っていれば(補足の行を除いて)
  *    looksLikeSplitTranslation が弾く
  */
 export function extractTranslationParagraphs(
@@ -286,42 +305,37 @@ export function normalizeTranslationSource(text: string): string {
   return text.replace(/\s*\n\s*/g, ' ').trim()
 }
 
-/** 英文の文の数(`.` `!` `?` の直後が空白か末尾)。単純な規則でよい(下の注記)。 */
-export function countEnglishSentences(text: string): number {
-  return text.match(/[.!?]+(?=\s|$)/g)?.length ?? 0
+/** 補足の行(isTranslationNoteLine)を除いて、日本語を含む行の数。 */
+function countJapaneseLines(paragraph: string): number {
+  return paragraph.split('\n').filter((l) => !isTranslationNoteLine(l) && JAPANESE_CHAR_RE.test(l))
+    .length
 }
-
-/** 日本語の文末(。！？)の数。全角は NFKC で ASCII に寄せてから数える。 */
-export function countJapaneseSentenceEndings(text: string): number {
-  return text.normalize('NFKC').match(/[。!?]+/g)?.length ?? 0
-}
-
-/** かな / 漢字を含むか。 */
-const JAPANESE_CHAR_RE = /[\u3040-\u30FF\u4E00-\u9FFF\u3005]/
 
 /**
- * 選んだ段落だけでは訳が足りず、残りが後ろに書かれていそうか(そうなら弾いて引き直す)。
+ * 選んだ段落の後ろに **日本語が残っているか**(残っていれば弾いて引き直す)。
  *
  * 「後ろに日本語がある」のは次のどれか:
- *  - 選んだ段落より後ろの段落に日本語がある
- *    (「すごく楽しそう！お祭り大好き。\n\n何を食べたの？」)
+ *  - 選んだ段落より後ろの段落に日本語がある(「わあ！すごいね！\n\n何をしたの？」)
  *  - 選んだ段落の中に日本語の行が 2 行以上ある(sanitizeJapaneseTranslation は最初の行しか残さない)
  *  - 生成上限で切れている(切れた先に訳の続きがあったかもしれない。「やあ！\n\n」で止まった出力)
  *
- * そのうえで、訳の文末の数が英文の文の数より少なければ、訳が分かれたとみなす。
- * **後ろに日本語が無ければ見ない**(「Hi! How are you?」→「やあ、元気？」は 1 文にまとめた正しい訳)。
- * 数え方は単純で、訳の文末を少なく数えても弾いて引き直すだけで済む。
+ * **訳の文の数は数えない**。以前は「訳の文末の数が英文の文の数に足りていれば通す」としていたが、
+ * 数が偶然そろう半分の訳(「Wow, that's great! What did you do?」→「わあ！すごいね！」)や、
+ * 英文の文を少なく数える書き方(絵文字で区切った文)で前半だけが通っていた。後ろに日本語が
+ * 残る出力は、訳の続きなのか返事なのか文字だけでは分からないので、全部弾く。
+ *
+ * 例外は補足の行(isTranslationNoteLine: 行全体が括弧書き / メタ説明)だけ。表示の前に
+ * sanitizeJapaneseTranslation が同じ判定で落とすので、訳の続きではない。
  */
 export function looksLikeSplitTranslation(
   extracted: ExtractedTranslation,
-  translation: string,
-  source: string,
   truncated: boolean,
 ): boolean {
-  const japaneseLines = extracted.text.split('\n').filter((l) => JAPANESE_CHAR_RE.test(l)).length
-  const laterJapanese =
-    truncated || japaneseLines > 1 || extracted.following.some((p) => JAPANESE_CHAR_RE.test(p))
-  return laterJapanese && countJapaneseSentenceEndings(translation) < countEnglishSentences(source)
+  return (
+    truncated ||
+    countJapaneseLines(extracted.text) > 1 ||
+    extracted.following.some((p) => countJapaneseLines(p) > 0)
+  )
 }
 
 /**
@@ -518,10 +532,7 @@ export function sanitizeJapaneseTranslation(raw: string): string {
   // 括弧で囲まれただけの行(「（カジュアルな言い方です）」)とメタ説明の行は先に落とす。
   const text = raw
     .split('\n')
-    .filter((line) => {
-      const t = line.trim()
-      return !t || !(BRACKETED_LINE_RE.test(t.normalize('NFKC')) || META_LINE_PATTERN.test(t))
-    })
+    .filter((line) => !isTranslationNoteLine(line))
     .join('\n')
   const stripped = stripTranslationPreamble(text, 'paired')
   if (looksLikeJsonScaffold(stripped)) return jsonTranslationField(stripped)
@@ -594,8 +605,8 @@ export async function translateEnglishToJapanese(
     })
     // 生成上限で切れ、しかも **選んだ段落の中で** 切れた出力は、文字だけ見ると正しい訳の
     // 前半なので検証を通ってしまう。試行ごと捨てる。
-    // (出力が空行で終わっていれば選んだ段落は書き終わっている。その場合も、後ろに訳の続きが
-    // あったかもしれないので looksLikeSplitTranslation で文の数を見る)
+    // (出力が空行で終わっていれば選んだ段落は書き終わっているが、後ろに訳の続きが
+    // あったかもしれないので、それも looksLikeSplitTranslation が弾く)
     if (truncated && extracted.reachesEnd) {
       console.warn(
         `[chat] rejected en→ja translation at temperature=${a.temperature}: 生成上限(num_predict=${numPredict})で切れた:`,
@@ -605,9 +616,9 @@ export async function translateEnglishToJapanese(
     }
     const raw = sanitizeJapaneseTranslation(extracted.text)
     const ja = acceptJapaneseTranslation(stripTags(raw, 'en'), source)
-    if (ja && looksLikeSplitTranslation(extracted, ja, source, truncated)) {
+    if (ja && looksLikeSplitTranslation(extracted, truncated)) {
       console.warn(
-        `[chat] rejected en→ja translation at temperature=${a.temperature}: 訳が分かれていて、選んだ段落だけでは英文の文の数に足りない:`,
+        `[chat] rejected en→ja translation at temperature=${a.temperature}: 選んだ段落の後ろに日本語が残っている(訳の続きか返事か分からない):`,
         ja.slice(0, 120),
       )
       continue

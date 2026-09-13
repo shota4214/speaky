@@ -11,8 +11,8 @@ import type { Message } from '../db/types'
  * だった。それを示す判定だけで隠す。
  *
  * それ以外の判定(latin-heavy / too-long / json-remnant / multi-paragraph)は
- * **保存済みの行では隠さない**。「Netflix で Stranger Things を見たの？」のような
- * 正しい訳が latin-heavy になるなど、新しく生成する訳を締めるための規則であって、
+ * **保存済みの行では隠さない**。英文に無い固有名詞をラテン文字で書いた
+ * 正しい訳(「What did you watch last night?」→「Stranger Things を見たの？」)が latin-heavy になるなど、新しく生成する訳を締めるための規則であって、
  * 既に見えていた訳を消すほどの確かさは無い。しかも再取得しても同じ規則で弾かれる
  * 見込みが高く、**消したら二度と戻らない**。
  */

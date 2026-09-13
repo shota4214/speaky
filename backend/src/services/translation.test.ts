@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  countEnglishSentences,
-  countJapaneseSentenceEndings,
   EN_TO_JA_ATTEMPTS,
   EN_TO_JA_FRESH_ATTEMPTS,
   EN_TO_JA_NUM_PREDICT,
@@ -9,6 +7,7 @@ import {
   extractTranslationParagraphs,
   firstTranslationParagraph,
   isAcceptableEnglishRendering,
+  isTranslationNoteLine,
   looksLikeSplitTranslation,
   normalizeTranslationSource,
   sanitizeJapaneseTranslation,
@@ -146,15 +145,16 @@ describe('translateEnglishToJapanese', () => {
     expect(sent[0]!.options.stop).not.toContain('\n\n')
   })
 
-  it('2 段落目(返事の続き)は検証にも画面にも渡さない', async () => {
-    // 2 段落目まで含めると英文の 0.9 倍を超えて too-long になる長さにしてある。
-    // 1 段落目だけが検証に渡っていれば 1 回目で通る。
+  it('2 段落目(返事の続き)は画面に渡さない。後ろに日本語が残る出力は弾いて引き直す', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // 2 段落目が訳の続きか返事かは文字だけでは分からないので、1 段落目だけを使うこともしない。
     const sent = stubOllama([
       'カレーはおいしいよね！辛くしたの？\n\n私も昨日カレーを作りました。とても辛くて、家族みんなで食べました。',
+      'カレーはおいしいよね！辛くしたの？',
     ])
     const ja = await translateEnglishToJapanese('Curry is so good! Did you make it spicy?', {})
     expect(ja).toBe('カレーはおいしいよね！辛くしたの？')
-    expect(sent).toHaveLength(1)
+    expect(sent).toHaveLength(2)
   })
 
   it('閉じタグの残骸は剥がす', async () => {
@@ -472,14 +472,16 @@ describe('translateEnglishToJapanese(生成上限 / タイムアウト)', () => 
     expect(warn.mock.calls.some((c) => String(c[0]).includes('num_predict'))).toBe(true)
   })
 
-  it('切れたのが訳の後ろの余談だけなら、訳は使う', async () => {
+  it('切れたのが訳の後ろの段落でも、その試行は弾く(後ろの日本語が訳の続きか分からない)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const sent = stubOllamaResponses([
       { content: 'カレーはおいしいよね！辛くしたの？\n\n私も昨日カレーを', done_reason: 'length' },
+      { content: 'カレーはおいしいよね！辛くしたの？', done_reason: 'stop' },
     ])
     expect(await translateEnglishToJapanese('Curry is so good! Did you make it spicy?', {})).toBe(
       'カレーはおいしいよね！辛くしたの？',
     )
-    expect(sent).toHaveLength(1)
+    expect(sent).toHaveLength(2)
   })
 
   it('1 回目がタイムアウトしても 2 回目を試す(梯子の本数は変わらない)', async () => {
@@ -623,7 +625,7 @@ describe('英文を 1 段落にしてから訳す(曖昧な出力は通さず、
     expect(await translateEnglishToJapanese('Hi!\n\nHow are you today?', {})).toBe(
       'やあ！今日の調子はどう？',
     )
-    // 1 回目の段落に分かれた訳は、1 段落の英文(2 文)に対して 1 文しかないので弾く
+    // 1 回目の段落に分かれた訳は、選んだ段落の後ろに日本語が残るので弾く
     expect(sent).toHaveLength(2)
     for (const body of sent) {
       expect(body.messages[5]!.content).toBe('<en>Hi! How are you today?</en>')
@@ -691,10 +693,11 @@ describe('英文を 1 段落にしてから訳す(曖昧な出力は通さず、
     expect(sent).toHaveLength(EN_TO_JA_ATTEMPTS.length)
   })
 
-  it("done_reason='length' でも、空行の直後で止まった完結した訳は使う", async () => {
+  it("done_reason='length' なら、空行の直後で止まっていても弾く(後ろに訳の続きがあったかもしれない)", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const sent = stubOllamaResponses([{ content: 'こんにちは！\n\n', done_reason: 'length' }])
-    expect(await translateEnglishToJapanese('Hello!', {})).toBe('こんにちは！')
-    expect(sent).toHaveLength(1)
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('')
+    expect(sent).toHaveLength(EN_TO_JA_ATTEMPTS.length)
   })
 
   it('Hi! How are you? → やあ、元気？(後ろに段落の無い 1 文の訳)は通す', async () => {
@@ -703,47 +706,89 @@ describe('英文を 1 段落にしてから訳す(曖昧な出力は通さず、
     expect(sent).toHaveLength(1)
   })
 
-  it('Do you like Netflix? → Netflixは好き？ は分かれた訳とみなさない', async () => {
+  it('Do you like Netflix? → Netflixは好き？ は 1 回目で通す(英文の固有名詞はラテン文字のままでよい)', async () => {
     const source = 'Do you like Netflix?'
-    for (const raw of ['Netflixは好き？', 'Netflixは好き？\n\n私は大好き！']) {
-      const extracted = extractTranslationParagraphs(raw, { direction: 'en-to-ja', source })
-      expect(extracted.text).toBe('Netflixは好き？')
-      expect(looksLikeSplitTranslation(extracted, 'Netflixは好き？', source, false)).toBe(false)
-    }
-    // ⚠️ この訳そのものは、較正で固定された検証の規則(ラテン文字が日本語の文字数の半分以下)で
-    // latin-heavy になる。ここでは検証を変えない。カタカナで書いた同じ訳は 1 回目で通る。
-    expect(judgeJapaneseTranslation('Netflixは好き？', source)).toBe('latin-heavy')
-    const sent = stubOllama(['ネットフリックスは好き？'])
-    expect(await translateEnglishToJapanese(source, {})).toBe('ネットフリックスは好き？')
+    const extracted = extractTranslationParagraphs('Netflixは好き？', {
+      direction: 'en-to-ja',
+      source,
+    })
+    expect(looksLikeSplitTranslation(extracted, false)).toBe(false)
+    expect(judgeJapaneseTranslation('Netflixは好き？', source)).toBe('ok')
+    const sent = stubOllama(['Netflixは好き？'])
+    expect(await translateEnglishToJapanese(source, {})).toBe('Netflixは好き？')
     expect(sent).toHaveLength(1)
   })
 
-  it('looksLikeSplitTranslation: 文の数を見るのは、後ろに日本語があるときだけ', () => {
+  it('looksLikeSplitTranslation: 選んだ段落の後ろに日本語が残れば、文の数によらず弾く', () => {
     const source = 'Hi! How are you?'
-    const check = (raw: string, ja: string, truncated = false) =>
+    const check = (raw: string, truncated = false) =>
       looksLikeSplitTranslation(
         extractTranslationParagraphs(raw, { direction: 'en-to-ja', source }),
-        ja,
-        source,
         truncated,
       )
-    expect(check('やあ、元気？', 'やあ、元気？')).toBe(false)
-    expect(check('やあ、元気？\n\nHow are you?', 'やあ、元気？')).toBe(false)
-    expect(check('やあ、元気？\n\nうん！', 'やあ、元気？')).toBe(true)
-    expect(check('やあ！\n元気？', 'やあ！')).toBe(true)
-    expect(check('やあ、元気？\n\n', 'やあ、元気？', true)).toBe(true)
-    expect(check('やあ！元気？\n\nうん！', 'やあ！元気？')).toBe(false)
+    expect(check('やあ、元気？')).toBe(false)
+    expect(check('やあ、元気？\n\nHow are you?')).toBe(false)
+    expect(check('やあ、元気？\n\nうん！')).toBe(true)
+    expect(check('やあ！\n元気？')).toBe(true)
+    expect(check('やあ、元気？\n\n', true)).toBe(true)
+    // 以前は訳の文末の数(2)が英文の文の数(2)に足りていたので通していた
+    expect(check('やあ！元気？\n\nうん！')).toBe(true)
+    expect(check('Netflixは好き？\n\n私は大好き！')).toBe(true)
   })
 
-  it('countEnglishSentences / countJapaneseSentenceEndings', () => {
-    expect(countEnglishSentences('Hi! How are you?')).toBe(2)
-    expect(countEnglishSentences('Do you like Netflix?')).toBe(1)
-    expect(countEnglishSentences('It costs $3.50 today.')).toBe(1)
-    expect(countEnglishSentences('Wow... really?!')).toBe(2)
-    expect(countEnglishSentences('hello there')).toBe(0)
-    expect(countJapaneseSentenceEndings('やあ！元気？')).toBe(2)
-    expect(countJapaneseSentenceEndings('すごい!!本当に。')).toBe(2)
-    expect(countJapaneseSentenceEndings('やあ、元気')).toBe(0)
+  it.each([
+    ["Wow, that's great! What did you do?", 'わあ！すごいね！\n\n何をしたの？'],
+    // 絵文字で区切られた英文は 1 文と数えられていた
+    ['That sounds fun 😄 What did you eat?', '楽しそう！\n\n何を食べたの？'],
+  ])('文の数が偶然そろう半分の訳を出さない: %j → %j', async (en, raw) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sent = stubOllama([raw])
+    expect(await translateEnglishToJapanese(en, {})).toBe('')
+    expect(sent).toHaveLength(EN_TO_JA_ATTEMPTS.length)
+  })
+
+  it.each([
+    'やあ、今日の調子はどう？\n（カジュアルな言い方です）',
+    'やあ、今日の調子はどう？\n\n（カジュアルな言い方です）',
+    'やあ、今日の調子はどう？\n\nNote: カジュアルな言い方です',
+  ])('訳の後ろの補足の行(括弧書き / メタ説明)は後ろの日本語に数えない: %j', async (raw) => {
+    const sent = stubOllama([raw])
+    expect(await translateEnglishToJapanese('Hi! How are you today?', {})).toBe(
+      'やあ、今日の調子はどう？',
+    )
+    expect(sent).toHaveLength(1)
+  })
+
+  it('isTranslationNoteLine: sanitize が落とす行と、後ろの日本語から除く行は同じ判定', () => {
+    for (const line of [
+      '（カジュアルな言い方です）',
+      '(casual)',
+      '【補足】',
+      'Note: casual',
+      '* カジュアル',
+    ]) {
+      expect(isTranslationNoteLine(line)).toBe(true)
+      expect(sanitizeJapaneseTranslation(`こんにちは！\n${line}`)).toBe('こんにちは！')
+    }
+    for (const line of ['何をしたの？', 'いいね（笑）どこに行ったの？', '', '   ']) {
+      expect(isTranslationNoteLine(line)).toBe(false)
+    }
+  })
+
+  it('en→ja: 日本語のコロン終わりの段落は見出しとみなさず、前半を捨てない(弾いて引き直す)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const en = 'Here are a few options. Pasta, curry, or sushi?'
+    const raw = 'いくつか選択肢があるよ：\n\nパスタ、カレー、それともお寿司？'
+    const opts = { direction: 'en-to-ja', source: en } as const
+    expect(firstTranslationParagraph(raw, opts)).toBe('いくつか選択肢があるよ：')
+    // 訳について述べる見出しは、日本語でも従来どおり読み飛ばす
+    expect(firstTranslationParagraph('日本語訳：\n\nパスタ、カレー、それともお寿司？', opts)).toBe(
+      'パスタ、カレー、それともお寿司？',
+    )
+    const joined = 'いくつか選択肢があるよ。パスタ、カレー、それともお寿司？'
+    const sent = stubOllama([raw, joined])
+    expect(await translateEnglishToJapanese(en, {})).toBe(joined)
+    expect(sent).toHaveLength(2)
   })
 
   it('ja→en: コロンで終わる段落の後ろに段落が続けば、前半だけを出さずに弾く', async () => {

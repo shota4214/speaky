@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （`npm test` = frontend → backend の順に vitest。**frontend 281 件 / backend 467 件**）
+   （`npm test` = frontend → backend の順に vitest。**frontend 281 件 / backend 484 件**）
    backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
    LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
    `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
@@ -225,12 +225,23 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
     - en→ja は英文の改行・空行を空白にして **1 段落にしてから** 頼み、その形で検証する
       （`normalizeTranslationSource`）。だから検証の「空行を含む訳は落とす」に例外は無い
       （会話 JSON の `reply_ja` に空行があれば、`reply_en` に空行があっても落として en→ja に回す）。
-    - 段落は 1 つだけ選ぶ（前置き・相づち・見出しの段落だけ読み飛ばす）。後ろに日本語
-      （後ろの段落 / 2 行目 / 生成上限での切断）があり、訳の文末の数が英文の文の数より少なければ弾く。
-    - `done_reason === 'length'` で選んだ段落が出力の最後の段落なら弾く（訳の中で切れている）。
+    - 段落は 1 つだけ選ぶ（前置き・相づち・見出しの段落だけ読み飛ばす。en→ja で日本語を含む
+      コロン終わりの段落は、決まった見出しの言い回しに当たらなければ訳の本文として選ぶ）。
+      **選んだ段落の後ろに日本語（後ろの段落 / 2 行目）が残れば、文の数によらず必ず弾く**。
+      例外は補足の行（行全体が括弧書き / Note: などのメタ説明）だけで、その判定は表示前に
+      補足を落とす `sanitizeJapaneseTranslation` と同じ `isTranslationNoteLine` 1 つに揃えてある。
+      以前の「訳の文末の数が英文の文の数に足りれば通す」は、数が偶然そろう半分の訳を通していた。
+    - `done_reason === 'length'`（生成上限で切れた）なら、どこで切れていても弾く
+      （切れた先に訳の続きがあったかもしれない）。
   - 日本語訳の検証（`shared/text-guards.ts`）の長さ上限は **max(18, 英文 × 0.9)**。
     下限 12 は「Wow.」→「わあ、それはすごいですね！」を落としていた。20 にすると
     較正ケース（ちょうど 20 文字の崩れた訳）が通るので 18。
+  - 検証の latin-heavy（ラテン文字 > かな漢字の半分）は、**英文で名前らしく書かれた語を数えない**
+    （`sourceProperNouns`: 2 文字目以降に大文字がある iPhone / NBA、または文頭でない大文字始まりの語。
+    I / OK / 間投詞 / 曜日・月・言語名はストップリストで除く）。これが無いと「Netflixは好き？」のような
+    短い英文の訳は長さ上限と両立せず決して通らなかった。除外は英文に語全体で現れる語だけなので、
+    英文が分からない呼び出し（en が空）や原文の繰り返し・ローマ字は従来どおり落ちる。
+    文頭の固有名詞（「Netflix is fun.」の Netflix）は除外されない（厳しい側に倒している）。
   - 選択は設定の `modelProfile`（`auto` / `standard` / `small`、既定 `auto`）。
     `auto` は **タグのパラメータ数**から推定（2B 以下 = small）。ファミリー部分は見ない
     （`llama3.2` の "3.2" を拾うと 1B が small にならない）。

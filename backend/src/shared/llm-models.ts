@@ -96,7 +96,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Qwen 2.5 1.5B',
     sizeLabel: '~1GB',
     icon: '⚡⚡',
-    note: '同梱・既定 / 8GB 機向け・日本語訳が安定(軽量モード: 添削と単語は出ません)',
+    note: '同梱・既定 / 8GB 機向け・日本語訳が安定(軽量モード: 添削あり・単語カードなし)',
     lightweight: true,
     offerForDownload: true,
     bundled: true,
@@ -124,7 +124,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Gemma 2 2B',
     sizeLabel: '~1.6GB',
     icon: '⚡',
-    note: '要ダウンロード / 会話は成立するが添削は粗い',
+    note: '要ダウンロード / 会話は成立する(添削・日本語訳の品質は未計測)',
     lightweight: true,
     offerForDownload: false,
     bundled: false,
@@ -134,7 +134,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Llama 3.2 3B',
     sizeLabel: '~2GB',
     icon: '⚡',
-    note: '要ダウンロード / 標準モード(添削・単語あり)に戻せる最小のモデル',
+    note: '要ダウンロード / 標準モード(単語カードあり)・日本語訳は Qwen 2.5 1.5B より良くならない(評価済み)',
     lightweight: true,
     offerForDownload: true,
     bundled: false,
@@ -164,7 +164,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Gemma 2 9B',
     sizeLabel: '~5.5GB',
     icon: '⚖️',
-    note: '要ダウンロード / バランス型・16GB 以上向け・精度重視のおすすめ',
+    note: '要ダウンロード / 重い・16GB 以上向け(精度は未計測)',
     lightweight: false,
     offerForDownload: true,
     bundled: false,
@@ -174,7 +174,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Qwen 2.5 14B',
     sizeLabel: '~9GB',
     icon: '💎',
-    note: '要ダウンロード / 高品質・低速・16GB 以上向け',
+    note: '要ダウンロード / 低速・16GB 以上向け(精度は未計測)',
     lightweight: false,
     offerForDownload: true,
     bundled: false,
@@ -204,9 +204,9 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
  * 日本語訳を必ず出すこのアプリには、小さく速く、日本語が安定する Qwen の方が合う。
  *
  * 副作用として、素の初回インストールは自動判定で `small` プロファイル
- * (短い返答 / 添削・単語なし)になる。これは意図した結果であり、
- * 設定画面とオンボーディングで明示し、メモリに余裕のある人には
- * {@link RECOMMENDED_DOWNLOAD_LLM_MODEL} の取得を案内する。
+ * (短い返答 / 日本語訳と添削あり / 単語カードなし)になる。これは意図した結果であり、
+ * 設定画面とオンボーディングで明示する。追加ダウンロードは **どの画面も薦めない**
+ * (下の「RECOMMENDED_DOWNLOAD_LLM_MODEL を消した理由」)。
  *
  * ⚠️ 変更するときは `scripts/prep-llama-model.mjs` の MODEL / MODEL_FAMILY / MODEL_TAG
  * (MANIFEST_REL はこの 2 つから組み立てる)、
@@ -218,13 +218,16 @@ export const BUNDLED_LLM_MODEL = 'qwen2.5:1.5b'
 /** 既定の会話モデル。**同梱物と一致していること**(オフライン初回起動の前提)。 */
 export const DEFAULT_LLM_MODEL: string = BUNDLED_LLM_MODEL
 
-/**
- * メモリに余裕のある Mac(12GB 以上)に薦める追加ダウンロード。
- * 同梱の軽量モデル(1.5B)は自動判定で軽量モード(添削・単語なし)になるため、
- * 「フルの体験に戻すには何を落とせばいいか」を 1 箇所で持つ。
- * オンボーディングと設定画面の両方がここを読む。
+/*
+ * RECOMMENDED_DOWNLOAD_LLM_MODEL を消した理由:
+ * 以前はメモリ 12GB 以上の Mac に `llama3.2:3b` の取得を薦め、「取得すると標準モードに戻り
+ * 添削と単語カードが出る」と案内していた。しかし
+ *   - 実モデル評価で 3B の日本語訳は同梱の qwen2.5:1.5b より良くならなかった
+ *     (Llama 3.2 は日本語を公式に非対応)
+ *   - 添削はプロファイルに依らず services/grammar-check.ts が出すようになった
+ * ので、取得を薦める根拠が残っていない。別のモデルを薦め直すのではなく **薦めること自体をやめた**
+ * (オンボーディングの案内と設定画面のバナーも削除)。何かを薦め直すなら、先に計測すること。
  */
-export const RECOMMENDED_DOWNLOAD_LLM_MODEL = 'llama3.2:3b'
 
 /**
  * モデル参照の書式チェック。**allowlist より前に通す門番**。

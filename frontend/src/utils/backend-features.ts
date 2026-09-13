@@ -100,3 +100,11 @@ export const FEATURE_MODEL_PROFILE = 'model-profile'
  * `llama3.2:1b` を黙って既定モデルへ差し替える)。
  */
 export const FEATURE_MODEL_PROFILE_PREVIEW = 'model-profile-preview'
+/**
+ * 添削を backend の grammar-check(検証済みの直し + 固定テンプレートの日本語の説明)だけが作る。
+ * ストリーミングでは `feedback` イベント、`/api/chat` と `/api/chat/enrich` では
+ * レスポンスの `feedback` に入る。
+ * **これを申告していない backend の `feedback` はモデルが書いたもの**(説明が英語 /
+ * 崩れた日本語 / 中国語になりうる)なので、フロントは表示しない。
+ */
+export const FEATURE_GRAMMAR_CHECK = 'grammar-check'

@@ -20,6 +20,7 @@ import type { ModelProfilePref } from '../shared/llm-models.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
 import { filterReplySentences } from '../services/reply-guard.js'
+import { checkGrammar } from '../services/grammar-check.js'
 import { acceptJapaneseTranslation, stripLoneSurrogates } from '../shared/text-guards.js'
 import type { ChatReply } from '../services/chat-reply.js'
 
@@ -357,6 +358,19 @@ async function handleChatTurn(
             signal,
           })
         }
+        // 添削は **モデルが JSON に書いたものを絶対に使わない**(どちらのプロファイルでも)。
+        // 実モデル評価で、会話 JSON の feedback は実質出ないうえ、説明文が英語 / 崩れた日本語 /
+        // 中国語だった。表示するのは grammar-check が検証してテンプレートで説明を付けたものか、
+        // 何も無しかのどちらか。ストリーミング経路と違い応答の前に走る(フォールバック経路なので
+        // 添削 1 回ぶん、ビルド機で 0.2〜0.35 秒だけ読み上げの開始が遅れる)。
+        reply.feedback = await checkGrammar({
+          userText,
+          model: context.model,
+          numCtx: profile.numCtx,
+          signal,
+          tag: '[chat]',
+        })
+        if (signal.aborted) return endAborted(res)
         // どのプロファイルで動いたかをクライアントへ返す(UI の「軽量モード」表示用)。
         return res.json({ ...reply, profile: profile.level })
       }
@@ -469,7 +483,8 @@ async function handleOpeningTurn(
             signal,
           })
         }
-        return res.json({ ...reply, profile: profile.level })
+        // 挨拶にはユーザー発話が無い = 添削は無い。モデルが書いた feedback は捨てる。
+        return res.json({ ...reply, feedback: null, profile: profile.level })
       }
       console.warn(
         `[chat/opening] JSON parse + salvage failed (attempt ${attempt}/${attempts.length}, ` +

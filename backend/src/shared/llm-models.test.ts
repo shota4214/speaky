@@ -7,7 +7,6 @@ import {
   BUNDLED_LLM_MODEL,
   DEFAULT_LLM_MODEL,
   LLM_CATALOG,
-  RECOMMENDED_DOWNLOAD_LLM_MODEL,
   inferProfileLevel,
   isAllowedLlmModel,
   isModelProfilePref,
@@ -285,15 +284,20 @@ describe('同梱モデルの整合', () => {
     expect(bundled).toEqual([BUNDLED_LLM_MODEL])
   })
 
-  it('同梱モデルと追加ダウンロード推奨はどちらもカタログに載っている', () => {
+  it('同梱モデルはカタログに載っている', () => {
     expect(LLM_CATALOG.some((e) => e.tag === BUNDLED_LLM_MODEL)).toBe(true)
-    const recommended = LLM_CATALOG.find((e) => e.tag === RECOMMENDED_DOWNLOAD_LLM_MODEL)
-    expect(recommended).toBeDefined()
-    // 「取得して標準モードに戻す」案内なので、取得フォームに出ていないと辿り着けない。
-    expect(recommended!.offerForDownload).toBe(true)
   })
 
-  it('同梱モデルは自動判定で軽量モードになる(= 添削が出ないことを UI が言い切れる)', () => {
+  it('カタログの説明は、計測していない精度や「取得すると添削が戻る」を謳わない', () => {
+    // 添削はプロファイルに依らず grammar-check が出す。3B の日本語訳は同梱モデルより良くならなかった。
+    // 9B / 14B の精度は計測していない。
+    for (const e of LLM_CATALOG) {
+      expect(e.note, e.tag).not.toMatch(/おすすめ|高品質|精度重視/)
+      expect(e.note, e.tag).not.toMatch(/添削[^・]*(戻|出るように)/)
+    }
+  })
+
+  it('同梱モデルは自動判定で軽量モードになる(= 単語カードが出ないことを UI が言い切れる)', () => {
     // 小数のタグ(`1.5b`)が 1.5 と読めていることまで見る。
     // `1.5b` の "5b" だけを拾うと 5B = standard になり、同梱直後から
     // 8GB 機で長いプロンプトが走る(このテストが守りたい状況そのもの)。
@@ -323,8 +327,8 @@ describe('同梱モデルの整合', () => {
     expect(resolveLlmModel('llama3.2:1b')).toBe('llama3.2:1b')
   })
 
-  it('追加ダウンロード推奨は自動判定で標準モードになる(= 添削が戻る)', () => {
-    expect(inferProfileLevel(RECOMMENDED_DOWNLOAD_LLM_MODEL)).toBe('standard')
+  it('llama3.2:3b は自動判定で標準モードになる(単語カードあり)', () => {
+    expect(inferProfileLevel('llama3.2:3b')).toBe('standard')
   })
 
   it('prep スクリプトが vendor するモデルが BUNDLED_LLM_MODEL と一致する', () => {

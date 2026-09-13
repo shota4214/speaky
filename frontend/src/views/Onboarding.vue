@@ -196,19 +196,11 @@ function applyAutoLlmSelection(): void {
     lowMemory: lowMemory.value,
     memoryKnown: backendFeatures.value.totalMemoryBytes !== null,
   })
-  // 案内は毎回更新する(3B が入った瞬間に消えるべき)。
-  recommendedDownload.value = selection.recommendedDownload
   if (llmModel.value === selection.model) return
   llmModel.value = selection.model
   // 選択が動いたらステップ 4 の「取得済みか」も引き直す。
   llmPulled.value = installedLlms.value.includes(selection.model)
 }
-
-/**
- * メモリに余裕がある Mac に薦めたいが、まだ入っていないモデル(通常 3B)。
- * **案内するだけで選択は動かさない** — オフラインでも先へ進めることが優先。
- */
-const recommendedDownload = ref<string | null>(null)
 
 /**
  * 同梱モデルの表示名。説明文に型番を手書きすると、同梱物を変えたときに
@@ -217,13 +209,6 @@ const recommendedDownload = ref<string | null>(null)
 const bundledLlmName = computed(
   () => findCatalogEntry(BUNDLED_LLM_MODEL)?.label ?? BUNDLED_LLM_MODEL,
 )
-
-const recommendedDownloadLabel = computed(() => {
-  const tag = recommendedDownload.value
-  if (!tag) return null
-  const entry = findCatalogEntry(tag)
-  return entry ? `${entry.label}(${entry.sizeLabel})` : tag
-})
 
 /**
  * 選択肢はカタログから作る(設定画面の取得フォームと同じ出典)。
@@ -439,23 +424,6 @@ function complete() {
             この Mac のメモリ: <strong class="text-text">{{ memoryLabel }}</strong>
           </div>
 
-          <!--
-            メモリに余裕がある Mac への案内。**選択は動かさない**。
-            ネットが無い環境でも「入っているモデル」で先へ進めることが最優先で、
-            3B は入っていれば選ばれるし、入っていなければここで薦めるだけにする。
-          -->
-          <div
-            v-if="recommendedDownloadLabel"
-            class="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:bg-sky-900/20 dark:text-sky-200"
-          >
-            💡 この Mac はメモリに余裕があります(<strong>{{ memoryLabel }}</strong
-            >)。同梱の軽量モデルでもすぐ会話できますが、
-            <strong>{{ recommendedDownloadLabel }}</strong>
-            をダウンロードすると<strong>標準モード</strong>になり、
-            <strong>添削と単語カード</strong>が出るようになります。
-            次のステップで取得できます(オフラインなら後から設定画面でも取得できます)。
-          </div>
-
           <div>
             <label class="block text-sm font-medium">LLM</label>
             <select
@@ -476,12 +444,11 @@ function complete() {
             </p>
             <p class="mt-1 text-xs text-text-muted">
               2B 以下のモデルを選ぶと <strong class="text-text">軽量モード</strong> で動きます(AI
-              への指示を短くし、返答を 1〜2 文に制限(最初の挨拶だけは 3 文まで)。<strong
-                class="text-text"
-                >添削と単語カードは出ず</strong
-              >、日本語訳だけを作ります)。 同梱の {{ bundledLlmName }} もこれに当たります —
-              小さいモデルの添削は誤りが多く、 間違った学習材料を出すより出さない方がよいためです。
-              大きいモデルを入れれば自動で標準モードに戻り、設定画面で固定もできます。
+              への指示を短くし、返答を 1〜2 文に制限(最初の挨拶だけは 3 文まで)。
+              <strong class="text-text">日本語訳と添削は出ますが、単語カードは出ません</strong>)。
+              同梱の {{ bundledLlmName }} もこれに当たります。
+              添削は、説明をきちんと付けられる直しだけを表示します。
+              大きいモデルを選ぶと自動で標準モード(単語カードあり)になり、設定画面で固定もできます。
             </p>
           </div>
           <div>

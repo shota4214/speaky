@@ -16,6 +16,7 @@ import {
   TRANSLATION_ATTEMPTS,
 } from '../services/translation.js'
 import { MODEL_PROFILES } from '../services/model-profile.js'
+import { GRAMMAR_CHECK_ATTEMPTS } from '../services/grammar-check.js'
 
 /**
  * **クライアント締め切りと backend のリトライ梯子の結び付き**を固定するテスト。
@@ -40,16 +41,20 @@ describe('リトライ梯子とクライアント締め切りの結合', () => {
     expect(EN_TO_JA_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.translationEnToJa)
     expect(EN_TO_JA_FRESH_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.translationEnToJa)
     expect(EXTRACT_FACTS_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.extractFacts)
+    expect(GRAMMAR_CHECK_ATTEMPTS).toHaveLength(OLLAMA_ATTEMPTS.grammarCheck)
   })
 
   it('各ルートの最悪値が「予算 × 試行回数 + 後追いの補完」になっている', () => {
     // /api/chat: 会話 LLM 2 回 + reply_ja が空 / 検証落ちのときの en→ja 補完(最大 2 回)
-    expect(BACKEND_WORST_CASE_MS.chat).toBe(90_000 * 2 + 60_000 * 2)
+    // + 添削 1 回(非ストリーミング経路は応答の前に添削する)
+    expect(OLLAMA_BUDGET_MS.grammarCheck).toBe(20_000)
+    expect(BACKEND_WORST_CASE_MS.chat).toBe(90_000 * 2 + 60_000 * 2 + 20_000)
+    // 挨拶にはユーザー発話が無いので添削しない
     expect(BACKEND_WORST_CASE_MS.opening).toBe(90_000 * 2 + 60_000 * 2)
-    // /api/chat の日本語入力(japanese_help / mixed)は翻訳経路だけを通る
+    // /api/chat の日本語入力(japanese_help / mixed)は翻訳経路だけを通る(添削しない)
     expect(BACKEND_WORST_CASE_MS.chatTranslate).toBe(60_000 * 2)
-    // /api/chat/enrich: JSON 生成 1 回 + 日本語訳が空 / 検証落ちのときの補完(最大 2 回)
-    expect(BACKEND_WORST_CASE_MS.enrich).toBe(60_000 + 60_000 * 2)
+    // /api/chat/enrich: JSON 生成 1 回 + 日本語訳が空 / 検証落ちのときの補完(最大 2 回)+ 添削 1 回
+    expect(BACKEND_WORST_CASE_MS.enrich).toBe(60_000 + 60_000 * 2 + 20_000)
     expect(BACKEND_WORST_CASE_MS.summarize).toBe(60_000)
     expect(BACKEND_WORST_CASE_MS.extractFacts).toBe(60_000 * 2)
   })
@@ -81,6 +86,17 @@ describe('リトライ梯子とクライアント締め切りの結合', () => {
     // 片方だけを見て締め切りを決めると、もう片方が競走になる。
     expect(CLIENT_DEADLINE_MS.chat).toBeGreaterThan(BACKEND_WORST_CASE_MS.chat)
     expect(CLIENT_DEADLINE_MS.chat).toBeGreaterThan(BACKEND_WORST_CASE_MS.chatTranslate)
+  })
+
+  it('クライアント締め切りの現在値(添削を足した後)', () => {
+    // 数字を目で確かめられるように固定しておく(CLAUDE.md / api.ts の注記と揃える)。
+    expect(CLIENT_DEADLINE_MS.chat).toBe(350_000)
+    expect(CLIENT_DEADLINE_MS.opening).toBe(330_000)
+    expect(CLIENT_DEADLINE_MS.enrich).toBe(230_000)
+  })
+
+  it('添削の予算は enrich の 1 回ぶんより短い(後置の呼び出しで会話を待たせない)', () => {
+    expect(OLLAMA_BUDGET_MS.grammarCheck).toBeLessThan(OLLAMA_BUDGET_MS.enrich)
   })
 
   it('ストリーミングの first-token 予算は非ストリーミングを超えない', () => {

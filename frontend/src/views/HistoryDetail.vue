@@ -15,6 +15,7 @@ import { storedJapaneseTranslation, withEffectiveAiModes } from '../utils/stored
 import { useSettingsStore } from '../stores/settings'
 import {
   FEATURE_CHAT_ENRICH,
+  FEATURE_GRAMMAR_CHECK,
   FEATURE_MODEL_PROFILE,
   hasFeature,
   NO_FEATURES,
@@ -132,15 +133,20 @@ async function retryJapanese(message: Message): Promise<void> {
     // 既に添削 / 単語が入っている行を今のモデル(当時と別かもしれない、
     // しかも小さいかもしれない)の出力で差し替えると、黙って劣化させることになる。
     // 空のときだけ埋める。
+    // 添削は grammar-check 対応の backend が返したもの(検証済み + 固定テンプレートの説明)だけ。
+    // 申告の無い backend の feedback はモデルが書いたものなので使わない。
+    const checkedFeedback = hasFeature(backendFeatures.value, FEATURE_GRAMMAR_CHECK)
+      ? enrichment.feedback
+      : null
     const updated = await messagesRepo.update(message.id, {
       replyJa,
-      ...(message.feedback || !enrichment.feedback
+      ...(message.feedback || !checkedFeedback
         ? {}
         : {
             feedback: {
-              userSaid: enrichment.feedback.user_said,
-              corrected: enrichment.feedback.corrected,
-              explanation: enrichment.feedback.explanation,
+              userSaid: checkedFeedback.user_said,
+              corrected: checkedFeedback.corrected,
+              explanation: checkedFeedback.explanation,
             },
           }),
       ...((message.vocabulary?.length ?? 0) > 0 || enrichment.vocabulary.length === 0

@@ -14,7 +14,11 @@ import type { Mode, VocabItem } from '../db/types'
  *   {"type":"delta","text":" I went"}
  *   {"type":"done","text":"<英文全体>","replyJa":"..."(翻訳モードのみ)}
  *   {"type":"enrich","replyJa":"...","feedback":{...}|null,"vocabulary":[...]}
+ *   {"type":"feedback","feedback":{"user_said":"...","corrected":"...","explanation":"..."}}
  *   {"type":"error","code":"TIMEOUT","error":"..."}
+ *
+ * `feedback` は enrich の **後** に届く添削(grammar-check 対応の backend だけが送る)。
+ * 表示できる添削が無いターンでは届かない。
  */
 
 export interface StreamFeedback {
@@ -54,6 +58,7 @@ export type ChatStreamEffect =
   | { type: 'speak'; text: string }
   | { type: 'done'; text: string; replyJa: string | null }
   | { type: 'enrich'; enrichment: ChatEnrichment }
+  | { type: 'feedback'; feedback: StreamFeedback }
   | { type: 'error'; error: ChatStreamError }
 
 export interface ChatStreamState {
@@ -71,6 +76,8 @@ export interface ChatStreamState {
   /** done に同梱された日本語訳(翻訳ターンのみ)。 */
   replyJa: string | null
   enrich: ChatEnrichment | null
+  /** enrich の後に届いた添削(grammar-check)。 */
+  feedback: StreamFeedback | null
   error: ChatStreamError | null
   done: boolean
 }
@@ -207,6 +214,7 @@ export function initialChatStreamState(): ChatStreamState {
     replyEn: null,
     replyJa: null,
     enrich: null,
+    feedback: null,
     error: null,
     done: false,
   }
@@ -410,6 +418,16 @@ export function reduceChatStreamEvent(state: ChatStreamState, event: unknown): R
       return {
         state: { ...state, enrich: enrichment },
         effects: [{ type: 'enrich', enrichment }],
+      }
+    }
+
+    case 'feedback': {
+      // 添削は enrich と同じく後追い。形が壊れていたら何も表示しない(エラーにもしない)。
+      const feedback = parseFeedback(r.feedback)
+      if (!feedback) return { state, effects: [] }
+      return {
+        state: { ...state, feedback },
+        effects: [{ type: 'feedback', feedback }],
       }
     }
 

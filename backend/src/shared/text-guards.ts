@@ -204,3 +204,34 @@ const NON_LATIN_SCRIPT_RE =
 export function containsNonLatinScript(text: string): boolean {
   return NON_LATIN_SCRIPT_RE.test(text)
 }
+
+// ---------------------------------------------------------------------------
+// 単語カードの「意味」の検証
+// ---------------------------------------------------------------------------
+
+/**
+ * 単語カードの意味(meaning)が日本語として出してよいか。
+ *
+ * 標準プロファイルの実モデル評価で、`llama3.2:3b` の単語カードの意味が日本語だったのは
+ * 90 件中 26 件だけだった(残りは英語の言い換え・ローマ字・中国語)。
+ * 日本語訳の検証({@link judgeJapaneseTranslation})と **同じ文字の規則** を使うが、
+ * 意味は「散歩」「天気」のように **漢字だけ** で書くのが普通なので、
+ * かなの割合(kana-share)と長さの規則は使わない:
+ *  1) 絵文字を除いて NFKC で正規化し、空でない
+ *  2) 日本語訳に許している文字だけで出来ている(キリル・ハングル・中国語の簡体字の一部などを落とす)
+ *  3) かなか漢字が 1 文字以上ある(英語 / ローマ字だけの意味を落とす)
+ *  4) ラテン文字が日本語の文字数の半分以下(「walk(散歩)」のような英語主体を落とす)
+ */
+export function isJapaneseVocabMeaning(meaning: string): boolean {
+  const t = stripEmojiLines(meaning ?? '')
+    .normalize('NFKC')
+    .trim()
+  if (!t) return false
+  if (!JA_ALLOWED_RE.test(t)) return false
+  const kana = count(t, KANA_RE)
+  const han = count(t, HAN_RE)
+  const latin = count(t, LATIN_RE)
+  if (kana + han < 1) return false
+  if (latin > (kana + han) / 2) return false
+  return true
+}

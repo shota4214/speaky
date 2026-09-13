@@ -184,6 +184,19 @@ describe('ONBOARDING_LLM_CHOICES', () => {
     const bundledLabels = options.filter((o) => o.label.includes('同梱'))
     expect(bundledLabels.map((o) => o.value)).toEqual([BUNDLED_LLM_MODEL])
   })
+
+  // v1.2.0 の試験機は llama3.2:1b が選択済みのまま残る。選択肢に出ない型番は
+  // カタログの note がラベルに入るので、note に「同梱」が入っていると
+  // 「同梱と書かれたものを選べばオフラインで進める」という案内と矛盾する。
+  it('llama3.2:1b が選択済みでも「同梱」とは表示しない', () => {
+    const options = buildOnboardingLlmOptions({
+      selected: 'llama3.2:1b',
+      installed: ['llama3.2:1b', BUNDLED_LLM_MODEL],
+    })
+    const bundledLabels = options.filter((o) => o.label.includes('同梱'))
+    expect(bundledLabels.map((o) => o.value)).toEqual([BUNDLED_LLM_MODEL])
+    expect(options.some((o) => o.value === 'llama3.2:1b')).toBe(true)
+  })
 })
 
 /**

@@ -114,7 +114,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Llama 3.2 1B',
     sizeLabel: '~1.3GB',
     icon: '⚡⚡',
-    note: '非推奨 / 日本語訳が崩れやすい(日本語は公式に非対応)・同梱の Qwen 2.5 1.5B へ切り替えを推奨',
+    note: '非推奨 / 日本語訳が崩れやすい(日本語は公式に非対応)・Qwen 2.5 1.5B への切り替えを推奨',
     lightweight: true,
     offerForDownload: false,
     bundled: false,
@@ -208,7 +208,8 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
  * 設定画面とオンボーディングで明示し、メモリに余裕のある人には
  * {@link RECOMMENDED_DOWNLOAD_LLM_MODEL} の取得を案内する。
  *
- * ⚠️ 変更するときは `scripts/prep-llama-model.mjs` の MODEL / MANIFEST_REL、
+ * ⚠️ 変更するときは `scripts/prep-llama-model.mjs` の MODEL / MODEL_FAMILY / MODEL_TAG
+ * (MANIFEST_REL はこの 2 つから組み立てる)、
  * README / CLAUDE.md の同梱物の記述も同時に直すこと。
  * prep スクリプトとの一致は `shared/llm-models.test.ts` が検証している。
  */

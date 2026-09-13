@@ -889,7 +889,7 @@ async function handleDeleteAll() {
           </p>
           <p class="mt-1 text-xs text-text-muted">
             選べるのはインストール済みのモデルだけです。速度の目安(M4/M5):
-            <strong class="text-text">Qwen 1.5B ≈ 1秒未満</strong> /
+            <strong class="text-text">Qwen 1.5B ≈ 1秒前後</strong> /
             <strong class="text-text">Llama 3B ≈ 1-2秒</strong> /
             <strong class="text-text">Gemma 9B ≈ 3-5秒</strong> /
             <strong class="text-text">Qwen 14B ≈ 5-10秒</strong> per turn

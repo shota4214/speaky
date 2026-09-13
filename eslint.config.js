@@ -12,6 +12,7 @@ export default tseslint.config(
       '**/dist-bundle/**',
       '**/dist-app/**',
       'frontend/.vite/**',
+      '.claude/**',
     ],
   },
   js.configs.recommended,

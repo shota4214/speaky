@@ -5,3 +5,4 @@ dist-app
 package-lock.json
 *.log
 .git
+.claude

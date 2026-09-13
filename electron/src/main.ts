@@ -460,7 +460,7 @@ function syncRuntime(templateDir: string, runtimeDir: string): void {
  * Ollama を sidecar として起動する。
  * - 既存の Ollama (brew や Ollama.app 等) が動いていれば検出して再利用
  * - 動いていなければ electron-ollama に DL & 起動を任せる
- * - packaged 版では同梱した Llama 3.2 1B を OLLAMA_MODELS 経由で読ませる
+ * - packaged 版では同梱した LLM(BUNDLED_LLM_MODEL = Qwen 2.5 1.5B)を OLLAMA_MODELS 経由で読ませる
  *   (env を spawn 前にセットしておけば electron-ollama の子プロセスが継承する)
  */
 async function startOllama(ollamaModelsDir: string | null): Promise<void> {

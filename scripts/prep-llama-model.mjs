@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * 配布用 Llama 3.2 1B を Ollama 形式で取得して
+ * 配布用の同梱 LLM(Qwen 2.5 1.5B)を Ollama 形式で取得して
  * electron/build-resources/ollama-data/ に同梱可能な形で配置する。
  *
  * 流れ:
- *   1. ~/.ollama/models/manifests/registry.ollama.ai/library/llama3.2/1b を確認
+ *   1. ~/.ollama/models/manifests/registry.ollama.ai/library/qwen2.5/1.5b を確認
  *   2. 無ければ `ollama` バイナリを使って pull する
  *      - `ollama` が serve 動作中でなければ一時的に `ollama serve` を spawn
  *   3. manifest を読み、参照されている全 blob(layers + config)を列挙
@@ -15,7 +15,7 @@
  *
  * 出力先構造:
  *   electron/build-resources/ollama-data/
- *     manifests/registry.ollama.ai/library/llama3.2/1b
+ *     manifests/registry.ollama.ai/library/qwen2.5/1.5b
  *     blobs/sha256-<hash>   (manifest が参照するものだけ)
  */
 import { spawn } from 'node:child_process'
@@ -37,14 +37,19 @@ import { fileURLToPath } from 'node:url'
  *
  * ⚠️ **`backend/src/shared/llm-models.ts` の BUNDLED_LLM_MODEL と必ず一致させること。**
  * v1.1.0 までは 3B を同梱していたが、オンボーディングは 12GB 未満の Mac に
- * 軽量モデル(1B)を**あらかじめ選ぶ**ので、ネットの無い 8GB 機では
+ * 軽量モデルを**あらかじめ選ぶ**ので、ネットの無い 8GB 機では
  * 「選ばれているモデルが同梱されていない」= 初回起動が行き止まりになっていた。
- * v1.2.0 で同梱物そのものを 1B に寄せた(DMG も約 2.67GB → 約 1.5GB)。
+ * v1.2.0 で同梱物を llama3.2:1b に寄せた(DMG 約 2.67GB → 約 1.9GB 実測)が、
+ * 1B は日本語訳が崩れる(Llama 3.2 は日本語を公式に非対応)ため qwen2.5:1.5b に替えた。
+ * 理由と評価の数字は llm-models.ts の BUNDLED_LLM_MODEL のコメントを参照。
+ *
+ * ファイル名と npm script 名(prep:vendor:llama-model)は、ビルドチェーンを
+ * 触らないために据え置いている。中身は Llama 専用ではない。
  * 一致は backend の `shared/llm-models.test.ts` がこのファイルを読んで検証している。
  */
-const MODEL = 'llama3.2:1b'
-const MODEL_FAMILY = 'llama3.2'
-const MODEL_TAG = '1b'
+const MODEL = 'qwen2.5:1.5b'
+const MODEL_FAMILY = 'qwen2.5'
+const MODEL_TAG = '1.5b'
 const MANIFEST_REL = `manifests/registry.ollama.ai/library/${MODEL_FAMILY}/${MODEL_TAG}`
 const SERVE_READY_TIMEOUT_MS = 15_000
 const PULL_TIMEOUT_MS = 10 * 60 * 1000
@@ -132,8 +137,9 @@ async function main() {
 
   // 同梱物を変えたときに **前のモデルが vendor ディレクトリに残る** のを掃除する。
   // build-resources/ は .gitignore なのでビルド機のローカルにしか無く、
-  // 3B を vendor した後に 1B へ切り替えると、掃除しない限り DMG に両方入って
-  // 「小さくしたはずが大きくなった」ことに誰も気づけない。
+  // 前のモデル(3B → 1B のようなタグ違いも、llama3.2 → qwen2.5 のような
+  // ファミリー違いも)を vendor したビルド機で切り替えると、掃除しない限り
+  // DMG に両方入って「小さくしたはずが大きくなった」ことに誰も気づけない。
   pruneStaleVendored(dstManifestPath)
 
   const okFinal = await verifyOutput(dstManifestPath)

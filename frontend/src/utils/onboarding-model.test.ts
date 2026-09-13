@@ -21,7 +21,7 @@ import {
  */
 
 describe('chooseOnboardingLlm', () => {
-  it('8GB / オフライン(同梱の 1B だけ入っている)= 同梱モデルを選ぶ', () => {
+  it('8GB / オフライン(同梱の軽量モデルだけ入っている)= 同梱モデルを選ぶ', () => {
     const r = chooseOnboardingLlm({
       installed: [BUNDLED_LLM_MODEL],
       lowMemory: true,
@@ -52,7 +52,7 @@ describe('chooseOnboardingLlm', () => {
     expect(r.recommendedDownload).toBeNull()
   })
 
-  it('16GB / オフライン(同梱の 1B だけ)= 選択は 1B のまま、3B は案内だけ', () => {
+  it('16GB / オフライン(同梱の軽量モデルだけ)= 選択は同梱のまま、3B は案内だけ', () => {
     // ここが今回の核心。メモリに余裕があっても、入っていない 3B を
     // 選択状態にしてはいけない(オフラインだと先へ進めなくなる)。
     const r = chooseOnboardingLlm({
@@ -105,11 +105,43 @@ describe('chooseOnboardingLlm', () => {
     expect(r.installed).toBe(false)
   })
 
+  it('同梱モデルは qwen2.5:1.5b(このテストの前提を固定する)', () => {
+    // 下の fixture は「同梱物 = qwen2.5:1.5b、旧同梱物 = llama3.2:1b」を前提に
+    // 組んである。同梱物が変わったら fixture の意味も見直すこと。
+    expect(BUNDLED_LLM_MODEL).toBe('qwen2.5:1.5b')
+  })
+
+  it('v1.2.0 のテスト機(旧同梱の llama3.2:1b と新同梱が両方ある)= 新しい同梱モデルを選ぶ', () => {
+    // llama3.2:1b は日本語訳が崩れるので取得の選択肢から外した。
+    // 両方入っているなら、どのメモリ量でも薦めない方を選んではいけない。
+    for (const lowMemory of [true, false]) {
+      for (const memoryKnown of [true, false]) {
+        const r = chooseOnboardingLlm({
+          installed: ['llama3.2:1b', BUNDLED_LLM_MODEL],
+          lowMemory,
+          memoryKnown,
+        })
+        expect(r.model, JSON.stringify({ lowMemory, memoryKnown })).toBe(BUNDLED_LLM_MODEL)
+      }
+    }
+  })
+
+  it('旧同梱の llama3.2:1b しか入っていない = 実在するのでそれを選ぶ(行き止まりにしない)', () => {
+    // 薦めないモデルでも、入っているのがそれだけなら「実在する」方が強い。
+    const r = chooseOnboardingLlm({
+      installed: ['llama3.2:1b'],
+      lowMemory: true,
+      memoryKnown: true,
+    })
+    expect(r.model).toBe('llama3.2:1b')
+    expect(r.installed).toBe(true)
+  })
+
   it('何か入っている限り、選ぶモデルは必ずその中にある(不変条件)', () => {
     const installedSets = [
       [BUNDLED_LLM_MODEL],
       [RECOMMENDED_DOWNLOAD_LLM_MODEL],
-      ['qwen2.5:1.5b'],
+      ['llama3.2:1b'],
       ['gemma2:9b'],
       ['qwen2.5:14b', 'qwen2.5:1.5b'],
       [BUNDLED_LLM_MODEL, 'gemma2:9b'],
@@ -141,6 +173,29 @@ describe('ONBOARDING_LLM_CHOICES', () => {
 
   it('同梱モデルは必ず選択肢に含まれる(オフラインの唯一の出口)', () => {
     expect(ONBOARDING_LLM_CHOICES.some((e) => e.tag === BUNDLED_LLM_MODEL)).toBe(true)
+  })
+
+  it('日本語訳が崩れる llama3.2:1b は選択肢に出さない', () => {
+    expect(ONBOARDING_LLM_CHOICES.some((e) => e.tag === 'llama3.2:1b')).toBe(false)
+  })
+
+  it('「同梱」と表示されるのは同梱モデルだけ', () => {
+    const options = buildOnboardingLlmOptions({ selected: BUNDLED_LLM_MODEL, installed: [] })
+    const bundledLabels = options.filter((o) => o.label.includes('同梱'))
+    expect(bundledLabels.map((o) => o.value)).toEqual([BUNDLED_LLM_MODEL])
+  })
+
+  // v1.2.0 の試験機は llama3.2:1b が選択済みのまま残る。選択肢に出ない型番は
+  // カタログの note がラベルに入るので、note に「同梱」が入っていると
+  // 「同梱と書かれたものを選べばオフラインで進める」という案内と矛盾する。
+  it('llama3.2:1b が選択済みでも「同梱」とは表示しない', () => {
+    const options = buildOnboardingLlmOptions({
+      selected: 'llama3.2:1b',
+      installed: ['llama3.2:1b', BUNDLED_LLM_MODEL],
+    })
+    const bundledLabels = options.filter((o) => o.label.includes('同梱'))
+    expect(bundledLabels.map((o) => o.value)).toEqual([BUNDLED_LLM_MODEL])
+    expect(options.some((o) => o.value === 'llama3.2:1b')).toBe(true)
   })
 })
 
@@ -176,6 +231,8 @@ describe('buildOnboardingLlmOptions', () => {
       ['gemma2:2b'],
       ['llama3.1:8b-instruct-q8_0', 'qwen2.5:1.5b'],
       [RECOMMENDED_DOWNLOAD_LLM_MODEL],
+      // 取得の選択肢から外した旧同梱物だけが入っている(v1.2.0 のテスト機)
+      ['llama3.2:1b'],
     ]
     for (const installed of installedSets) {
       for (const lowMemory of [true, false]) {

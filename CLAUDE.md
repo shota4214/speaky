@@ -48,6 +48,10 @@ Tier2 で入ったもの（すべてこのブランチ内）:
 - 履歴詳細画面の日本語訳の再取得、**全ての HTTP 呼び出しにクライアント締め切り**
   （転写を含む。予算は `backend/src/shared/request-budget.ts` が唯一の出典）
 - **同梱 LLM を Llama 3.2 3B → 1B に変更**（DMG 約 2.67GB → 約 1.9GB(v1.2.0 実測)）
+- **同梱 LLM を `llama3.2:1b` → `qwen2.5:1.5b` に変更**（`feat/bundle-qwen2.5-1.5b`。
+  M1 実機で 1B の日本語訳が崩れたため。理由と数字は下の「同梱 LLM」節。
+  DMG は **約 1.6GB の見積もり・未実測**（モデルが約 0.33GB 小さくなった分を引いただけ。
+  次のビルド後に実測値へ直すこと）)
 - 設定画面の「会話モード」バッジを backend への問い合わせ結果に変更
 
 ### 残っているのは 1 つだけ: リリースビルド + **M1 MacBook Air 実機検証**
@@ -56,48 +60,59 @@ Tier2 で入ったもの（すべてこのブランチ内）:
 
 ```bash
 . ~/.nvm/nvm.sh && nvm use 22
-# ⚠️ 最初に root と electron の package.json を 1.2.0 に bump すること。
-#    このリリースは **version bump が必須**。同梱 LLM を 3B → 1B に差し替えたが、
-#    runtime sync（同梱物を userData にコピーする処理）は version.json の
-#    app version で gate されている。据え置くと既存 userData に 1B が
-#    コピーされず、既定モデル（= 1B）を指した瞬間に MODEL_NOT_FOUND になる。
+# ⚠️ 最初に root と electron の package.json を **v1.2.0 より上**に bump すること。
+#    このリリースも **version bump が必須**。同梱 LLM を llama3.2:1b → qwen2.5:1.5b に
+#    差し替えた。同梱モデルの blob / manifest 自体は ensureBundledOllamaModel が
+#    version gate と独立に足すが、既定モデル（= BUNDLED_LLM_MODEL）とカタログは
+#    **backend コード**に入っていて、backend の再同期は version.json の app version で
+#    gate されている。据え置くと v1.2.0 のテスト機では backend が旧コードのまま
+#    （既定 = llama3.2:1b）で動く。
 npm run prep:vendor:whisper-cli -w backend   # -DGGML_NATIVE=OFF で作り直す
-npm run prep:vendor:llama-model -w electron  # 1B を vendor + 旧 3B の残骸を掃除
+npm run prep:vendor:llama-model -w electron  # qwen2.5:1.5b を vendor + 旧 llama3.2 ファミリーの残骸を掃除
 npm run verify:arm64 -w backend              # ここが OK になってから dist
-npm run dist                                 # DMG ~1.9GB、5〜10分 + 公証で計 15〜40分
+npm run dist                                 # DMG ~1.6GB(見積もり・未実測)、5〜10分 + 公証で計 15〜40分
 
-# vendor 後に「3B が残っていないこと」を目で確認する（DMG が太る）
-ls electron/build-resources/ollama-data/manifests/registry.ollama.ai/library/llama3.2/
-#   → 1b だけが出ること
+# vendor 後に「旧同梱の llama3.2 が残っていないこと」を目で確認する（DMG が太る）
+ls electron/build-resources/ollama-data/manifests/registry.ollama.ai/library/
+#   → qwen2.5 だけが出ること（llama3.2 が出たら掃除が効いていない）
+ls electron/build-resources/ollama-data/manifests/registry.ollama.ai/library/qwen2.5/
+#   → 1.5b だけが出ること
 du -sh electron/build-resources/ollama-data/
+#   → 1GB 前後（1.3GB を超えていたら旧 blob が残っている疑い）
 ```
 
 検証は **M1（8GB）実機で**。M5 では絶対に再現しない項目が混ざっている。
 **⑵〜⑷ は必ず Wi-Fi を切って（機内モードで）行うこと**。
+⚠️ **v1.2.0 のテストビルドを動かした Mac は、先に ⑿ を済ませること**
+（`llama3.2:1b` が選ばれたままなので、そのまま日本語訳の品質を見ても意味がない）。
 
 1. whisper-cli が SIGILL せずに転写できる（Tier1 の一番の目的）
 2. ネット無しで Ollama が起動し会話開始まで到達する（`isDownloaded('v0.30.4')=true`）
 3. **オフラインで初回起動を最後まで通せる**（今回の一番の変更点）:
    `rm -rf "$HOME/Library/Application Support/electron"` → 機内モードで起動 →
    オンボーディングが「この Mac のメモリは 8GB です」と表示し、
-   LLM が **同梱の `llama3.2:1b`**（選択肢に「同梱」と出る）に**あらかじめ選ばれていて**、
+   LLM が **同梱の `qwen2.5:1.5b`**（選択肢に「同梱」と出る。`llama3.2:1b` は選択肢に出ない）に
+   **あらかじめ選ばれていて**、
    ステップ 4 の「次へ」が**最初から押せる**（DL ボタンが出ない = 取得済み）。
    ⚠️ ここが v1.1.0 直前の release blocker だった（1B が選ばれるのに 3B しか同梱が無く、
    オフラインだと「次へ」が永久に押せなかった）。
 4. **オフラインの 16GB 機でも初回起動を最後まで通せる**（16GB 機があれば）:
-   「3B を取得すると添削が出ます」という案内は出るが、**選択は同梱の 1B のまま**で、
+   「3B を取得すると添削が出ます」という案内は出るが、**選択は同梱の `qwen2.5:1.5b` のまま**で、
    案内を無視して「次へ」が押せる（案内が行き止まりを作らない）。
-5. `llama3.2:1b` で会話が成立する（軽量モード）:
+5. `qwen2.5:1.5b` で会話が成立する（軽量モード）:
    返答が 1〜2 文に収まる / 日本語訳が必ず出る / **添削と単語カードは出ない**。
    「出ないのは壊れているからではない」ことが会話画面の 🪶 バッジで分かる。
+   **日本語訳の欄が日本語である**（英語・ローマ字・崩れた文字列が出ない。v1.2.0 の 1B で実際に出た）。
+   日本語で話しかけたときに、それが英語に直って会話が続く。
 6. 最初の音が出るまでの時間（ストリーミングの効き）と、ターン間の待ち時間
 7. 設定画面の「会話モード」バッジが **`(backend 確認済み)` 付き**で表示され、
    会話画面のバッジと一致する（推測ではなく `/api/model-profile/preview` の結果）
 8. **アップグレードで既存ユーザーの 3B が消えない**（`~/Library/Application Support/electron`
    を **消さずに** 上書き起動）:
    - `llama3.2:3b` を選んで保存していた人が、そのまま 3B で会話できる
-   - `ls "$HOME/Library/Application Support/electron/ollama-data/models/manifests/registry.ollama.ai/library/llama3.2/"`
-     に `1b` と `3b` の両方がある
+   - `ls "$HOME/Library/Application Support/electron/ollama-data/models/manifests/registry.ollama.ai/library/"`
+     に `qwen2.5`（中身は `1.5b`）と `llama3.2`（中身は既存の `3b`。v1.2.0 のテスト機なら `1b` も）の
+     両方がある（同期は足すだけで、旧同梱物もユーザーの 3B も消さない）
    - `gemma2:2b` を選んでいた人が **標準モードのまま**である（設定スキーマ v3 の移行）
    - 設定画面で LLM を選び直すと、会話モードの固定が「自動」に戻る
 9. **オンラインで 3B を取得すると標準モードに戻る**: 設定画面 →「+ 取得」→ `llama3.2:3b` →
@@ -109,13 +124,23 @@ du -sh electron/build-resources/ollama-data/
     - 畳まれた後、同じ会話のまま次のターンが始められる（3 回連続で失敗すると録音を止める）
 11. 遅いターンが**通信エラーにされない**: 8GB 機でモデルのコールドロードが乗った重いターンが、
     エラー表示ではなくちゃんと返答になる（クライアント締め切りは backend の梯子より必ず長い）
+12. **v1.2.0 のテストビルドを動かした Mac は、日本語訳の品質を見る前に同梱モデルへ戻す**:
+    v1.2.0 は `llama3.2:1b` を同梱・既定にしていて、その選択は設定に保存されている。
+    **設定の移行は入れていない**（v1.2.0 は一般公開していない = テスト機にしか無いため）ので、
+    上書きインストールしても `llama3.2:1b` が選ばれたままになる。どちらかを必ずやること:
+    - ユーザーデータを消す: `rm -rf "$HOME/Library/Application Support/electron"`
+      （オンボーディングからやり直し。⑶ の確認も兼ねられる）
+    - または設定画面の LLM で **`qwen2.5:1.5b`** を選び直す（選び直すと会話モードの固定も「自動」に戻る）
+    - どちらの場合も、設定画面の LLM が `qwen2.5:1.5b` になっていることを確認してから ⑸ を見る。
+      `llama3.2:1b` はインストール済み一覧に「非推奨」の説明付きで残る（消えないのが正しい）。
 
-## 同梱物の事実（実機ビルドで確認済み）
+## 同梱物の事実（LLM 以外は実機ビルドで確認済み）
 
 DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべて同梱**（初回 DL 不要）:
 
-- LLM: **Llama 3.2 1B**（`ollama-data/blobs/` + manifest）。v1.1.0 までは 3B だった。
-  同梱を 1B にした理由と、既存ユーザーの 3B が消えない理由は下の「同梱 LLM」節を参照。
+- LLM: **Qwen 2.5 1.5B**（`qwen2.5:1.5b`。`ollama-data/blobs/` + manifest）。
+  **次のビルドで実機確認が必要**（v1.1.0 までは `llama3.2:3b`、v1.2.0 は `llama3.2:1b` を同梱して実機確認済み）。
+  同梱を差し替えた理由と、既存ユーザーのモデルが消えない理由は下の「同梱 LLM」節を参照。
 - Whisper small（`ggml-small.bin` 約488MB。低スペック機対策で medium から変更）
 - whisper-cli / ffmpeg-static
 - **Ollama ランタイム本体**（`ollama-bin/electron-ollama/v0.30.4/darwin/arm64/`）← feat/bundle-ollama-binary で追加
@@ -203,7 +228,29 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
     v3 移行が `gemma2:2b` の人に書き込んだ `'standard'` が残り続けると、
     その人が 1B に乗り換えたときに「小さいモデルに長いプロンプト」という、
     この一連の作業がまさに潰そうとしている組み合わせに静かに戻る。
-- **同梱 LLM は `llama3.2:1b` ただ 1 つ**（v1.1.0 までは 3B）。
+- **同梱 LLM は `qwen2.5:1.5b` ただ 1 つ**（v1.1.0 までは `llama3.2:3b`、v1.2.0 は `llama3.2:1b`）。
+  - **1B → Qwen 2.5 1.5B にした理由**: M1 MacBook Air の実機で、1B の日本語訳の欄に
+    英語・ローマ字・崩れた文字列が出た。実 backend + 実 Ollama で各シナリオ 12 試行の評価
+    （左が `llama3.2:1b`、右が `qwen2.5:1.5b`）:
+    - 取得サイズ: 1.32GB → 0.99GB
+    - 日本語訳の欄が日本語でない（60 回中）: 28 → **0**
+    - 英→日の意味が正しい（12 回中）: 0 → **8**
+    - 日本語入力を正しく英語にした（12 回中）: 1 → **10**
+    - 生成速度（ビルド機）: 91 → 106 tok/s
+
+    **Llama 3.2 は日本語を公式にサポートしていない**。プロンプト調整でも 1B は改善しなかった。
+    小さく・速く・日本語が安定するので、日本語訳を必ず出すこのアプリには Qwen が合う。
+    ライセンスも Meta Llama Community License → Apache-2.0 になった（README の表を参照）。
+
+  - **`llama3.2:1b` は取得の選択肢から外した**（カタログの `offerForDownload: false`）。
+    日本語訳を約束できないモデルをこちらから薦めないため。ただし **allowlist には残る**
+    （ファミリー判定）ので、入っている人はそのまま選べるし既定へ黙って落とされない。
+    カタログにも残してあり、インストール済み一覧に「非推奨」の説明が出る。
+  - **`llama3.2:1b` の人向けの設定移行は入れていない**。v1.2.0 は一般公開していない
+    （テスト機にしか無い）ため。テスト機は検証チェックリストの ⑿ で手動で戻す。
+  - ⚠️ **`RECOMMENDED_DOWNLOAD_LLM_MODEL`（= `llama3.2:3b`）は据え置いているが要計測**。
+    同じ評価で 3B も日本語訳が不安定だった（Llama 3.2 は日本語非対応）。12GB 以上の Mac に
+    薦めるモデルとして妥当かは、リリース前に別途計測して決めること。
   - 出典は `backend/src/shared/llm-models.ts` の `BUNDLED_LLM_MODEL`。
     `DEFAULT_LLM_MODEL` も frontend の `DEFAULT_SETTINGS.llmModel` もここを読む。
     `scripts/prep-llama-model.mjs` だけは .mjs なので import できず二重化しているが、
@@ -220,7 +267,8 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
     不変条件は「**インストール済みのモデルが 1 つでもあれば必ずその中から選ぶ**」。
     薦めるのと選ぶのは別で、メモリに余裕があっても未取得の 3B は選択状態にしない
     （オフラインで先へ進めなくなるため）。選択肢もカタログから作る（手書きしない）。
-  - ⚠️ **アップグレードで既存ユーザーの 3B を消さないこと**。
+  - ⚠️ **アップグレードで既存ユーザーの 3B を消さないこと**（v1.2.0 のテスト機に入っている
+    旧同梱の `llama3.2:1b` も同じ扱いで、消さない）。
     `electron/src/main.ts` の `syncOllamaModels` は **追加のみで削除しない**設計
     （blob は content-addressed なので「無ければコピー / サイズ違いなら上書き」、
     manifest は template 側のものだけ上書き）。ここに「template に無いものを消す」
@@ -230,6 +278,7 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
     `backend-runtime` の**外**（`userData/ollama-data`）にあるので巻き込まれない。
   - ビルド機の `electron/build-resources/ollama-data/` に前のモデルが残ると DMG が太る。
     prep スクリプトが毎回 `pruneStaleVendored()` で今回の同梱物以外を消す（冪等）。
+
 - **モデル選択**は「インストール済み AND backend が受け付ける名前」のみ。
   判定は **`backend/src/shared/llm-models.ts` が唯一の出典**で、frontend は
   `storage/settings.ts` からこのファイルを直接 import している（相対パスで backend 側を読む）。
@@ -288,8 +337,14 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
     `-DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod` は指定可能だが apple-m1 より基盤が古く
     fp16 ベクタ演算等を落として遅くなるため**付けない**。
 - `prep:vendor:whisper-model`（backend）= ggml-small.bin を HF から DL
-- `prep:vendor:llama-model`（electron）= **Llama 3.2 1B** を ollama pull して vendor。
+- `prep:vendor:llama-model`（electron）= **Qwen 2.5 1.5B**（`qwen2.5:1.5b`）を ollama pull して vendor。
+  スクリプト名・ファイル名（`scripts/prep-llama-model.mjs`）はビルドチェーンを触らないために
+  据え置いている（中身は Llama 専用ではない）。
   今回の同梱物が参照していない blob / manifest は毎回掃除する（`pruneStaleVendored`）。
+  掃除は **タグ違い（`llama3.2/3b`）だけでなくファミリー違い（`llama3.2/` ごと）も消す**。
+  ビルド機には `llama3.2/1b` が残っているので、次の vendor で `llama3.2/` と
+  その blob が消えることを、関数を抜き出して模擬 vendor ディレクトリで実行して確認済み
+  （共有 blob は残る / 2 回目は何もしない）。
   ⚠️ **`BUNDLED_LLM_MODEL` と必ず一致させること**（一致は backend のテストが検証）。
 - `prep:vendor:ollama-binary`（electron）= Ollama v0.30.4 バイナリを vendor（symlink 実ファイル化込み）
 - `verify:arm64`（backend / 実体は `scripts/verify-arm64.mjs`）= 同梱バイナリ検証
@@ -301,12 +356,12 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 ## 動作要件（README と揃える）
 
 - Apple Silicon / メモリ **8GB 以上**（16GB 以上推奨）
-- 同梱の `llama3.2:1b` +「軽量モード」がどの Mac でも最初に動く組み合わせ。
+- 同梱の `qwen2.5:1.5b` +「軽量モード」がどの Mac でも最初に動く組み合わせ。
   オンボーディングは `/api/health` の `totalMemoryBytes` を見る（`os.totalmem()` は
   backend でしか取れない。ブラウザの `navigator.deviceMemory` は最大 8 に丸められる）。
   - **12GB 未満**: 同梱の軽量モデルを選んでおく
   - **12GB 以上**: 3B が入っていればそれを選ぶ。入っていなければ
-    **選択は同梱の 1B のまま**にして、3B の取得を案内するだけにする
+    **選択は同梱の 1.5B のまま**にして、3B の取得を案内するだけにする
     （案内でオフラインのユーザーを行き止まりにしない）
   - どちらの場合も **インストール済みの中からしか選ばない**
 

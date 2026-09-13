@@ -139,7 +139,7 @@ export async function transcribeAudio(
  * 積み上げていた。締め切りは backend の梯子から**計算**する
  * (`backend/src/shared/request-budget.ts`)。ルートごとの内訳はそこに書いてある。
  *
- * 現在の値: /api/chat と /api/chat/opening が 270 秒、/api/chat/enrich と
+ * 現在の値: /api/chat と /api/chat/opening が 330 秒、/api/chat/enrich が 210 秒、
  * /api/extract-facts が 150 秒、/api/summarize が 90 秒、/api/transcribe が 210 秒。
  */
 

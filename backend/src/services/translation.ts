@@ -8,6 +8,12 @@ import type { Level } from './conversation-prompt.js'
 import { looksLikeJsonScaffold, matchJsonStringField } from './json-salvage.js'
 import { chatWithOllama, OllamaError, RETRY_SEED, type OllamaChatMessage } from './ollama.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
+import {
+  acceptJapaneseTranslation,
+  containsNonLatinScript,
+  stripEmoji,
+  stripLoneSurrogates,
+} from '../shared/text-guards.js'
 
 /**
  * japanese_help / mixed モードは LLM のシステムプロンプトに「翻訳して」と書くだけでは
@@ -18,54 +24,6 @@ import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
  * - 単一タスク「日本語/混在文を自然な英語に翻訳する」だけを LLM に依頼
  * - 出力 string をそのまま reply_en として返し、reply_ja はサーバー側で組み立てる
  */
-/**
- * 学習者レベルに応じた語彙・文の複雑さガイドを返す。
- * 翻訳経路で会話経路の buildSystemPrompt のレベル制御に相当する役割を担う。
- */
-function buildTranslationLevelInstruction(level: Level | undefined): string {
-  switch (level) {
-    case 'beginner':
-      return 'Target learner level: BEGINNER (CEFR A1-A2). Use very simple, common vocabulary and short sentence structures. Avoid idioms, slang, and complex grammar.'
-    case 'advanced':
-      return 'Target learner level: ADVANCED (CEFR C1-C2). Use natural, varied expressions; idioms, slang, and nuanced phrasing with richer vocabulary are welcome.'
-    case 'intermediate':
-    default:
-      return 'Target learner level: INTERMEDIATE (CEFR B1-B2). Use natural conversational tone. Common idioms are fine; avoid overly formal or overly slangy expressions.'
-  }
-}
-
-export function buildTranslationSystemPrompt(level: Level | undefined): string {
-  const levelInstruction = buildTranslationLevelInstruction(level)
-  return `You are a translator helping a Japanese learner of English speak more naturally.
-
-Your task: take the user's input (which may be Japanese only, or a mix of Japanese and English) and produce a single natural conversational English sentence that expresses what they meant — the sentence they should say out loud.
-
-${levelInstruction}
-
-Rules — follow these exactly:
-- Output ONLY the English sentence. No quotes, no preamble like "Output:" or "Translation:", no explanation, no follow-up notes.
-- Keep the meaning faithful to the original.
-- Match the vocabulary and sentence complexity to the target learner level above.
-- Do NOT respond to the content of the message. Just produce the English sentence.
-- For mixed Japanese+English input: if the English portions are already natural and grammatical, keep them and only translate the Japanese parts. If the English portions are awkward or ungrammatical, REWRITE the whole sentence so it sounds natural to a native speaker. The result should always be a polished, native-sounding sentence.
-
-Examples:
-  Input: 今日は朝から雨で気分が下がっています
-  Output: It's been raining since this morning, and it's bringing my mood down.
-
-  Input: I want to eat 寿司 for dinner tonight
-  Output: I want to eat sushi for dinner tonight.
-
-  Input: I want eating 寿司 tonight
-  Output: I want to eat sushi tonight.
-
-  Input: 週末は友達と movie を見に行ったよ
-  Output: I went to a movie with my friends over the weekend.
-
-  Input: 明日は meeting があるんだ
-  Output: I have a meeting tomorrow.`
-}
-
 /**
  * モデルが返す自然文の前置き(「Sure! Here's the translation: ...」「Translation: ...」
  * 「"..."」 等)を剥がして純粋な英文だけを残す。
@@ -140,32 +98,67 @@ export function stripTranslationPreamble(raw: string): string {
 }
 
 /**
+ * ja→en(日本語 / 英日混在の学習者発話 → 言うべき英文)のプロンプト。
+ *
+ * v1.2.0 は「Input: … / Output: …」の例を 5 本並べた長い system prompt に
+ * 学習者の発話を **素の user メッセージ** として渡していた。実モデル評価では
+ *  - 例文をそのまま返す(llama3.2:1b 12 件中 3 件)
+ *  - 質問の形の入力(「あなたの趣味は何ですか？」)に **答えてしまう**(全モデル)
+ * が起きていた。区切りタグで「これは訳す対象であって話しかけられた文ではない」と
+ * 明示し、例は **過去の会話ターン** として 2 往復だけ見せる(うち 1 つは質問)。
+ *
+ * 評価で検証した文面そのもの。レベル指示(CEFR)は載せていない — 載せない形で
+ * 検証しており、1 行指示を太らせると小型モデルが守らなくなるため。
+ */
+const JA_TO_EN_INSTRUCTION =
+  "Rewrite the learner's sentence inside <ja></ja> as one natural, simple English sentence that they could say. It may mix Japanese and English. Do not answer it. Output only the English sentence."
+
+const JA_TO_EN_FEW_SHOT: readonly OllamaChatMessage[] = [
+  { role: 'user', content: '<ja>明日は meeting があるんだ</ja>' },
+  { role: 'assistant', content: 'I have a meeting tomorrow.' },
+  { role: 'user', content: '<ja>好きな食べ物は何？</ja>' },
+  { role: 'assistant', content: 'What is your favorite food?' },
+]
+
+/**
  * ja→en 翻訳の試行設定。
  * ⚠️ **本数は shared/request-budget.ts の OLLAMA_ATTEMPTS.translation と一致させること。**
  * /api/chat の日本語入力経路はこの梯子だけを通るので、クライアント側の締め切りが
  * 「本数 × first-token 予算」から計算されている(v1.1.0 は 120 秒 対 120 秒の同値で、
  * どちらが先に諦めるかが運になっていた)。
+ *
+ * 1 回目は温度 0(決定的な 1 本)。温度 0 の出力を検証で弾いたときに同じ設定で
+ * 引き直しても同じ出力が返るだけなので、2 回目は温度を少し上げ seed を固定する
+ * (再現可能な別の 1 本)。
  */
 export const TRANSLATION_ATTEMPTS: readonly { temperature: number; seed?: number }[] = [
-  { temperature: 0.3 },
-  { temperature: 0.1, seed: RETRY_SEED },
+  { temperature: 0 },
+  { temperature: 0.3, seed: RETRY_SEED },
 ]
+
+/** 区切りタグの残骸を取り除く(stop で止めきれずに閉じタグだけ出ることがある)。 */
+function stripTags(text: string, tag: 'en' | 'ja'): string {
+  return text.replace(new RegExp(`</?${tag}>`, 'gi'), '')
+}
+
+/**
+ * ja→en の出力として使ってよいか。英字を含み、日本語や他の文字体系が残っていないこと。
+ * 残っている = 訳しきれていない / 日本語で答えてしまった出力。
+ */
+export function isAcceptableEnglishRendering(text: string): boolean {
+  return /[A-Za-z]/.test(text) && !containsNonLatinScript(text)
+}
 
 export async function translateToNaturalEnglish(
   userText: string,
   options: { model?: string; level?: Level; numCtx?: number; signal?: AbortSignal },
 ): Promise<string> {
+  const source = stripTags(stripEmoji(userText), 'ja').trim()
   const messages: OllamaChatMessage[] = [
-    { role: 'system', content: buildTranslationSystemPrompt(options.level) },
-    { role: 'user', content: userText },
+    { role: 'system', content: JA_TO_EN_INSTRUCTION },
+    ...JA_TO_EN_FEW_SHOT,
+    { role: 'user', content: `<ja>${source}</ja>` },
   ]
-  // 1 回失敗したら 1 回だけリトライ。瞬時の空応答で 502 を返さないための保険。
-  //
-  // 2 回目は温度を **下げて** seed を固定する。かつてはここだけ温度を上げていたが、
-  // それは「同じ分布からの引き直し」= 独立した宝くじで、(a) 失敗が再現できない
-  // (b) 運が悪ければ同じ壊れ方を繰り返す、という会話経路で潰したのと同じ欠陥。
-  // 翻訳は決定的な 1 本が欲しい処理なので、なおさら上げる理由が無い。
-  let lastTranslated = ''
   for (const a of TRANSLATION_ATTEMPTS) {
     const ollamaRes = await chatWithOllama(messages, {
       model: options.model,
@@ -174,11 +167,11 @@ export async function translateToNaturalEnglish(
       // OLLAMA_ATTEMPTS.translation と一致させること: /api/chat の日本語入力経路は
       // この梯子だけを通るので、クライアント締め切りがここから計算されている。
       firstTokenTimeoutMs: OLLAMA_BUDGET_MS.translation,
-      // 翻訳は再現性重視で低温度(会話経路の 0.85 より低い)。
       temperature: a.temperature,
       ...(a.seed !== undefined && { seed: a.seed }),
       topP: 0.9,
-      numPredict: 300,
+      numPredict: 120,
+      stop: ['<ja>', '\n\n'],
       // 自然文を返してほしいので Ollama の JSON モードを必ず OFF にする。
       // ここを忘れると format:'json' が送られてモデルが {"sentence":"..."}
       // のような JSON を返し、reply_en にそのまま入って UI 表示が壊れる。
@@ -186,22 +179,43 @@ export async function translateToNaturalEnglish(
       signal: options.signal,
     })
     const raw = ollamaRes.message?.content ?? ''
-    lastTranslated = stripTranslationPreamble(raw)
-    if (lastTranslated) return lastTranslated
-    console.warn(`[chat:translate] empty result at temperature=${a.temperature}; retrying`)
+    const candidate = stripLoneSurrogates(stripTags(stripTranslationPreamble(raw), 'ja')).trim()
+    if (candidate && isAcceptableEnglishRendering(candidate)) return candidate
+    console.warn(
+      `[chat:translate] rejected ja→en output at temperature=${a.temperature}:`,
+      candidate.slice(0, 120),
+    )
   }
-  return lastTranslated
+  return ''
 }
 
 /**
- * 英文を自然な日本語に翻訳する。会話 LLM が reply_ja を省略した場合の補完用。
- * 「日本語訳を必ず表示」設定を保証するため、空のときだけ呼ぶ。
+ * 英文 → 日本語訳のプロンプト(「日本語訳」の欄に出るもの)。
+ *
+ * v1.2.0 は 2 行の system prompt の下に **英文をそのまま user メッセージとして**
+ * 渡していた。小型モデルにとってそれは「話しかけられた」のと同じで、訳さずに
+ * **返事を書く**(英語やローマ字で)。M1 実機のスクリーンショットはこれだった。
+ * 区切りタグ + 1 行指示 + 過去ターンとしての例 2 往復 + 温度 0 + stop にし、
+ * 出力を検証して、弾いたら 1 回だけ引き直す。評価で検証した文面そのもの。
  */
-const EN_TO_JA_SYSTEM_PROMPT = `You are a translator. Translate the given English sentence into natural, conversational Japanese.
+const EN_TO_JA_INSTRUCTION =
+  'Translate the English text inside <en></en> into natural Japanese. Output only the Japanese translation.'
 
-Rules:
-- Output ONLY the Japanese translation. No quotes, no preamble, no explanation, no romaji.
-- Keep it natural and friendly, matching spoken Japanese.`
+const EN_TO_JA_FEW_SHOT: readonly OllamaChatMessage[] = [
+  { role: 'user', content: '<en>Hi! How are you today?</en>' },
+  { role: 'assistant', content: 'こんにちは！今日の調子はどう？' },
+  { role: 'user', content: '<en>I like cooking. What do you usually eat for dinner?</en>' },
+  { role: 'assistant', content: '料理が好きなんだ。夕ごはんはいつも何を食べるの？' },
+]
+
+/**
+ * en→ja 翻訳の試行設定。
+ * ⚠️ **本数は shared/request-budget.ts の OLLAMA_ATTEMPTS.translationEnToJa と一致させること。**
+ */
+export const EN_TO_JA_ATTEMPTS: readonly { temperature: number; seed?: number }[] = [
+  { temperature: 0 },
+  { temperature: 0.3, seed: RETRY_SEED },
+]
 
 /**
  * 日本語訳として使ってよい文字列か確かめる。
@@ -225,22 +239,37 @@ export async function translateEnglishToJapanese(
   englishText: string,
   options: { model?: string; numCtx?: number; signal?: AbortSignal },
 ): Promise<string> {
+  // 絵文字は訳させない(訳に絵文字や「笑顔」が混ざる / 検証の長さ判定が狂う)。
+  const source = stripTags(stripEmoji(englishText), 'en').trim()
+  if (!source) return ''
   const messages: OllamaChatMessage[] = [
-    { role: 'system', content: EN_TO_JA_SYSTEM_PROMPT },
-    { role: 'user', content: englishText },
+    { role: 'system', content: EN_TO_JA_INSTRUCTION },
+    ...EN_TO_JA_FEW_SHOT,
+    { role: 'user', content: `<en>${source}</en>` },
   ]
   try {
-    const ollamaRes = await chatWithOllama(messages, {
-      model: options.model,
-      numCtx: options.numCtx,
-      firstTokenTimeoutMs: OLLAMA_BUDGET_MS.translation,
-      temperature: 0.3,
-      topP: 0.9,
-      numPredict: 300,
-      jsonFormat: false,
-      signal: options.signal,
-    })
-    return sanitizeJapaneseTranslation(ollamaRes.message?.content ?? '')
+    for (const a of EN_TO_JA_ATTEMPTS) {
+      const ollamaRes = await chatWithOllama(messages, {
+        model: options.model,
+        numCtx: options.numCtx,
+        firstTokenTimeoutMs: OLLAMA_BUDGET_MS.translation,
+        temperature: a.temperature,
+        ...(a.seed !== undefined && { seed: a.seed }),
+        topP: 0.9,
+        numPredict: 200,
+        stop: ['<en>', '</en>', '\n\n'],
+        jsonFormat: false,
+        signal: options.signal,
+      })
+      const raw = sanitizeJapaneseTranslation(ollamaRes.message?.content ?? '')
+      const ja = acceptJapaneseTranslation(stripTags(raw, 'en'), source)
+      if (ja) return ja
+      console.warn(
+        `[chat] rejected en→ja translation at temperature=${a.temperature}:`,
+        raw.slice(0, 120),
+      )
+    }
+    return ''
   } catch (e) {
     // 中断は「失敗」ではない。空文字を返して先へ進むと、切れたソケットへ
     // レスポンスを組み立てる無駄な処理が続くので、呼び出し元へ投げ返す。

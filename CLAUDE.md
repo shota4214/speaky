@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （`npm test` = frontend → backend の順に vitest。**frontend 245 件 / backend 207 件**）
+   （`npm test` = frontend → backend の順に vitest。**frontend 253 件 / backend 373 件**）
    backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
    LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
    `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
@@ -103,7 +103,7 @@ du -sh electron/build-resources/ollama-data/
 9. **オンラインで 3B を取得すると標準モードに戻る**: 設定画面 →「+ 取得」→ `llama3.2:3b` →
    選択 → バッジが「標準モードで動作します（backend 確認済み）」になり、添削と単語カードが出る
 10. スリープ復帰直後のターンが固まらない:
-    - 会話ターン（`/api/chat`）はクライアント締め切り **270 秒**で必ず畳まれる
+    - 会話ターン（`/api/chat`）はクライアント締め切り **330 秒**で必ず畳まれる
     - **転写（`/api/transcribe`）も 210 秒で畳まれる**（v1.1.0 までここだけ締め切りが無く、
       「認識中」のままマイクが閉じて二度と戻らなかった）
     - 畳まれた後、同じ会話のまま次のターンが始められる（3 回連続で失敗すると録音を止める）
@@ -256,8 +256,10 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   - ストリーミング: ヘッダーまで 180 秒 / ヘッダー後は無通信 45 秒（keepalive が 10 秒間隔）
   - 非ストリーミング: **値は `backend/src/shared/request-budget.ts` が唯一の出典**。
     手で置かず、backend のリトライ梯子から**計算**する（frontend もこのファイルを import する）。
-    現在値: `/api/chat` `/api/chat/opening` **270 秒** / `/api/chat/enrich`
+    現在値: `/api/chat` `/api/chat/opening` **330 秒** / `/api/chat/enrich` **210 秒** /
     `/api/extract-facts` **150 秒** / `/api/summarize` **90 秒** / `/api/transcribe` **210 秒**。
+    （en→ja 翻訳が「検証 → 弾いたら 1 回だけ引き直す」の 2 回になったため、
+    `/api/chat` は 90×2 + 翻訳 60×2 = 300 秒、enrich は 60 + 60×2 = 180 秒が backend の最悪値）
   - ⚠️ **クライアントの締め切りは backend の最悪値より必ず長いこと**。v1.1.0 は
     手置きの 120 / 90 秒で、backend の梯子（`/api/chat` は 90×2 + 翻訳 60 = **240 秒**、
     enrich と extract-facts は **120 秒**、日本語入力経路は **120 秒でクライアントと同値**）

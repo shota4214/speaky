@@ -148,3 +148,10 @@ describe('matchJsonStringArrayField', () => {
     expect(matchJsonStringArrayField('{"newFacts":"not an array"}', 'newFacts')).toBeNull()
   })
 })
+
+describe('matchJsonStringField のキーの空白', () => {
+  it('引用符の内側に空白の入ったキーも拾う(小型モデルの " reply_ja")', () => {
+    const raw = '{"reply_en":"Hi!", " reply_ja":"やあ！", "mode":'
+    expect(matchJsonStringField(raw, 'reply_ja')).toBe('やあ！')
+  })
+})

@@ -31,7 +31,13 @@ import { resolveTurnModelAndProfile, type ModelProfile } from '../services/model
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 import { setupSSE, sseComment, sseSend } from '../services/sse.js'
 import { translateEnglishToJapanese, translateToNaturalEnglish } from '../services/translation.js'
-import { MAX_HISTORY_TURNS, type ChatContext } from './chat.js'
+import { filterReplySentences, ReplySentenceGate } from '../services/reply-guard.js'
+import {
+  acceptJapaneseTranslation,
+  stripEmoji,
+  stripLoneSurrogates,
+} from '../shared/text-guards.js'
+import { historyToMessages, MAX_HISTORY_TURNS, type ChatContext } from './chat.js'
 
 /**
  * 会話のストリーミング経路。
@@ -217,7 +223,8 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
     { role: 'system', content: ENRICH_SYSTEM_PROMPT },
     {
       role: 'user',
-      content: `Learner said:\n${userText}\n\nAI reply to annotate:\n${replyEn}`,
+      // 絵文字は訳させない(訳に絵文字が混ざる / 検証の長さ判定が狂う)。
+      content: `Learner said:\n${userText}\n\nAI reply to annotate:\n${stripEmoji(replyEn).trim()}`,
     },
   ]
 
@@ -240,7 +247,10 @@ export async function buildEnrichment(input: EnrichInput): Promise<EnrichmentRes
   }
 
   const result: EnrichmentResult = parsed ?? { replyJa: '', feedback: null, vocabulary: [] }
-  if (!result.replyJa.trim()) {
+  // JSON の中の日本語訳も検証する。訳として使えなければ捨てて en→ja で訳し直す
+  // (それも弾かれたら空 = フロントに「取得できませんでした + 再取得」を出させる)。
+  result.replyJa = acceptJapaneseTranslation(result.replyJa, replyEn)
+  if (!result.replyJa) {
     result.replyJa = await translateEnglishToJapanese(replyEn, {
       model: context.model,
       numCtx: profile.numCtx,
@@ -464,10 +474,7 @@ async function streamConversationTurn(
     })
   } else {
     const historyTurns = Math.min(profile.maxHistoryTurns, MAX_HISTORY_TURNS)
-    const history = (context.conversationHistory ?? []).slice(-historyTurns * 2)
-    for (const h of history) {
-      messages.push({ role: h.role === 'user' ? 'user' : 'assistant', content: h.text })
-    }
+    messages.push(...historyToMessages(context.conversationHistory, userText, historyTurns))
     messages.push({ role: 'user', content: userText })
   }
 
@@ -530,9 +537,43 @@ async function streamConversationTurn(
   let suppressed = false
   let streamError: OllamaError | null = null
 
+  /**
+   * small プロファイルだけ、送る前に「文」単位でふるいにかける(services/reply-guard.ts)。
+   *  - 非ラテン文字体系(漢字・かな・ハングル・キリル等)を含む文は **送らない**
+   *    (= 読み上げない)。JSON 足場の抑止と同じく、終了時にラテン文字の文だけで確定する。
+   *  - 2 文目の文末で打ち切り、Ollama の生成も止める(通常の完了として done を出す)。
+   * 文が確定するまで送らないが、フロントの読み上げも文末(+空白)を待ってから
+   * 喋るので、最初の音が出るまでの時間はほぼ変わらない。
+   */
+  const gate =
+    profile.dropNonLatinReply || profile.maxReplySentences !== null
+      ? new ReplySentenceGate({
+          maxSentences: profile.maxReplySentences,
+          dropNonLatin: profile.dropNonLatinReply,
+        })
+      : null
+
+  /** full の [sent, limit) を delta として送る(gate があれば確定した文だけ)。 */
+  function sendUpTo(limit: number): void {
+    if (gate) {
+      const text = gate.advance(full, limit)
+      sent = gate.consumedIndex
+      if (!text) return
+      stopKeepalive()
+      safeSend(res, { type: 'delta', text })
+      return
+    }
+    const pending = full.slice(sent, limit)
+    if (!pending) return
+    sent = limit
+    // delta を送る = 通信があるので keepalive は不要。
+    stopKeepalive()
+    safeSend(res, { type: 'delta', text: pending })
+  }
+
   try {
     for await (const chunk of stream.chunks()) {
-      full += chunk
+      full += stripLoneSurrogates(chunk)
       if (!probed) {
         if (full.length < SCAFFOLD_PROBE_CHARS) continue
         probed = true
@@ -561,29 +602,24 @@ async function streamConversationTurn(
         }
         if (tail.length < SCAFFOLD_PROBE_CHARS) {
           // まだ判断がつかない。疑わしい文字の **手前まで** を送る。
-          const head = full.slice(sent, opener)
-          if (head) {
-            // delta を送る = 通信があるので keepalive は不要。
-            stopKeepalive()
-            safeSend(res, { type: 'delta', text: head })
-            sent = opener
-          }
+          sendUpTo(opener)
+          if (gate?.isCapped) break
           continue
         }
         // 30 文字見ても JSON にならなかった = ただの記号。普通に送る。
       }
 
-      const pending = full.slice(sent)
-      if (!pending) continue
-      sent = full.length
-      stopKeepalive()
-      safeSend(res, { type: 'delta', text: pending })
+      sendUpTo(full.length)
+      // 文数の上限に達した。ループを抜けると chunks() の finally がソケットを閉じて
+      // Ollama の生成を止める(下で abort() も明示的に呼ぶ)。
+      if (gate?.isCapped) break
     }
   } catch (e) {
     streamError = e instanceof OllamaError ? e : new OllamaError('UNKNOWN', (e as Error).message, e)
   } finally {
     stopKeepalive()
   }
+  if (gate?.isCapped) stream.abort()
 
   if (signal.aborted) {
     // ユーザーが会話を終えた。書き込む相手がいないのでそのまま閉じる。
@@ -608,6 +644,24 @@ async function streamConversationTurn(
       return res.end()
     }
     finalText = salvaged
+    if (gate) {
+      finalText = filterReplySentences(finalText, {
+        maxSentences: profile.maxReplySentences,
+        dropNonLatin: profile.dropNonLatinReply,
+      }).text
+    }
+  } else if (gate) {
+    if (!gate.isCapped) gate.advance(full, full.length, true)
+    finalText = gate.text
+    if (!finalText && gate.droppedCount > 0) {
+      console.warn(`${tag} every sentence contained non-Latin script:`, full.slice(0, 200))
+      safeSend(res, {
+        type: 'error',
+        code: 'MALFORMED',
+        error: 'LLM が英語の返答を返しませんでした。',
+      })
+      return res.end()
+    }
   }
 
   if (!finalText) {

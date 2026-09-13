@@ -1,4 +1,5 @@
 import type { ModelProfileLevel } from '../shared/llm-models.js'
+import { topicPromptLabel } from '../shared/topics.js'
 
 export type Level = 'beginner' | 'intermediate' | 'advanced'
 export type Mode = 'normal' | 'japanese_help' | 'mixed'
@@ -142,7 +143,8 @@ Respond with ONE JSON object and nothing else. No markdown, no code fences.
 function buildSmallSystemPrompt(input: BuildPromptInput): string {
   const aiName = input.aiName ?? 'Emma'
   const level = input.level ?? 'intermediate'
-  const topic = input.topic ?? 'casual chat'
+  // 組み込みトピックはキー('daily')で届く。単語そのものについて質問させないよう英語の説明にする。
+  const topic = topicPromptLabel(input.topic ?? 'casual chat')
   const personality = input.personality ?? 'friendly'
   const vocabFocus = input.vocabFocus ?? []
   const userProfile = input.userProfile ?? []
@@ -193,7 +195,8 @@ export function buildSystemPrompt(input: BuildPromptInput = {}): string {
   if ((input.profile ?? 'standard') === 'small') return buildSmallSystemPrompt(input)
   const aiName = input.aiName ?? 'Emma'
   const level = input.level ?? 'intermediate'
-  const topic = input.topic ?? 'casual chat'
+  // 組み込みトピックはキー('daily')で届く。単語そのものについて質問させないよう英語の説明にする。
+  const topic = topicPromptLabel(input.topic ?? 'casual chat')
   const mode = input.mode ?? 'normal'
   const vocabFocus = input.vocabFocus ?? []
   const userProfile = input.userProfile ?? []
@@ -353,7 +356,8 @@ The user spoke in English. Respond naturally as their conversation partner. Foll
 export function buildOpeningUserPrompt(input: BuildPromptInput = {}): string {
   if ((input.profile ?? 'standard') === 'small') return buildSmallOpeningUserPrompt(input)
   const aiName = input.aiName ?? 'Emma'
-  const topic = input.topic ?? 'casual chat'
+  // 組み込みトピックはキー('daily')で届く。単語そのものについて質問させないよう英語の説明にする。
+  const topic = topicPromptLabel(input.topic ?? 'casual chat')
   const personality = input.personality ?? 'friendly'
   const hasProfile = (input.userProfile?.length ?? 0) > 0
   const hasLastSummary = !!input.lastConversationSummary
@@ -391,7 +395,8 @@ ${closing})`
  * 効かない)。例を全部落として、やることだけを 2 文で指示する。
  */
 function buildSmallOpeningUserPrompt(input: BuildPromptInput): string {
-  const topic = input.topic ?? 'casual chat'
+  // 組み込みトピックはキー('daily')で届く。単語そのものについて質問させないよう英語の説明にする。
+  const topic = topicPromptLabel(input.topic ?? 'casual chat')
   const closing =
     (input.outputFormat ?? 'json') === 'text'
       ? 'Plain English text only.'

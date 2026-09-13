@@ -51,7 +51,9 @@ export function decodeJsonStringLiteral(escaped: string): string | null {
  * field は呼び出し側のリテラルのみを想定しているため正規表現エスケープはしない。
  */
 export function matchJsonStringField(raw: string, field: string): string | null {
-  const re = new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`)
+  // キー名の内側の空白も許す。小型モデルは `" reply_ja":` のように書くことがある
+  // (llama3.2:1b の挨拶で 12 件中 9 件)。
+  const re = new RegExp(`"\\s*${field}\\s*"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`)
   const m = re.exec(raw)
   if (!m?.[1]) return null
   return decodeJsonStringLiteral(m[1])

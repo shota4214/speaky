@@ -242,6 +242,14 @@ function isEnrichPending(message: Message): boolean {
 function isEnrichFailed(message: Message): boolean {
   return loop.enrichFailedIds.value.has(message.id)
 }
+/**
+ * 日本語訳の欄に「参考訳」と添えるか。AI の返答の訳は小型モデルだと
+ * 3 分の 1 程度が部分的にしか合っていないので、正確な訳のように見せない。
+ * 日本語入力のターン(「〜と言えますよ」)は訳ではなく案内文なので付けない。
+ */
+function isReferenceTranslation(message: Message): boolean {
+  return message.mode !== 'japanese_help' && message.mode !== 'mixed'
+}
 function showJapaneseLine(message: Message): boolean {
   if (!settings.settings.showJapanese) return false
   return !!message.replyJa || isEnrichPending(message) || isEnrichFailed(message)
@@ -326,7 +334,14 @@ async function retryJapanese(message: Message) {
               >
                 <div class="text-sm">{{ m.replyEn }}</div>
                 <div v-if="showJapaneseLine(m)" class="mt-1 text-xs text-text-muted">
-                  <template v-if="m.replyJa">{{ m.replyJa }}</template>
+                  <template v-if="m.replyJa">
+                    <span
+                      v-if="isReferenceTranslation(m)"
+                      class="mr-1 rounded border border-border px-1 text-[10px]"
+                      title="AI による参考の訳です。細かいニュアンスは違うことがあります"
+                      >参考訳</span
+                    >{{ m.replyJa }}
+                  </template>
                   <template v-else-if="isEnrichPending(m)">
                     <span class="opacity-60">日本語訳を準備中...</span>
                   </template>

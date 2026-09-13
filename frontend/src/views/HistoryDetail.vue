@@ -10,6 +10,7 @@ import { conversationsRepo } from '../db/repos/conversations'
 import { messagesRepo } from '../db/repos/messages'
 import type { Conversation, Message } from '../db/types'
 import { chatEnrich, probeBackendFeatures } from '../services/api'
+import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
 import { useSettingsStore } from '../stores/settings'
 import {
   FEATURE_CHAT_ENRICH,
@@ -64,6 +65,11 @@ onMounted(async () => {
   backendFeatures.value = await probeBackendFeatures()
 })
 
+/** 日本語訳に「参考訳」と添えるか(日本語入力ターンの案内文には付けない)。 */
+function isReferenceTranslation(m: Message): boolean {
+  return m.mode !== 'japanese_help' && m.mode !== 'mixed'
+}
+
 /** 日本語訳が欠けている AI 返答か(= 再取得の対象)。 */
 function isJapaneseMissing(m: Message): boolean {
   return m.role === 'ai' && !!m.replyEn?.trim() && !m.replyJa?.trim()
@@ -100,8 +106,9 @@ async function retryJapanese(message: Message): Promise<void> {
         ? { modelProfile: settings.settings.modelProfile }
         : {}),
     })
-    // 訳が空の enrich は成功ではない。会話画面(applyEnrichment)と同じ判定にする。
-    if (!enrichment.replyJa.trim()) {
+    // 訳が空 / 訳として使えない enrich は成功ではない。会話画面(applyEnrichment)と同じ判定にする。
+    const replyJa = acceptJapaneseTranslation(enrichment.replyJa, message.replyEn)
+    if (!replyJa) {
       setFlag(retryFailedIds, message.id, true)
       return
     }
@@ -110,7 +117,7 @@ async function retryJapanese(message: Message): Promise<void> {
     // しかも小さいかもしれない)の出力で差し替えると、黙って劣化させることになる。
     // 空のときだけ埋める。
     const updated = await messagesRepo.update(message.id, {
-      replyJa: enrichment.replyJa,
+      replyJa,
       ...(message.feedback || !enrichment.feedback
         ? {}
         : {
@@ -211,7 +218,14 @@ function replay(text: string) {
                   日本語訳は後追い(enrich)で入るため、届かないまま保存された行が
                   ありうる。無条件に出すと空行だけが残るので、あるときだけ描画する。
                 -->
-                <div v-if="m.replyJa" class="mt-1 text-xs text-text-muted">{{ m.replyJa }}</div>
+                <div v-if="m.replyJa" class="mt-1 text-xs text-text-muted">
+                  <span
+                    v-if="isReferenceTranslation(m)"
+                    class="mr-1 rounded border border-border px-1 text-[10px]"
+                    title="AI による参考の訳です。細かいニュアンスは違うことがあります"
+                    >参考訳</span
+                  >{{ m.replyJa }}
+                </div>
                 <div v-else-if="isJapaneseMissing(m)" class="mt-1 text-xs text-text-muted">
                   <span class="opacity-60">
                     {{

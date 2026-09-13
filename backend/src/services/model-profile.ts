@@ -63,6 +63,17 @@ export interface ModelProfile {
    * **学習者を積極的に間違った方向へ引っ張る**。日本語訳は製品の約束なので残す。
    */
   enrichment: 'full' | 'translation-only'
+  /**
+   * 英語の返答をこの文数で打ち切る(null = 打ち切らない)。
+   * small は「1〜2 文」を指示しても qwen2.5:1.5b が挨拶 12/12 で破ったため 2。
+   * standard(3B 以上)は長さを守れているので打ち切らない。
+   */
+  maxReplySentences: number | null
+  /**
+   * 英語の返答から非ラテン文字体系(漢字・かな・ハングル・キリル等)を含む文を落とすか。
+   * 小型モデルは英語の返答に日本語や他言語を混ぜることがある。
+   */
+  dropNonLatinReply: boolean
 }
 
 const STANDARD_PROFILE: ModelProfile = {
@@ -79,6 +90,8 @@ const STANDARD_PROFILE: ModelProfile = {
   topP: 0.92,
   repeatPenalty: 1.15,
   enrichment: 'full',
+  maxReplySentences: null,
+  dropNonLatinReply: false,
 }
 
 const SMALL_PROFILE: ModelProfile = {
@@ -102,6 +115,8 @@ const SMALL_PROFILE: ModelProfile = {
   // 小型モデルは同じ言い回し("That sounds great!")に張り付きやすい。
   repeatPenalty: 1.2,
   enrichment: 'translation-only',
+  maxReplySentences: 2,
+  dropNonLatinReply: true,
 }
 
 export const MODEL_PROFILES: Record<ModelProfileLevel, ModelProfile> = {

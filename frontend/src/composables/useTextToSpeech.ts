@@ -1,5 +1,6 @@
 import { onUnmounted, ref } from 'vue'
 import type { Gender } from '../db/types'
+import { stripEmoji } from '../../../backend/src/shared/text-guards'
 
 /**
  * AI キャラの gender(female / male)に対応した、フォールバック用の voice 名
@@ -177,10 +178,14 @@ export function useTextToSpeech(options: TTSOptions = {}) {
    */
   let generation = 0
 
-  async function speak(text: string, overrides: SpeakOptions = {}): Promise<void> {
+  async function speak(rawText: string, overrides: SpeakOptions = {}): Promise<void> {
     if (!supported.value) {
       throw new Error('Web Speech API SpeechSynthesis is not supported')
     }
+    // 絵文字は読み上げない(macOS の音声は「smiling face with smiling eyes」と
+    // 文字どおり喋る)。絵文字だけの断片なら何もせずに終える。
+    const text = stripEmoji(rawText).trim()
+    if (!text) return
     const interrupt = overrides.interrupt ?? true
     if (interrupt) {
       generation += 1

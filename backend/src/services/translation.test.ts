@@ -1,0 +1,134 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  EN_TO_JA_ATTEMPTS,
+  isAcceptableEnglishRendering,
+  TRANSLATION_ATTEMPTS,
+  translateEnglishToJapanese,
+  translateToNaturalEnglish,
+} from './translation.js'
+import { RETRY_SEED } from './ollama.js'
+
+interface SentBody {
+  messages: { role: string; content: string }[]
+  format?: string
+  options: { temperature: number; seed: number; stop?: string[]; num_predict?: number }
+}
+
+/** 返答を順に返す fetch のスタブ。送られた body を記録する。 */
+function stubOllama(replies: string[]): SentBody[] {
+  const sent: SentBody[] = []
+  vi.stubGlobal('fetch', async (_url: unknown, init: { body: string }) => {
+    sent.push(JSON.parse(init.body) as SentBody)
+    const content = replies[Math.min(sent.length - 1, replies.length - 1)]
+    return new Response(JSON.stringify({ message: { role: 'assistant', content } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  })
+  return sent
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('translateEnglishToJapanese', () => {
+  it('区切りタグ + 1 行指示 + 過去ターンの例 2 往復 + 温度 0 + stop で頼む', async () => {
+    const sent = stubOllama(['映画は楽しいね！どんな映画が好き？'])
+    const ja = await translateEnglishToJapanese(
+      'Movies are fun! 🎬 What kind of movies do you like?',
+      {},
+    )
+    expect(ja).toBe('映画は楽しいね！どんな映画が好き？')
+    expect(sent).toHaveLength(1)
+    const body = sent[0]!
+    expect(body.messages).toHaveLength(6)
+    expect(body.messages[0]).toEqual({
+      role: 'system',
+      content:
+        'Translate the English text inside <en></en> into natural Japanese. Output only the Japanese translation.',
+    })
+    expect(body.messages.map((m) => m.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+    ])
+    // 絵文字は訳させない
+    expect(body.messages[5]!.content).toBe(
+      '<en>Movies are fun!  What kind of movies do you like?</en>',
+    )
+    expect(body.options.temperature).toBe(0)
+    expect(body.options.stop).toEqual(['<en>', '</en>', '\n\n'])
+    expect(body.format).toBeUndefined()
+  })
+
+  it('検証で弾いたら温度 0.3 + 固定 seed で 1 回だけ引き直す', async () => {
+    const sent = stubOllama(['Konnichiwa, watashi wa Emma desu.', 'こんにちは、エマだよ！'])
+    const ja = await translateEnglishToJapanese("Hi, I'm Emma!", {})
+    expect(ja).toBe('こんにちは、エマだよ！')
+    expect(sent).toHaveLength(2)
+    expect(sent[1]!.options.temperature).toBe(0.3)
+    expect(sent[1]!.options.seed).toBe(RETRY_SEED)
+  })
+
+  it('2 回とも使えなければ空文字(= 画面には何も出さず再取得ボタン)', async () => {
+    const sent = stubOllama(['Nice to meet you too!', "kon'nichiwa"])
+    expect(await translateEnglishToJapanese('Nice to meet you!', {})).toBe('')
+    expect(sent).toHaveLength(EN_TO_JA_ATTEMPTS.length)
+  })
+
+  it('返事の続きを書き始めた長すぎる出力も弾く', async () => {
+    stubOllama([
+      'こんにちは！私はどうですか。日本人である人は、英語で日常生活をしているかもしれません。',
+    ])
+    expect(await translateEnglishToJapanese('Hi! How are you?', {})).toBe('')
+  })
+
+  it('閉じタグの残骸は剥がす', async () => {
+    stubOllama(['こんにちは！</en>'])
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('こんにちは！')
+  })
+})
+
+describe('translateToNaturalEnglish', () => {
+  it('区切りタグ + 「答えるな」の 1 行指示 + 質問を含む例 2 往復 + 温度 0 + stop で頼む', async () => {
+    const sent = stubOllama(['What is your hobby?'])
+    expect(await translateToNaturalEnglish('あなたの趣味は何ですか？', {})).toBe(
+      'What is your hobby?',
+    )
+    const body = sent[0]!
+    expect(body.messages[0]!.content).toContain('Do not answer it.')
+    expect(body.messages[4]).toEqual({ role: 'assistant', content: 'What is your favorite food?' })
+    expect(body.messages[5]).toEqual({ role: 'user', content: '<ja>あなたの趣味は何ですか？</ja>' })
+    expect(body.options.temperature).toBe(0)
+    expect(body.options.stop).toEqual(['<ja>', '\n\n'])
+  })
+
+  it('日本語が残った出力は弾いて引き直す(梯子の本数は変えない)', async () => {
+    const sent = stubOllama([
+      'I like 料理, especially カレー.',
+      'I like cooking, especially curry.',
+    ])
+    expect(await translateToNaturalEnglish('I like 料理, especially カレー', {})).toBe(
+      'I like cooking, especially curry.',
+    )
+    expect(sent).toHaveLength(TRANSLATION_ATTEMPTS.length)
+    expect(sent[1]!.options.seed).toBe(RETRY_SEED)
+  })
+
+  it('2 回とも使えなければ空文字(ルートが 502 を返す)', async () => {
+    stubOllama(['趣味は読書です。'])
+    expect(await translateToNaturalEnglish('My 趣味 is 読書', {})).toBe('')
+  })
+})
+
+describe('isAcceptableEnglishRendering', () => {
+  it('英字を含み、非ラテン文字体系が無いこと', () => {
+    expect(isAcceptableEnglishRendering('I went to Montréal — it was fun!')).toBe(true)
+    expect(isAcceptableEnglishRendering('I want to 旅行 to Kyoto.')).toBe(false)
+    expect(isAcceptableEnglishRendering('...')).toBe(false)
+  })
+})

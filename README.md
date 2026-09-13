@@ -333,7 +333,7 @@ npm run dev:backend
 # Lint
 npm run lint
 
-# テスト(frontend 265件 / backend 419件)
+# テスト(frontend 281件 / backend 443件)
 npm test
 
 # 個別

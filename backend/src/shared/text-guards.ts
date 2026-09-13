@@ -27,6 +27,27 @@ export function stripEmoji(text: string): string {
 }
 
 /**
+ * 絵文字を取り除き、**絵文字だけだった行はその行ごと消す**。
+ *
+ * stripEmoji だけだと「いいね！\n😊\nどう？」が「いいね！\n\nどう？」になり、
+ * 元には無かった **空行(= 段落の区切り)** が生まれる。日本語訳の検証は空行を
+ * 「2 段落目を書いた出力」として落とすので、絵文字の行 1 つで正しい訳を捨ててしまう。
+ * 元から空白だけだった行(本物の空行)はそのまま残す。
+ */
+export function stripEmojiLines(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !(line.trim() !== '' && stripEmoji(line).trim() === ''))
+    .map(stripEmoji)
+    .join('\n')
+}
+
+/** 空行(空白だけの行)を含むか。\r\n の改行も同じに扱う。 */
+export function hasBlankLine(text: string): boolean {
+  return /\n[^\S\n]*\n/.test(text.trim())
+}
+
+/**
  * 対になっていない UTF-16 サロゲートを取り除く。
  * 実モデル評価で `"ごれ„浹 \udbdc"` のような孤立サロゲートが素通りしていた
  * (JSON.stringify は通るが、表示で豆腐になり、IndexedDB やテキスト処理を壊しうる)。
@@ -97,7 +118,7 @@ function codePointLength(text: string): number {
  *     (13 文字)のような短い相づちの自然な訳まで落としていたので 18 に上げた。
  *     長い英文の続きを捕まえるのは比率 0.9 の方なので、比率は変えていない。
  *  6) 英文に無い ASCII の波括弧 { } を含まない(壊れた JSON の残骸)
- *  7) 空行を含まない(訳の後ろに 2 段落目を書いた出力)
+ *  7) 空行を含まない(訳の後ろに 2 段落目を書いた出力)。英文自体に空行があれば除外
  *     6 と 7 は評価の後に足した規則で、**較正ケースの判定を変えないよう最後に置く**
  *     (「」} </td>…」の較正ケースは 4 で latin-heavy のまま)。
  *
@@ -113,7 +134,8 @@ export function judgeJapaneseTranslation(ja: string, en: string): JapaneseTransl
   // 評価の validator_v2 はこれをせず、「３時に会いましょう。」のような普通の訳を
   // 許可外の文字として落としていた(3B の標準プロファイルで実際に出る書き方)。
   // 〇 “” ‘’ 【】 は NFKC で変わらないので許可文字に直接足してある。
-  const t = stripEmoji(ja ?? '')
+  // 絵文字だけの行は行ごと消す(stripEmojiLines の注記。空行を作らない)。
+  const t = stripEmojiLines(ja ?? '')
     .normalize('NFKC')
     .trim()
   if (!t) return 'empty'
@@ -141,7 +163,10 @@ export function judgeJapaneseTranslation(ja: string, en: string): JapaneseTransl
   //    翻訳経路は firstTranslationParagraph で最初の段落に切ってから来るので、
   //    ここで落ちるのは JSON 経路(会話の reply_ja / 標準プロファイルの enrich)の
   //    出力だけで、落ちたものは en→ja 翻訳で訳し直される。
-  if (/\n[^\S\n]*\n/.test(t)) return 'multi-paragraph'
+  //    **英文自体に空行があるときは落とさない**(6 の波括弧と同じ扱い)。
+  //    「Hi!\n\nHow are you today?」の正しい訳は「やあ！\n\n今日の調子はどう？」で、
+  //    これを落とすと訳し直しも同じ形になり、どちらも捨てられて訳が出なくなる。
+  if (hasBlankLine(t) && !hasBlankLine(stripEmojiLines(en ?? ''))) return 'multi-paragraph'
   return 'ok'
 }
 
@@ -155,7 +180,7 @@ export function isAcceptableJapaneseTranslation(ja: string, en: string): boolean
  * (間違った訳を見せるより、訳が無いと正直に出す方がよい)。
  */
 export function acceptJapaneseTranslation(ja: string, en: string): string {
-  const cleaned = stripLoneSurrogates(stripEmoji(ja ?? '')).trim()
+  const cleaned = stripLoneSurrogates(stripEmojiLines(ja ?? '')).trim()
   return isAcceptableJapaneseTranslation(cleaned, en) ? cleaned : ''
 }
 

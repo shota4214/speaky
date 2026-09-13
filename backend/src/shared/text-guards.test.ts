@@ -5,6 +5,7 @@ import {
   JA_LENGTH_FLOOR,
   judgeJapaneseTranslation,
   stripEmoji,
+  stripEmojiLines,
   stripLoneSurrogates,
   type JapaneseTranslationVerdict,
 } from './text-guards.js'
@@ -563,6 +564,30 @@ describe('judgeJapaneseTranslation(2 段落目)', () => {
   it('前後の空行は trim されるので落とさない', () => {
     expect(judgeJapaneseTranslation('\n\nいいね！\n\n', 'Nice!')).toBe('ok')
   })
+
+  it('英文自体に空行があれば、空行を含む訳を落とさない(波括弧の規則と同じ)', () => {
+    const en = 'Hi!\n\nHow are you today?'
+    expect(judgeJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe('ok')
+    expect(
+      judgeJapaneseTranslation('やあ！\r\n\r\n今日の調子はどう？', 'Hi!\r\n\r\nHow are you?'),
+    ).toBe('ok')
+    expect(acceptJapaneseTranslation('やあ！\n\n今日の調子はどう？', en)).toBe(
+      'やあ！\n\n今日の調子はどう？',
+    )
+    // 英文の空行が絵文字だけの行の跡なら、英文に空行は無い扱い
+    expect(judgeJapaneseTranslation('いいね！\n\nそれで', 'Nice!\n😊\nSo')).toBe('multi-paragraph')
+  })
+
+  it('絵文字だけの行を消した跡は空行にしない', () => {
+    expect(judgeJapaneseTranslation('いいね！\n😊\nどう？', 'Nice! How is it?')).toBe('ok')
+    expect(acceptJapaneseTranslation('いいね！\n😊\nどう？', 'Nice! How is it?')).toBe(
+      'いいね！\nどう？',
+    )
+    // 本物の空行は絵文字があっても 2 段落目
+    expect(judgeJapaneseTranslation('いいね！😊\n\nどう？', 'Nice! How is it?')).toBe(
+      'multi-paragraph',
+    )
+  })
 })
 
 describe('judgeJapaneseTranslation(validator_v2 が落としていた正しい訳)', () => {
@@ -594,6 +619,11 @@ describe('acceptJapaneseTranslation', () => {
 describe('stripEmoji / stripLoneSurrogates', () => {
   it('絵文字・異体字セレクタ・結合子・国旗を取り除く', () => {
     expect(stripEmoji('Nice! 😊👍🏽 ❤️ 👨‍👩‍👧 🇯🇵 done')).toBe('Nice!     done')
+  })
+  it('stripEmojiLines: 絵文字だけの行は行ごと消し、本物の空行と行内の空白は残す', () => {
+    expect(stripEmojiLines('いいね！\n😊 👍\nどう？')).toBe('いいね！\nどう？')
+    expect(stripEmojiLines('いいね！\n\nどう？')).toBe('いいね！\n\nどう？')
+    expect(stripEmojiLines('Nice! 😊 done')).toBe('Nice!  done')
   })
   it('記号絵文字(⭐ ⏰ ⌛)も取り除く', () => {
     expect(stripEmoji('Good job ⭐ ⏰⌛!')).toBe('Good job  !')

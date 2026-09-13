@@ -4,6 +4,7 @@ import {
   EN_TO_JA_FRESH_ATTEMPTS,
   EN_TO_JA_NUM_PREDICT,
   enToJaNumPredict,
+  extractTranslationParagraphs,
   firstTranslationParagraph,
   isAcceptableEnglishRendering,
   TRANSLATION_ATTEMPTS,
@@ -32,8 +33,33 @@ function stubOllama(replies: string[]): SentBody[] {
   return sent
 }
 
+/**
+ * 応答ごとに content / done_reason を指定できる fetch のスタブ。
+ * `'timeout'` はデッドラインで切れた fetch(AbortError)として振る舞う。
+ */
+function stubOllamaResponses(
+  replies: ({ content: string; done_reason?: string } | 'timeout')[],
+): SentBody[] {
+  const sent: SentBody[] = []
+  vi.stubGlobal('fetch', async (_url: unknown, init: { body: string }) => {
+    sent.push(JSON.parse(init.body) as SentBody)
+    const reply = replies[Math.min(sent.length - 1, replies.length - 1)]!
+    if (reply === 'timeout') throw new DOMException('The operation was aborted.', 'AbortError')
+    return new Response(
+      JSON.stringify({
+        message: { role: 'assistant', content: reply.content },
+        done: true,
+        ...(reply.done_reason !== undefined && { done_reason: reply.done_reason }),
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )
+  })
+  return sent
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('translateEnglishToJapanese', () => {
@@ -268,7 +294,8 @@ describe('enToJaNumPredict(英文の長さから生成上限を決める)', () =
 
   it('長い英文は上限 400', () => {
     expect(EN_TO_JA_NUM_PREDICT.cap).toBe(400)
-    // 1.2 × 317 + 20 = 400.4 → 400(上限)
+    // 1.2 × 316 + 20 = 399.2 → ceil で 400(上限ちょうど。上限が効くのはここから)
+    // 1.2 × 317 + 20 = 400.4 → ceil で 401 → 上限で 400 に切る
     expect(enToJaNumPredict('a'.repeat(316))).toBe(400)
     expect(enToJaNumPredict('a'.repeat(317))).toBe(400)
     expect(enToJaNumPredict('a'.repeat(2000))).toBe(400)
@@ -298,6 +325,217 @@ describe('translateEnglishToJapanese(前置きの段落)', () => {
     const sent = stubOllama([raw])
     expect(await translateEnglishToJapanese('Hello!', {})).toBe('こんにちは！')
     expect(sent).toHaveLength(1)
+  })
+})
+
+describe('extractTranslationParagraphs / firstTranslationParagraph(前置きは先頭の段落だけ)', () => {
+  it('en→ja: 先頭の段落が前置きでなければ、後ろの日本語の段落を拾わない(返事を訳にしない)', () => {
+    expect(
+      firstTranslationParagraph('Yes, I watched it last night!\n\nうん、昨日の夜見たよ！', {
+        direction: 'en-to-ja',
+        source: 'Did you watch it?',
+      }),
+    ).toBe('Yes, I watched it last night!')
+  })
+
+  it('en→ja: 原文をそのまま繰り返した段落は前置きではない(後ろの補足を訳にしない)', () => {
+    expect(
+      firstTranslationParagraph('OK!\n\n（そのまま「OK!」で通じます）', {
+        direction: 'en-to-ja',
+        source: 'OK!',
+      }),
+    ).toBe('OK!')
+  })
+
+  it('en→ja: 2 段落目以降の前置きは読み飛ばさない', () => {
+    expect(
+      firstTranslationParagraph('Hmm.\n\nSure!\n\nこんにちは！', {
+        direction: 'en-to-ja',
+        source: 'Hello!',
+      }),
+    ).toBe('Hmm.')
+  })
+
+  it('ja→en: 相づちだけの段落は訳でありうるので読み飛ばさない', () => {
+    expect(
+      firstTranslationParagraph('Sure!\n\nThat means yes.', {
+        direction: 'ja-to-en',
+        source: 'もちろん！',
+      }),
+    ).toBe('Sure!')
+  })
+
+  it('en→ja: 英文が複数の段落なら、訳も同じ数の段落までつなげる', () => {
+    const source = 'Hi!\n\nHow are you today?'
+    expect(
+      extractTranslationParagraphs('やあ！\n\n今日の調子はどう？', {
+        direction: 'en-to-ja',
+        source,
+      }),
+    ).toEqual({ text: 'やあ！\n\n今日の調子はどう？', reachesEnd: true })
+    // 前置きは読み飛ばし、3 段落目(返事の続き)は捨てる
+    expect(
+      extractTranslationParagraphs('Sure!\n\nやあ！\n\n今日の調子はどう？\n\n私は元気！', {
+        direction: 'en-to-ja',
+        source,
+      }),
+    ).toEqual({ text: 'やあ！\n\n今日の調子はどう？', reachesEnd: false })
+    // 訳が 1 段落にまとまっていればそれだけ
+    expect(
+      firstTranslationParagraph('やあ！今日の調子はどう？', { direction: 'en-to-ja', source }),
+    ).toBe('やあ！今日の調子はどう？')
+  })
+
+  it('原文の途中にコロンがあれば、コロンで終わる段落は訳の前半としてつなげる', () => {
+    expect(
+      firstTranslationParagraph('私のアドバイス：\n\nたくさん水を飲んでね。', {
+        direction: 'en-to-ja',
+        source: "Here's my tip: drink lots of water.",
+      }),
+    ).toBe('私のアドバイス：たくさん水を飲んでね。')
+    expect(
+      firstTranslationParagraph('My tip:\n\nDrink lots of water.', {
+        direction: 'ja-to-en',
+        source: '私のアドバイス：水をたくさん飲んで',
+      }),
+    ).toBe('My tip: Drink lots of water.')
+  })
+
+  it('原文にコロンがあっても、訳について述べる見出しは読み飛ばす', () => {
+    expect(
+      firstTranslationParagraph('日本語訳：\n\n私のアドバイス：たくさん水を飲んでね。', {
+        direction: 'en-to-ja',
+        source: "Here's my tip: drink lots of water.",
+      }),
+    ).toBe('私のアドバイス：たくさん水を飲んでね。')
+  })
+
+  it('ja→en: 原文がコロンで終わっても、見出しの段落は訳にしない', () => {
+    expect(
+      firstTranslationParagraph("Here's a natural way to say it:\n\nI want to say this:", {
+        direction: 'ja-to-en',
+        source: 'これを言いたい：',
+      }),
+    ).toBe('I want to say this:')
+  })
+
+  it('原文にコロンが無くても、長いコロン終わりの段落は見出しとみなさない', () => {
+    // 41 文字以上(LEAD_IN_MAX_CHARS = 40 を超える)
+    const long =
+      '昨日の夜に友だちと駅前にできた新しいイタリアンのレストランへ行ったときの話をすると、こんな感じ：'
+    expect(Array.from(long).length).toBeGreaterThan(40)
+    expect(
+      firstTranslationParagraph(`${long}\n\nとてもおいしかった。`, {
+        direction: 'en-to-ja',
+        source: 'Let me tell you about the new restaurant.',
+      }),
+    ).toBe(long)
+  })
+
+  it('reachesEnd: 使った段落が出力の最後の段落か', () => {
+    const opts = { direction: 'en-to-ja', source: 'Hello!' } as const
+    expect(extractTranslationParagraphs('こんにちは', opts).reachesEnd).toBe(true)
+    expect(extractTranslationParagraphs('Sure!\n\nこんにちは', opts).reachesEnd).toBe(true)
+    expect(extractTranslationParagraphs('こんにちは！\n\n私は', opts).reachesEnd).toBe(false)
+  })
+})
+
+describe('translateEnglishToJapanese(レビュー指摘の失敗例)', () => {
+  it.each([
+    ['Did you watch it?', 'Yes, I watched it last night!\n\nうん、昨日の夜見たよ！'],
+    ['OK!', 'OK!\n\n（そのまま「OK!」で通じます）'],
+  ])('%j → %j は訳ではないので弾いて引き直す', async (en, raw) => {
+    const sent = stubOllama([raw])
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await translateEnglishToJapanese(en, {})).toBe('')
+    expect(sent).toHaveLength(EN_TO_JA_ATTEMPTS.length)
+  })
+
+  it('英文に空行があっても、段落をそろえた訳を 1 回目で返す', async () => {
+    const sent = stubOllama(['やあ！\n\n今日の調子はどう？'])
+    expect(await translateEnglishToJapanese('Hi!\n\nHow are you today?', {})).toBe(
+      'やあ！\n\n今日の調子はどう？',
+    )
+    expect(sent).toHaveLength(1)
+  })
+
+  it('英文が複数行なら、訳の行を 1 行目だけにしない', async () => {
+    stubOllama(['いいね！\nどこに行ったの？'])
+    expect(await translateEnglishToJapanese('Nice!\nWhere did you go?', {})).toBe(
+      'いいね！\nどこに行ったの？',
+    )
+  })
+
+  it('原文の途中のコロンで分かれた訳を、後半だけにしない', async () => {
+    stubOllama(['私のアドバイス：\n\nたくさん水を飲んでね。'])
+    expect(await translateEnglishToJapanese("Here's my tip: drink lots of water.", {})).toBe(
+      '私のアドバイス：たくさん水を飲んでね。',
+    )
+  })
+})
+
+describe('translateEnglishToJapanese(生成上限 / タイムアウト)', () => {
+  it("訳が done_reason='length' で切れていたら弾いて引き直し、ログに残す", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sent = stubOllamaResponses([
+      { content: 'カレーはおいしいよね！辛く', done_reason: 'length' },
+      { content: 'カレーはおいしいよね！辛くしたの？', done_reason: 'stop' },
+    ])
+    expect(await translateEnglishToJapanese('Curry is so good! Did you make it spicy?', {})).toBe(
+      'カレーはおいしいよね！辛くしたの？',
+    )
+    expect(sent).toHaveLength(2)
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('num_predict'))).toBe(true)
+  })
+
+  it('切れたのが訳の後ろの余談だけなら、訳は使う', async () => {
+    const sent = stubOllamaResponses([
+      { content: 'カレーはおいしいよね！辛くしたの？\n\n私も昨日カレーを', done_reason: 'length' },
+    ])
+    expect(await translateEnglishToJapanese('Curry is so good! Did you make it spicy?', {})).toBe(
+      'カレーはおいしいよね！辛くしたの？',
+    )
+    expect(sent).toHaveLength(1)
+  })
+
+  it('1 回目がタイムアウトしても 2 回目を試す(梯子の本数は変わらない)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sent = stubOllamaResponses(['timeout', { content: 'こんにちは！', done_reason: 'stop' }])
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('こんにちは！')
+    expect(sent).toHaveLength(EN_TO_JA_ATTEMPTS.length)
+  })
+
+  it('2 回ともタイムアウトなら空文字(試行は梯子の本数まで)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sent = stubOllamaResponses(['timeout'])
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('')
+    expect(sent).toHaveLength(EN_TO_JA_ATTEMPTS.length)
+  })
+
+  it('Ollama が起動していなければ引き直さない', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let calls = 0
+    vi.stubGlobal('fetch', async () => {
+      calls++
+      throw new TypeError('fetch failed')
+    })
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('')
+    expect(calls).toBe(1)
+  })
+
+  it('中断は呼び出し元へ投げ返す', async () => {
+    // 本物の fetch と同じく、中断済みの signal なら AbortError で失敗するスタブ
+    vi.stubGlobal('fetch', async (_url: unknown, init: { signal?: AbortSignal }) => {
+      if (init.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
+      return new Response(
+        JSON.stringify({ message: { role: 'assistant', content: 'こんにちは！' } }),
+      )
+    })
+    const ctrl = new AbortController()
+    ctrl.abort()
+    await expect(
+      translateEnglishToJapanese('Hello!', { signal: ctrl.signal }),
+    ).rejects.toMatchObject({ code: 'ABORTED' })
   })
 })
 

@@ -11,7 +11,7 @@ import { messagesRepo } from '../db/repos/messages'
 import type { Conversation, Message } from '../db/types'
 import { chatEnrich, probeBackendFeatures } from '../services/api'
 import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
-import { storedJapaneseTranslation } from '../utils/stored-translation'
+import { storedJapaneseTranslation, withEffectiveAiModes } from '../utils/stored-translation'
 import { useSettingsStore } from '../stores/settings'
 import {
   FEATURE_CHAT_ENRICH,
@@ -34,6 +34,12 @@ const speechQueue = useSpeechQueue(tts)
 
 const conversation = ref<Conversation | null>(null)
 const messages = ref<Message[]>([])
+/**
+ * 表示用の行。AI の行の mode は直前のユーザーの行から導き直す
+ * (古いバージョンはモデルが書いた mode を保存していた。withEffectiveAiModes の注記)。
+ * 「参考訳」の札・訳の検証・再取得ボタンはすべてこちらの mode で決める。
+ */
+const displayMessages = computed(() => withEffectiveAiModes(messages.value))
 const loading = ref(true)
 
 /**
@@ -209,7 +215,7 @@ function replay(text: string) {
       </BaseCard>
 
       <div class="mt-6 space-y-3">
-        <div v-for="m in messages" :key="m.id">
+        <div v-for="m in displayMessages" :key="m.id">
           <div v-if="m.role === 'user'" class="flex justify-end">
             <div class="max-w-[75%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-white">
               <div class="text-sm">{{ m.userText }}</div>

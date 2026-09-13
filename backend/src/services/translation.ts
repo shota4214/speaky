@@ -6,12 +6,19 @@
  */
 import type { Level } from './conversation-prompt.js'
 import { looksLikeJsonScaffold, matchJsonStringField } from './json-salvage.js'
-import { chatWithOllama, OllamaError, RETRY_SEED, type OllamaChatMessage } from './ollama.js'
+import {
+  chatWithOllama,
+  OllamaError,
+  RETRY_SEED,
+  type OllamaChatMessage,
+  type OllamaChatResponse,
+} from './ollama.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
 import {
   acceptJapaneseTranslation,
   containsNonLatinScript,
   stripEmoji,
+  stripEmojiLines,
   stripLoneSurrogates,
 } from '../shared/text-guards.js'
 
@@ -97,53 +104,147 @@ export function stripTranslationPreamble(raw: string): string {
   return out
 }
 
-/** かな / 漢字(日本語の段落かどうかの判定)。 */
-const JAPANESE_CHAR_RE = /[\u3040-\u30FF\u4E00-\u9FFF\u3005]/
 /** 末尾がコロン(「Here is the Japanese translation:」「日本語訳：」のような見出し)。 */
 const ENDS_WITH_COLON_RE = /[:：]\s*$/
 
 /**
- * 翻訳出力の **最初の段落** だけを返す(空行で区切られた 2 段落目以降は捨てる)。
+ * コロンで終わる段落を「原文に無い見出し」とみなして読み飛ばす長さの上限(コードポイント数)。
+ * 見出し(「Here is the Japanese translation:」33 文字)は短い。長い段落は訳の本文である。
+ */
+const LEAD_IN_MAX_CHARS = 40
+
+/** en→ja で、訳の前に置かれる相づちだけの段落(「Sure!」「OK.」)。 */
+const INTERJECTION_ONLY_RE =
+  /^(?:sure|ok|okay|of course|certainly|got it|alright|all right|no problem|absolutely|here you go)\s*[!.。！]*$/i
+
+/**
+ * 訳について述べる見出し(末尾のコロンを除いた形で照合する)。
+ * 「Here's a natural way to say it」「You could say」「Here is the Japanese translation」
+ * 「In English」「日本語訳」など。**訳の本文には現れない言い回しに限る**
+ * (「Here are some tips」のような普通の文は含めない)。
+ */
+const META_LEAD_IN_RE =
+  /^(?:(?:sure|ok|okay|of course|certainly|got it|alright)[!.,]?\s+)?(?:here(?:'s|\s+is|\s+are)\b.*\b(?:translation|translated|english|japanese|version|sentence|phrase|way to say)\b|(?:you|we|i)\s+(?:could|can|would|might)\s+say\b|(?:a|one|the)\s+(?:more\s+)?(?:natural|simple|common|casual)\s+way\s+to\s+say\b|in\s+(?:english|japanese)\b|(?:the\s+)?(?:japanese\s+|english\s+)?translation\b)/i
+const JA_HEADING_RE = /^(?:日本語訳|和訳|英訳|翻訳|訳文?|日本語|英語)(?:です|は)?$/
+
+/** 空行で段落に分ける(空白だけの段落は捨てる)。 */
+function splitParagraphs(text: string): string[] {
+  return text
+    .split(/\r?\n[^\S\r\n]*\r?\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+}
+
+/** 原文にコロンがあるか(「3:30」のような時刻は数えない)。 */
+function hasColon(source: string): boolean {
+  return /[:：]/.test(source.replace(/\d\s*[:：]\s*\d/g, ''))
+}
+
+/** 比較用に、文字と数字だけを小文字で残す(「OK!」と「ok」を同じとみなす)。 */
+function comparable(text: string): string {
+  return text
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '')
+}
+
+/**
+ * 先頭の段落が「訳の前置き」か。**先頭の段落(かつ後ろに段落がある)ときだけ** 呼ぶ。
+ *
+ *  - 原文をそのまま繰り返した段落(原文「OK!」→「OK!」)は前置きではない
+ *    (読み飛ばすと後ろの補足「(そのまま通じます)」を訳として出してしまう)
+ *  - 前置きだけの段落(stripTranslationPreamble で空になる「Here's the translation:」)
+ *  - en→ja の相づちだけの段落(「Sure!」)。ja→en では相づちそのものが訳でありうるので見ない
+ *  - 末尾がコロンで、訳について述べる見出し(「Here's a natural way to say it:」「日本語訳：」)。
+ *    原文がコロンで終わっていても読み飛ばす(その訳もコロンで終わるので、見出しかどうかは
+ *    言い回しでしか分からない)
+ *  - それ以外の末尾がコロンの段落は、**原文にコロンが無く、しかも短い** ときだけ見出しとみなす。
+ *    原文にコロンがあるなら、コロンで終わる段落は訳の一部である
+ *    (「Here's my tip: drink lots of water.」→「私のアドバイス：\n\nたくさん水を飲んでね。」)
+ */
+function isLeadInParagraph(
+  paragraph: string,
+  direction: 'ja-to-en' | 'en-to-ja',
+  source: string,
+): boolean {
+  const echo = comparable(paragraph)
+  if (echo && echo === comparable(source)) return false
+  if (!stripTranslationPreamble(paragraph)) return true
+  if (direction === 'en-to-ja' && INTERJECTION_ONLY_RE.test(paragraph)) return true
+  if (!ENDS_WITH_COLON_RE.test(paragraph)) return false
+  const heading = paragraph.replace(ENDS_WITH_COLON_RE, '').trim()
+  if (META_LEAD_IN_RE.test(heading) || JA_HEADING_RE.test(heading)) return true
+  return !hasColon(source) && Array.from(paragraph).length <= LEAD_IN_MAX_CHARS
+}
+
+export interface ExtractedTranslation {
+  /** 訳として検証へ渡す文字列。 */
+  text: string
+  /**
+   * 出力の最後の段落まで使ったか。生成上限(num_predict)で切れた出力では、
+   * これが true のときだけ **訳そのものが切れている**(false なら切れたのは後ろの余談)。
+   */
+  reachesEnd: boolean
+}
+
+/**
+ * 翻訳出力から **訳の部分** だけを取り出す(空行で区切られた後ろの段落は捨てる)。
  *
  * v1.2.0 直後の実装は stop に `'\n\n'` を入れて 2 段落目を生成させなかったが、
  * それだと **出力が空行で始まるモデルは 1 文字も出さずに止まる**。温度 0 では
  * 引き直しても同じなので、訳が永久に空になる。stop からは外し、ここで切る。
  *
  *  - 先頭の空行は読み飛ばす(これが直したい症状)
- *  - 訳の前に置かれた段落は訳ではないので読み飛ばす:
- *      - 前置きだけの段落(「Here's the translation:」)
- *      - 末尾がコロンの段落(「Here is the Japanese translation:」「日本語訳：」)。
- *        ただし **原文自体がコロンで終わるときは読み飛ばさない**(その訳もコロンで終わる)
- *      - en→ja では、かなも漢字も無い段落(「Sure!」)。訳は必ず日本語の段落なので、
- *        **かな / 漢字を含む最初の段落を返す**
- *  - それ以外は **最初の段落で必ず打ち切る**。訳の後ろに続けて書かれた
- *    「返事の続き」や補足説明を検証(と画面)へ渡さない
- *
- * 前置きの段落を返してしまうと検証で弾かれ、**後ろにあった本物の訳まで捨てる**
- * (「Sure!\n\nこんにちは！」が 1 回分の試行ごと無駄になる)。一方で本物の日本語の
- * 段落を読み飛ばすと 2 段落目(返事の続き)を訳として出してしまうので、
- * 日本語の段落を読み飛ばすのは「コロンで終わる見出し」のときだけに限っている。
- * 日本語の段落が 1 つも無い en→ja の出力は、ログのために最初の段落を返す
- * (どうせ検証で弾かれる)。
+ *  - **先頭の段落が前置き**(isLeadInParagraph)なら、それだけを読み飛ばす。
+ *    前置きの段落を返すと検証で弾かれ、後ろにあった本物の訳まで捨てる
+ *    (「Sure!\n\nこんにちは！」が 1 回分の試行ごと無駄になる)
+ *  - それ以外は **先頭の段落で打ち切る**。2 段落目以降は「返事の続き」や補足説明で、
+ *    日本語で書かれていても訳ではない(原文「Did you watch it?」→
+ *    「Yes, I watched it last night!\n\nうん、昨日の夜見たよ！」の 2 段落目は返事)。
+ *    先頭の段落が訳でなければ検証で弾かれて引き直される。それでよい
+ *  - 例外 1: en→ja で **英文自体が複数の段落** なら、訳も同じ数の段落までつなげて返す
+ *    (「Hi!\n\nHow are you today?」→「やあ！\n\n今日の調子はどう？」の 1 段落目だけを返すと、
+ *    半分だけの訳が検証を通って表示される)
+ *  - 例外 2: 原文の途中にコロンがあり、先頭の段落がコロンで終わるなら、次の段落とつなげる
+ *    (「私のアドバイス：」+「たくさん水を飲んでね。」)
  */
+export function extractTranslationParagraphs(
+  raw: string,
+  options: { direction: 'ja-to-en' | 'en-to-ja'; source?: string },
+): ExtractedTranslation {
+  const paragraphs = splitParagraphs(raw)
+  if (paragraphs.length === 0) return { text: '', reachesEnd: true }
+  const source = options.source ?? ''
+  const start =
+    paragraphs.length > 1 && isLeadInParagraph(paragraphs[0]!, options.direction, source) ? 1 : 0
+
+  const sourceParagraphs = splitParagraphs(source).length
+  if (options.direction === 'en-to-ja' && sourceParagraphs > 1) {
+    const end = Math.min(paragraphs.length, start + sourceParagraphs)
+    return {
+      text: paragraphs.slice(start, end).join('\n\n'),
+      reachesEnd: end === paragraphs.length,
+    }
+  }
+
+  const head = paragraphs[start]!
+  const next = paragraphs[start + 1]
+  const colonInMiddle = hasColon(source) && !ENDS_WITH_COLON_RE.test(source.trim())
+  if (next !== undefined && ENDS_WITH_COLON_RE.test(head) && colonInMiddle) {
+    return {
+      text: head + (options.direction === 'en-to-ja' ? '' : ' ') + next,
+      reachesEnd: start + 2 === paragraphs.length,
+    }
+  }
+  return { text: head, reachesEnd: start + 1 === paragraphs.length }
+}
+
+/** extractTranslationParagraphs の訳の部分だけを返す。 */
 export function firstTranslationParagraph(
   raw: string,
   options: { direction: 'ja-to-en' | 'en-to-ja'; source?: string },
 ): string {
-  const paragraphs = raw
-    .split(/\r?\n[^\S\r\n]*\r?\n/)
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0)
-  const sourceEndsWithColon = ENDS_WITH_COLON_RE.test(options.source ?? '')
-  const isLead = (p: string, i: number) =>
-    !stripTranslationPreamble(p) ||
-    // 最後の段落は見出しではありえない(後ろに訳が無い)ので読み飛ばさない。
-    (ENDS_WITH_COLON_RE.test(p) && !sourceEndsWithColon && i < paragraphs.length - 1)
-  if (options.direction === 'en-to-ja') {
-    const ja = paragraphs.find((p, i) => JAPANESE_CHAR_RE.test(p) && !isLead(p, i))
-    if (ja !== undefined) return ja
-  }
-  return paragraphs.find((p, i) => !isLead(p, i)) ?? ''
+  return extractTranslationParagraphs(raw, options).text
 }
 
 /**
@@ -169,9 +270,9 @@ export function firstTranslationParagraph(
  *  - 上限 400: 1 回の試行の時間予算は OLLAMA_BUDGET_MS.translation(60 秒、
  *    shared/request-budget.ts)で、ここは生成トークン数ではなく時間で決まっている。
  *    8GB の M1 で 3B が 1 秒 10 トークン強なので、400 トークンなら
- *    プロンプト評価込みで予算に収まる。400 は英文 317 文字(4〜5 文の返答)に当たる。
- *    それより長い英文は訳が切れうる(切れた訳は検証を通る)が、返答の文数上限から
- *    まず起きない長さである。
+ *    プロンプト評価込みで予算に収まる。英文 316 文字(4〜5 文の返答)で上限に届く。
+ *    それより長い英文は訳が切れうるが、返答の文数上限からまず起きない長さであり、
+ *    切れた訳は Ollama の done_reason('length')で見分けて弾く(translateEnglishToJapanese)。
  */
 export const EN_TO_JA_NUM_PREDICT = {
   perSourceChar: 1.2,
@@ -332,10 +433,24 @@ export const EN_TO_JA_FRESH_ATTEMPTS: readonly { temperature: number; seed?: num
  * 中の reply_ja を拾えれば拾い、拾えなければ空にする(空 = 取得失敗として
  * 扱われ、UI に再取得ボタンが出る。JSON を見せるよりはるかにまし)。
  */
-export function sanitizeJapaneseTranslation(raw: string): string {
+export function sanitizeJapaneseTranslation(raw: string, source = ''): string {
   const stripped = stripTranslationPreamble(raw)
-  if (!looksLikeJsonScaffold(stripped)) return stripped
-  const inner = matchJsonStringField(stripped, 'reply_ja')
+  if (looksLikeJsonScaffold(stripped)) return jsonTranslationField(stripped)
+  if (!source.includes('\n')) return stripped
+  // 英文自体が複数行なら、訳の行も残す。stripTranslationPreamble は **最初の行だけ** を
+  // 残すので(ja→en の補足説明を捨てるための動き)、そのまま通すと
+  // 「やあ！\n\n今日の調子はどう？」が「やあ！」になり、半分の訳が検証を通ってしまう。
+  if (looksLikeJsonScaffold(raw.trim())) return jsonTranslationField(raw.trim())
+  return raw
+    .trim()
+    .split('\n')
+    .map((line) => (line.trim() ? stripTranslationPreamble(line) : ''))
+    .join('\n')
+    .trim()
+}
+
+function jsonTranslationField(json: string): string {
+  const inner = matchJsonStringField(json, 'reply_ja')
   if (inner?.trim()) return inner.trim()
   console.warn('[chat] en→ja 翻訳が JSON で返ってきたので破棄した')
   return ''
@@ -352,48 +467,67 @@ export async function translateEnglishToJapanese(
   },
 ): Promise<string> {
   // 絵文字は訳させない(訳に絵文字や「笑顔」が混ざる / 検証の長さ判定が狂う)。
-  const source = stripTags(stripEmoji(englishText), 'en').trim()
+  // 絵文字だけの行は行ごと消す(検証と同じ扱い。消した跡を空行 = 段落の区切りにしない)。
+  const source = stripTags(stripEmojiLines(englishText), 'en').trim()
   if (!source) return ''
   const messages: OllamaChatMessage[] = [
     { role: 'system', content: EN_TO_JA_INSTRUCTION },
     ...EN_TO_JA_FEW_SHOT,
     { role: 'user', content: `<en>${source}</en>` },
   ]
-  try {
-    for (const a of options.fresh ? EN_TO_JA_FRESH_ATTEMPTS : EN_TO_JA_ATTEMPTS) {
-      const ollamaRes = await chatWithOllama(messages, {
+  // 英文の長さから決める(enToJaNumPredict の注記)。固定の 200 だと長い返答の訳が切れる。
+  const numPredict = enToJaNumPredict(source)
+  for (const a of options.fresh ? EN_TO_JA_FRESH_ATTEMPTS : EN_TO_JA_ATTEMPTS) {
+    // try は **1 回の試行ごと** に置く。梯子全体を包むと、1 回目のタイムアウト
+    // (8GB 機のコールドロード)で 2 回目を試さずに諦めてしまう。
+    // 本数は変わらないので、最悪時間は request-budget.ts の宣言(60 秒 × 2)のまま。
+    let ollamaRes: OllamaChatResponse
+    try {
+      ollamaRes = await chatWithOllama(messages, {
         model: options.model,
         numCtx: options.numCtx,
         firstTokenTimeoutMs: OLLAMA_BUDGET_MS.translation,
         temperature: a.temperature,
         ...(a.seed !== undefined && { seed: a.seed }),
         topP: 0.9,
-        // 英文の長さから決める(enToJaNumPredict の注記)。固定の 200 だと長い返答の訳が切れる。
-        numPredict: enToJaNumPredict(source),
-        // '\n\n' は stop に入れない(firstTranslationParagraph の注記)。2 段落目は後処理で捨てる。
+        numPredict,
+        // '\n\n' は stop に入れない(extractTranslationParagraphs の注記)。2 段落目は後処理で捨てる。
         stop: ['<en>', '</en>'],
         jsonFormat: false,
         signal: options.signal,
       })
-      const raw = sanitizeJapaneseTranslation(
-        firstTranslationParagraph(ollamaRes.message?.content ?? '', {
-          direction: 'en-to-ja',
-          source,
-        }),
-      )
-      const ja = acceptJapaneseTranslation(stripTags(raw, 'en'), source)
-      if (ja) return ja
-      console.warn(
-        `[chat] rejected en→ja translation at temperature=${a.temperature}:`,
-        raw.slice(0, 120),
-      )
+    } catch (e) {
+      // 中断は「失敗」ではない。空文字を返して先へ進むと、切れたソケットへ
+      // レスポンスを組み立てる無駄な処理が続くので、呼び出し元へ投げ返す。
+      if (e instanceof OllamaError && e.code === 'ABORTED') throw e
+      console.warn(`[chat] en→ja translation failed at temperature=${a.temperature}:`, e)
+      // Ollama が起動していない / モデルが無いのは、引き直しても変わらない。
+      if (e instanceof OllamaError && (e.code === 'NOT_RUNNING' || e.code === 'MODEL_NOT_FOUND')) {
+        return ''
+      }
+      continue
     }
-    return ''
-  } catch (e) {
-    // 中断は「失敗」ではない。空文字を返して先へ進むと、切れたソケットへ
-    // レスポンスを組み立てる無駄な処理が続くので、呼び出し元へ投げ返す。
-    if (e instanceof OllamaError && e.code === 'ABORTED') throw e
-    console.warn('[chat] en→ja fallback translation failed:', e)
-    return ''
+    const extracted = extractTranslationParagraphs(ollamaRes.message?.content ?? '', {
+      direction: 'en-to-ja',
+      source,
+    })
+    // 生成上限で切れ、しかも **訳の段落そのもの** が最後まで書けていない出力は、
+    // 文字だけ見ると正しい訳の前半なので検証を通ってしまう。試行ごと捨てる。
+    // (訳の後ろの余談が切れただけなら、訳は完結しているので使う)
+    if (ollamaRes.done_reason === 'length' && extracted.reachesEnd) {
+      console.warn(
+        `[chat] rejected en→ja translation at temperature=${a.temperature}: 生成上限(num_predict=${numPredict})で切れた:`,
+        extracted.text.slice(0, 120),
+      )
+      continue
+    }
+    const raw = sanitizeJapaneseTranslation(extracted.text, source)
+    const ja = acceptJapaneseTranslation(stripTags(raw, 'en'), source)
+    if (ja) return ja
+    console.warn(
+      `[chat] rejected en→ja translation at temperature=${a.temperature}:`,
+      raw.slice(0, 120),
+    )
   }
+  return ''
 }

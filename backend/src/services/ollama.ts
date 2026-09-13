@@ -96,6 +96,12 @@ export type OllamaChatResponse = {
   created_at: string
   message: { role: string; content: string }
   done: boolean
+  /**
+   * 生成が止まった理由。`'stop'`(自然に終わった / stop 文字列)、`'length'`
+   * (num_predict の上限で切れた)など。古い Ollama は返さないので省略可。
+   * en→ja 翻訳は `'length'` で切れた訳を弾くのに使う(services/translation.ts)。
+   */
+  done_reason?: string
 }
 
 export type OllamaErrorCode = 'NOT_RUNNING' | 'MODEL_NOT_FOUND' | 'TIMEOUT' | 'ABORTED' | 'UNKNOWN'

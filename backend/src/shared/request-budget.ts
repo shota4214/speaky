@@ -76,6 +76,9 @@ export const OLLAMA_ATTEMPTS = {
   /**
    * services/translation.ts EN_TO_JA_ATTEMPTS: 温度 0 → 検証で弾いたら温度 0.3 + 固定 seed で 1 回だけ。
    * (v1.2.0 まではリトライ無しの 1 回で、出力を検証していなかった)
+   * ここは上の注記の例外で、**タイムアウトした試行も次の試行へ進む**(1 回目のコールドロードで
+   * 諦めないため)。本数は 2 のままなので、最悪値は 60 × 2 で変わらない。
+   * 生成上限(num_predict)で切れた訳も弾いて次の試行へ進む。
    */
   translationEnToJa: 2,
   /** routes/extract-facts.ts EXTRACT_FACTS_ATTEMPTS: 2 回目は予算を広げる。 */

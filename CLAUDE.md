@@ -7,7 +7,7 @@
 
 - **正体**: Mac (Apple Silicon / arm64) 専用の**ローカル完結型 英会話練習アプリ**
 - **構成**: Electron + Vue 3 (frontend) + Node/Express (backend) + Ollama (LLM) + whisper.cpp / nodejs-whisper (STT) + Web Speech API (TTS)
-- **配布形態**: 未署名の `.dmg`（Google Drive / iCloud 等で配布。GitHub Releases は 2GB 上限で不可）
+- **配布形態**: Developer ID で署名・公証済みの `.dmg` を Google Drive で配布（GitHub Releases は 2GB 上限のため DMG は置かず、リリースノートだけ置く）
 - **GitHub**: `shota4214/speaky`
 - **完全ローカル動作が売り**（外部 API 課金ゼロ、データ外部送信なし）
 
@@ -32,12 +32,17 @@
 
 ## 🔴 次にやるべき最優先タスク（このセッションからの引き継ぎ）
 
-現在地: **v1.2.1 をリリースビルド済み（2026-09-13）。残りは M1 MacBook Air での実機検証だけ**。
-v1.0.0 は一般公開済み。v1.2.0 は M1 での検証で日本語訳の崩れが見つかり、公開していない。
-低スペック機向けの作業は Tier1（#23）・Tier2（#24）、その後の修正は #26〜#30 ですべて main にマージ済み。
-検証が通ったら DMG を配布し、`update-channel/latest.json` を更新する（この時点で既存ユーザーに通知が出る）。
+現在地: **v1.2.1 を一般公開済み（2026-09-13）**。急ぎの作業は無い。
 
-Tier2 で入ったもの（すべてこのブランチ内）:
+- 公開中の利用者は v1.0.0 から直接 1.2.1 に上がる。v1.1.0 と v1.2.0 は配布していない
+  （v1.2.0 は M1 での検証で日本語訳の崩れが見つかり、公開を見送った）。
+- 配布: Google Drive の DMG を同じリンクのまま差し替え / GitHub リリース `v1.2.1`（タグはビルド元 `2d3e860`）/
+  `update-channel/latest.json` を 1.2.1 に更新（#32）。v1.0.0 の利用者には次回起動時から順次通知が出る。
+- 実機確認: メンテナが M1 MacBook Air で動作と応答の速さを確認した。下の検証項目を全部確かめたわけではない。
+- 低スペック機向けの作業は Tier1（#23）・Tier2（#24）、その後の修正と公開は #26〜#32 ですべて main にマージ済み。
+- 次にやるなら下の「バックログ」から。利用者からの不具合報告があればそちらを優先する。
+
+v1.2.1 で入ったもの（v1.0.0 からの差分）:
 
 - Whisper 既定の縮小／録音・描画コストの削減
 - LLM 失敗ターンの高速フェイル（リトライ 2 回・フラット予算・salvage）
@@ -53,14 +58,18 @@ Tier2 で入ったもの（すべてこのブランチ内）:
   M1 実機で 1B の日本語訳が崩れたため。理由と数字は下の「同梱 LLM」節。
   DMG は **1.71GB（1,714,488,337 バイト、v1.2.1 実測）**)
 - 設定画面の「会話モード」バッジを backend への問い合わせ結果に変更
+- 翻訳出力の取り出しを「曖昧なら弾いて引き直す」方針に単純化、日本語訳の検証を追加（#27）
+- **添削を作り直した**（#29）: 専用の呼び出し + 機械的な検査 + 固定の日本語解説。両プロファイルで出る（下の「添削」節）
+- **旧既定 `llama3.2:3b` の利用者を同梱 `qwen2.5:1.5b` へ一度だけ切り替え、通知する**（#28。設定スキーマ v4）
 
-### 残っているのは 1 つだけ: **M1 MacBook Air 実機検証**（v1.2.1 はビルド済み）
+### リリースのビルド手順と実機確認項目（v1.2.1 で使ったもの。次のリリースでも使う）
 
 v1.2.1 の DMG は `electron/dist-app/Speaky-v1.2.1.dmg`。ビルド後に次を確認済み:
 署名（Developer ID）・公証・staple（アプリと DMG の両方）/ Gatekeeper accepted /
 同梱 LLM は `qwen2.5/1.5b` だけ（`ollama-data` 940MB）/ Whisper は small だけ /
-whisper-cli の M5 専用命令 0 / バージョン 1.2.1。**実機で確かめていない**のは下の項目。
-再ビルドする場合の手順も下に残す。
+whisper-cli の M5 専用命令 0 / バージョン 1.2.1。
+M1 MacBook Air ではメンテナが動作と応答の速さを確認したが、下の項目を全部確かめたわけではない。
+次のリリースでは、下の手順でビルドし、項目を回帰確認に使う。
 
 ```bash
 . ~/.nvm/nvm.sh && nvm use 22
@@ -183,9 +192,15 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 
 ## 配布の既知の問題
 
-- **未署名のため macOS Sequoia で「壊れている」エラー**が出る（AirDrop/USB でも回避不可）。
-  回避: 受け取り手が `xattr -cr /Applications/Speaky.app` を実行、または **Apple Developer Program($99/年)で署名・公証**。
-- **Apple Developer Program 個人登録済み (Team ID: `DQ7HKL3WWX`)**。`feat/codesign-notarize` で署名・公証フロー実装。実機ビルドでの検証が次の必須タスク。
+- **v1.0.0 以降は Developer ID で署名・公証済み**で、Gatekeeper の警告は出ない（`xattr -cr` 不要）。
+  v0.0.x の未署名版では macOS Sequoia で「壊れている」エラーが出ていた。
+  Apple Developer Program 個人登録済み（Team ID: `DQ7HKL3WWX`）。構成は下の「署名・公証」節。
+- **配布リンクは v1.0.0 から同じ Google Drive のファイル**。新しい版は Drive の「版を管理」で同じファイルに上げる
+  （新規アップロードすると URL が変わり、`update-channel/latest.json` の `downloadUrl` も直す必要がある）。
+  Drive で「ウイルススキャンできません」と出るのはファイルサイズの仕様。
+- **公開の順番を守る**: ① Drive の DMG を差し替え → ② GitHub リリースを作る → ③ `latest.json` を更新する PR をマージ。
+  ③ を先にすると、通知から開いた利用者が差し替え前の古い DMG を落とす。
+  差し替えは、Drive の確認ページ（`drive.usercontent.google.com/download?id=...`）に出るファイルサイズで確かめられる。
 
 ## 署名・公証（Developer ID）の構成
 
@@ -582,7 +597,11 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
 
 ## バックログ（任意・未着手）
 
-- 署名・公証ビルドの**実機検証**（`feat/codesign-notarize` ブランチ）: `npm run dist` で署名・公証付き DMG が生成され、別 Mac で `xattr -cr` 無しで起動できることを確認
 - **同梱 dylib/.so の Developer ID 再署名 → `disable-library-validation` を外す**（entitlements 緩和の解消。今は llama.cpp/whisper.cpp/ollama 由来の他チーム署名 dylib があるため許容）
-- 応答速度の高速化（ストリーミング TTS 等。検討のみ）
+- **添削のテンプレートを足す**: 正しく直せているのに説明が無くて出していない直しがある
+  （「play the tennis」「Does he likes」「Why you are」「two child」「where is the station」。下の「添削」節）。足したら fixture のテストを更新して測り直す
+- **whisper の子プロセスを kill できるようにする**（今は締め切りで待つのをやめるだけ。whisper-cli を自前で spawn する必要がある）
+- **自前の Ollama が先に起動している Mac の MODEL_NOT_FOUND**（検証項目 ⒂ の既知の制限。対策なし）
+- **small プロファイルの `num_ctx` を下げられるか M1 で測る**（今は 4096 のまま。計測せずに下げない）
+- 音声合成の高速化（返答のストリーミング読み上げは v1.2.1 で実装済み。合成そのものの高速化は未検討）
 - Web アプリ化（検討したが完全ローカルの売りが消えるため見送り）

@@ -156,8 +156,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   silenceDurationMs: 1500,
   // ⚠️ **必ず同梱モデル**(backend/src/shared/llm-models.ts の BUNDLED_LLM_MODEL)。
   // 既定が同梱物でないと、ネットの無い初回起動が「選ばれているモデルを取得できない」
-  // 行き止まりになる。v1.2.0 で 3B → 1B に変更した(DMG も約 2.67GB → 約 1.5GB)。
-  // 1B は自動判定で軽量モード(短い返答 / 添削・単語なし)になる — これは意図した
+  // 行き止まりになる。v1.2.0 で 3B → llama3.2:1b、次のリリースで日本語訳の品質のため
+  // qwen2.5:1.5b に変更した(理由と評価の数字は llm-models.ts の BUNDLED_LLM_MODEL)。
+  // 1.5B は自動判定で軽量モード(短い返答 / 添削・単語なし)になる — これは意図した
   // 結果で、メモリに余裕のある人には設定画面から 3B の取得を案内する。
   llmModel: DEFAULT_LLM_MODEL,
   // 新規ユーザーは自動判定。1B / 1.5B を選べば自動で軽量モードになる。

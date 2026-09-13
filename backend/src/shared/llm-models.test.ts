@@ -210,6 +210,7 @@ describe('inferProfileLevel(自動判定)', () => {
 describe('resolveProfileLevel(設定値との組み合わせ)', () => {
   it('auto はモデル名から推定する', () => {
     expect(resolveProfileLevel('auto', 'llama3.2:1b')).toBe('small')
+    expect(resolveProfileLevel('auto', 'qwen2.5:1.5b')).toBe('small')
     expect(resolveProfileLevel('auto', 'gemma2:9b')).toBe('standard')
   })
 
@@ -293,7 +294,33 @@ describe('同梱モデルの整合', () => {
   })
 
   it('同梱モデルは自動判定で軽量モードになる(= 添削が出ないことを UI が言い切れる)', () => {
+    // 小数のタグ(`1.5b`)が 1.5 と読めていることまで見る。
+    // `1.5b` の "5b" だけを拾うと 5B = standard になり、同梱直後から
+    // 8GB 機で長いプロンプトが走る(このテストが守りたい状況そのもの)。
+    expect(llmParameterBillions(BUNDLED_LLM_MODEL)).toBe(1.5)
     expect(inferProfileLevel(BUNDLED_LLM_MODEL)).toBe('small')
+    expect(resolveProfileLevel('auto', BUNDLED_LLM_MODEL)).toBe('small')
+    expect(resolveProfileLevel(undefined, BUNDLED_LLM_MODEL)).toBe('small')
+  })
+
+  it('同梱モデルは取得の選択肢にも出る(消してしまった人が取り直せる)', () => {
+    expect(LLM_CATALOG.find((e) => e.tag === BUNDLED_LLM_MODEL)?.offerForDownload).toBe(true)
+  })
+
+  /**
+   * v1.2.0 の同梱物 `llama3.2:1b` は、実モデル評価で日本語訳の欄が 60 回中 28 回
+   * 日本語にならず、英→日の意味が正しかったのは 12 回中 0 回だった
+   * (Llama 3.2 は日本語を公式に非対応)。
+   * - **こちらから薦めない**: 取得フォーム / オンボーディングの選択肢に出さない
+   * - **既に入っている人は壊さない**: allowlist は通り、既定へ黙って落とされない
+   */
+  it('llama3.2:1b は薦めないが、入っている人はそのまま使える', () => {
+    const entry = LLM_CATALOG.find((e) => e.tag === 'llama3.2:1b')
+    expect(entry, 'インストール済み一覧に説明を出すためカタログには残す').toBeDefined()
+    expect(entry!.offerForDownload).toBe(false)
+    expect(entry!.bundled).toBe(false)
+    expect(isAllowedLlmModel('llama3.2:1b')).toBe(true)
+    expect(resolveLlmModel('llama3.2:1b')).toBe('llama3.2:1b')
   })
 
   it('追加ダウンロード推奨は自動判定で標準モードになる(= 添削が戻る)', () => {
@@ -303,18 +330,31 @@ describe('同梱モデルの整合', () => {
   it('prep スクリプトが vendor するモデルが BUNDLED_LLM_MODEL と一致する', () => {
     // ⚠️ prep スクリプトは .mjs なのでこの定数を import できない(node が .ts を読めない)。
     // 二重化は避けられないので、**ズレたらここで落ちる**ようにしてある。
-    // これが無いと「コード上は 1B なのに DMG には 3B が入っている」状態が
-    // 実機で起動するまで誰にも見えない。
+    // これが無いと「コード上は Qwen なのに DMG には Llama が入っている」状態が
+    // 実機で起動するまで誰にも見えない(ファイル名は歴史的経緯で prep-llama-model のまま)。
     const here = dirname(fileURLToPath(import.meta.url))
     const prepPath = resolve(here, '..', '..', '..', 'scripts', 'prep-llama-model.mjs')
     const source = readFileSync(prepPath, 'utf-8')
 
+    // `ollama pull` に渡す名前。
     const model = /^const MODEL = '([^']+)'$/m.exec(source)?.[1]
     expect(model, 'prep-llama-model.mjs の MODEL を読めなかった').toBe(BUNDLED_LLM_MODEL)
 
-    // manifest のパスもタグ単位で作られているので、family/tag も一致を見る。
+    // コピー元 / コピー先の manifest パスと、掃除(pruneStaleVendored)で残す
+    // <family>/<tag> はこの 2 つから作られる。MODEL だけ直して family/tag を
+    // 直し忘れると、pull は新モデル・vendor と掃除は旧モデルになり、
+    // **新モデルの manifest を掃除が消す**。
     const family = /^const MODEL_FAMILY = '([^']+)'$/m.exec(source)?.[1]
     const tag = /^const MODEL_TAG = '([^']+)'$/m.exec(source)?.[1]
+    expect(family, 'MODEL_FAMILY を読めなかった').toBeDefined()
+    expect(tag, 'MODEL_TAG を読めなかった').toBeDefined()
     expect(`${family}:${tag}`).toBe(BUNDLED_LLM_MODEL)
+    expect(family).toBe(llmFamilyOf(BUNDLED_LLM_MODEL))
+
+    // manifest のパスが手書きではなく family/tag から組み立てられていること
+    // (手書きだと上の一致が取れていても別モデルの manifest を読みに行ける)。
+    expect(source).toMatch(
+      /^const MANIFEST_REL = `manifests\/registry\.ollama\.ai\/library\/\$\{MODEL_FAMILY\}\/\$\{MODEL_TAG\}`$/m,
+    )
   })
 })

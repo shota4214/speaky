@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （`npm test` = frontend → backend の順に vitest。**frontend 285 件 / backend 819 件**）
+   （`npm test` = frontend → backend の順に vitest。**frontend 301 件 / backend 819 件**）
    backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
    LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
    `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
@@ -101,7 +101,8 @@ du -sh electron/build-resources/ollama-data/
    選択は同梱の `qwen2.5:1.5b` のままで、「次へ」が最初から押せる。
 5. `qwen2.5:1.5b` で会話が成立する（軽量モード）:
    返答が 1〜2 文に収まる（最初の挨拶だけは 3 文まで。トピックの質問が入っていること）/ 日本語訳が必ず出る /
-   **間違いを含む発話には添削が出る（正しい発話には出ない）/ 単語カードは出ない**。
+   **間違いを含む発話の多くに添削が出る（評価で 62 件中 49 件。3 語未満や説明を用意していない直しは出ない）/
+   正しい発話には出ない / 単語カードは出ない**。
    添削は日本語訳の後に届き、マイクはそれを待たない。
    「単語カードが出ないのは壊れているからではない」ことが会話画面の 🪶 バッジ（ツールチップ）で分かる。
    **日本語訳の欄が日本語である**（英語・ローマ字・崩れた文字列が出ない。v1.2.0 の 1B で実際に出た）。
@@ -118,7 +119,7 @@ du -sh electron/build-resources/ollama-data/
    - `gemma2:2b` を選んでいた人が **標準モードのまま**である（設定スキーマ v3 の移行）
    - 設定画面で LLM を選び直すと、会話モードの固定が「自動」に戻る
 9. **オンラインで 3B を取得すると標準モードに戻る**: 設定画面 →「+ 取得」→ `llama3.2:3b` →
-   選択 → バッジが「標準モードで動作します（backend 確認済み）」になり、単語カードが出る
+   選択 → バッジが「標準モードで動作します（backend 確認済み）」になる（単語カードはほとんど出ないのが正常）
    （添削は軽量モードでも出る。取得を薦める画面はもう無いので、手で「+ 取得」から選ぶ）
 10. スリープ復帰直後のターンが固まらない:
     - 会話ターン（`/api/chat`）はクライアント締め切り **350 秒**で必ず畳まれる
@@ -380,12 +381,14 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   温度 0 / seed 0 / `num_predict` 60 / `num_ctx` はプロファイル / プレーンテキスト /
   stop = `<said>` `</said>` 改行。**`repeat_penalty: 1.0` を明示**（既定の 1.1 は「正しい文を写す」ことを罰する）。
   プロンプト・例示・デコード設定は `grammar-check.test.ts` が一字一句固定している。
-- **フィルタと説明**（`backend/src/services/correction-guard.ts`）: 研究のプロトタイプ `filter.mjs` の忠実な移植。
+- **フィルタと説明**（`backend/src/shared/correction-guard.ts`）: 研究のプロトタイプ `filter.mjs` の忠実な移植。
+  backend と frontend（履歴画面の再検証）が **同じ 1 つの実装**を import するので `shared/` に置いてある
+  （node/DOM の API を使わない純粋関数だけ。frontend の HistoryDetail チャンクが 6.2 → 25.2 kB（+19 kB / gzip +7 kB）になった。他のチャンクは変わらない）。
   `guard()` が差分を単語単位で見て、閉じた語類の変更・同じ語の語形変化・語順の入れ替え以外
   （言い換え・数字・固有名詞・カジュアルな言い方への手出し・直しすぎ・文の種類の変更）を捨てる。
   `classify()` が変更を分類し、**全部の変更に日本語テンプレートがあるときだけ**説明を返す。
   表示するのは「フィルタが受け入れ、かつ全変更がテンプレートで説明できた」ときだけ。
-  - 移植の正しさは `correction-guard.test.ts` が固定: 140 件のラベル付き発話 × 2 モデルの記録済み出力
+  - 移植の正しさは `services/correction-guard.test.ts` が固定: 140 件のラベル付き発話 × 2 モデルの記録済み出力
     （`services/fixtures/grammar-correction-research.json`。研究の `filter.mjs` で生成）に対して、
     判定・理由・カテゴリ・説明文が研究時と **1 件残らず一致**すること。**ルールを変えたらここが落ちる**ので、
     落ちたら数字を測り直すこと。
@@ -407,7 +410,17 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   （無い backend の feedback はモデルが書いたもの）。ストリームの `feedback` はリデューサの `feedback`
   効果 → `applyFeedback` で AI メッセージの `feedback` に保存（永続化前に届いたら保存後に反映）。
   `applyEnrichment` は添削を **null で上書きしない**（別イベントで先に保存された添削を消さないため）。
-  添削カード（`Chat.vue` / `HistoryDetail.vue`）は変更なし。
+  - **履歴画面は保存済みの添削を表示のたびに検証し直す**（`frontend/src/utils/stored-feedback.ts`）。
+    以前のバージョンはモデルが書いた添削（説明が英語 / 崩れた日本語 / 中国語）を検証せずに保存していて、
+    インポートしたバックアップからも戻ってくるので、一度きりの削除ではなく表示時に判定する。
+    保存された発話と直した文を `recheckCorrection` に通し、通れば **今のテンプレートで作り直した説明**を出す
+    （保存された説明文は使わない）。通らなければ出さない。日本語訳の再取得では、通らない添削を
+    「無い」扱いにして検証済みの添削で置き換える（`retryFeedbackPatch`）。判定は決定的なので、
+    grammar-check が表示した添削はテンプレートを変えない限り必ず同じ説明で通る（fixture のテストが固定）。
+    会話画面はこのセッションで作った行（検証済み）しか出さないので再検証しない。
+  - **「添削は出ます」という文言も grammar-check の申告に揃える**（`frontend/src/utils/correction-wording.ts`）。
+    会話画面の 🪶 バッジのツールチップ・設定画面・オンボーディングは、申告の無い backend
+    （= 添削が 1 件も出ない）では日本語訳にしか触れない。
 - **予算**: `request-budget.ts` の `grammarCheck` = 20 秒 × 1 回。`/api/chat` と `/api/chat/enrich` の
   最悪値に足してあり、クライアント締め切りは 330 → **350 秒** / 210 → **230 秒** に再計算された。
 - **採用の関門**（研究時に決めたもの）: 正しい文を書き換えて表示 ≤ 3% / 本物の誤りを直して表示 ≥ 50% /

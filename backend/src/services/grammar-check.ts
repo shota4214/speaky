@@ -1,16 +1,17 @@
 import type { Feedback } from './chat-reply.js'
 import {
-  classify,
+  CORRECTION_MAX_WORDS,
+  CORRECTION_MIN_WORDS,
+  correctionSkipReason,
+  evaluateCorrectionPair,
   extractCorrection,
-  guard,
-  tokenize,
   type CorrectionCategory,
+  type CorrectionSkipReason,
   type GuardVerdict,
-} from './correction-guard.js'
+} from '../shared/correction-guard.js'
 import { isClientAbort } from './client-abort.js'
 import { chatWithOllama, type ChatWithOllamaOptions, type OllamaChatMessage } from './ollama.js'
 import { OLLAMA_BUDGET_MS } from '../shared/request-budget.js'
-import { containsNonLatinScript } from '../shared/text-guards.js'
 
 /**
  * 添削(文法チェック)の LLM 呼び出し。
@@ -57,13 +58,10 @@ export const GRAMMAR_CHECK_STOP: readonly string[] = ['<said>', '</said>', '\n']
 /** 1 文を書き直すのに十分な上限(研究時と同じ)。 */
 export const GRAMMAR_CHECK_NUM_PREDICT = 60
 
-/** これより短い発話("sounds good" 等)は見ない。 */
-export const GRAMMAR_CHECK_MIN_WORDS = 3
-/**
- * これより長い発話は見ない。研究の発話は最長でも 1〜2 文で、長い発話の書き直しは
- * 測っていない(編集の数も増え、フィルタが「直しすぎ」として捨てる側に寄る)。
- */
-export const GRAMMAR_CHECK_MAX_WORDS = 25
+/** これより短い発話("sounds good" 等)は見ない(値は shared/correction-guard.ts)。 */
+export const GRAMMAR_CHECK_MIN_WORDS = CORRECTION_MIN_WORDS
+/** これより長い発話は見ない(値と理由は shared/correction-guard.ts)。 */
+export const GRAMMAR_CHECK_MAX_WORDS = CORRECTION_MAX_WORDS
 
 /**
  * 1 回の呼び出しのサンプリング。**温度 0 / seed 0 で決定的**。
@@ -93,23 +91,18 @@ export function buildGrammarCheckMessages(userText: string): OllamaChatMessage[]
   ]
 }
 
-export type GrammarCheckSkipReason = 'empty' | 'non-latin' | 'too-short' | 'too-long'
+export type GrammarCheckSkipReason = CorrectionSkipReason
 
 /**
  * LLM を呼ぶ前に「そもそも見ない」発話を決める。null = 見る。
  * 日本語 / 英日混在の入力は翻訳の経路なので添削しない(ここは直接の入口ではないが、
  * enrich の再取得は mode を知らないので文字で判定する)。
+ * 実装は shared(履歴画面の再検証も同じ足切りを使う)。
  */
 export function grammarCheckSkipReason(
   userText: string | null | undefined,
 ): GrammarCheckSkipReason | null {
-  const text = (userText ?? '').trim()
-  if (!text) return 'empty'
-  if (containsNonLatinScript(text)) return 'non-latin'
-  const words = tokenize(text).length
-  if (words < GRAMMAR_CHECK_MIN_WORDS) return 'too-short'
-  if (words > GRAMMAR_CHECK_MAX_WORDS) return 'too-long'
-  return null
+  return correctionSkipReason(userText)
 }
 
 export interface GrammarCheckEvaluation {
@@ -127,23 +120,9 @@ export interface GrammarCheckEvaluation {
  * 表示するのは **フィルタが受け入れ、かつ全部の変更にテンプレートがある** ときだけ。
  */
 export function evaluateGrammarCheckOutput(userText: string, raw: string): GrammarCheckEvaluation {
-  const original = userText.trim()
   const extracted = extractCorrection(raw, 'echo')
   const candidate = extracted.sentinel ? '' : extracted.text
-  const g = guard(original, candidate, { minWords: GRAMMAR_CHECK_MIN_WORDS, maxOps: 3 })
-  if (g.verdict !== 'accept') {
-    return { feedback: null, candidate, verdict: g.verdict, reasons: g.reasons, categories: null }
-  }
-  const c = classify(original, candidate, g.ops)
-  return {
-    feedback: c.explanation
-      ? { user_said: original, corrected: candidate, explanation: c.explanation }
-      : null,
-    candidate,
-    verdict: g.verdict,
-    reasons: g.reasons,
-    categories: c.categories,
-  }
+  return { candidate, ...evaluateCorrectionPair(userText.trim(), candidate) }
 }
 
 export interface GrammarCheckInput {

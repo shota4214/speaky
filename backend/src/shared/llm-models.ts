@@ -134,7 +134,7 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
     label: 'Llama 3.2 3B',
     sizeLabel: '~2GB',
     icon: '⚡',
-    note: '要ダウンロード / 標準モード(単語カードあり)・日本語訳は Qwen 2.5 1.5B より良くならない(評価済み)',
+    note: '要ダウンロード / 標準モード・日本語訳は Qwen 2.5 1.5B より良くならない(評価済み)',
     lightweight: true,
     offerForDownload: true,
     bundled: false,

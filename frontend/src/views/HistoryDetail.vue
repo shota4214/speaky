@@ -12,6 +12,7 @@ import type { Conversation, Message } from '../db/types'
 import { chatEnrich, probeBackendFeatures } from '../services/api'
 import { acceptJapaneseTranslation } from '../../../backend/src/shared/text-guards'
 import { storedJapaneseTranslation, withEffectiveAiModes } from '../utils/stored-translation'
+import { retryFeedbackPatch, storedFeedback } from '../utils/stored-feedback'
 import { useSettingsStore } from '../stores/settings'
 import {
   FEATURE_CHAT_ENRICH,
@@ -41,6 +42,14 @@ const messages = ref<Message[]>([])
  * 「参考訳」の札・訳の検証・再取得ボタンはすべてこちらの mode で決める。
  */
 const displayMessages = computed(() => withEffectiveAiModes(messages.value))
+/**
+ * 表示する添削(メッセージ ID → 添削)。保存された添削は **表示のたびに** 今のフィルタで
+ * 検証し直し、通ったものだけを **今のテンプレートで作り直した説明** で出す
+ * (以前のバージョンはモデルが書いた添削を保存していた。storedFeedback の注記)。
+ */
+const displayFeedback = computed(
+  () => new Map(messages.value.map((m) => [m.id, storedFeedback(m)] as const)),
+)
 const loading = ref(true)
 
 /**
@@ -132,7 +141,8 @@ async function retryJapanese(message: Message): Promise<void> {
     // ⚠️ ユーザーが頼んだのは **日本語訳** であって添削のやり直しではない。
     // 既に添削 / 単語が入っている行を今のモデル(当時と別かもしれない、
     // しかも小さいかもしれない)の出力で差し替えると、黙って劣化させることになる。
-    // 空のときだけ埋める。
+    // 空のときだけ埋める。検証を通らない保存済みの添削(以前のバージョンがモデルに
+    // 書かせたもの)は空として扱い、検証済みの添削で置き換えられるようにする(retryFeedbackPatch)。
     // 添削は grammar-check 対応の backend が返したもの(検証済み + 固定テンプレートの説明)だけ。
     // 申告の無い backend の feedback はモデルが書いたものなので使わない。
     const checkedFeedback = hasFeature(backendFeatures.value, FEATURE_GRAMMAR_CHECK)
@@ -140,15 +150,7 @@ async function retryJapanese(message: Message): Promise<void> {
       : null
     const updated = await messagesRepo.update(message.id, {
       replyJa,
-      ...(message.feedback || !checkedFeedback
-        ? {}
-        : {
-            feedback: {
-              userSaid: checkedFeedback.user_said,
-              corrected: checkedFeedback.corrected,
-              explanation: checkedFeedback.explanation,
-            },
-          }),
+      ...retryFeedbackPatch(message, checkedFeedback),
       ...((message.vocabulary?.length ?? 0) > 0 || enrichment.vocabulary.length === 0
         ? {}
         : { vocabulary: enrichment.vocabulary }),
@@ -271,19 +273,21 @@ function replay(text: string) {
               </div>
             </div>
             <div
-              v-if="m.feedback"
+              v-if="displayFeedback.get(m.id)"
               class="ml-2 max-w-[75%] rounded-xl bg-amber-50 px-3 py-2 text-xs ring-1 ring-amber-200 dark:bg-amber-900/20 dark:ring-amber-700/40"
             >
               <div class="font-semibold text-amber-700 dark:text-amber-300">✏️ 添削</div>
               <div class="mt-1">
-                <span class="text-rose-500 line-through">{{ m.feedback.userSaid }}</span>
+                <span class="text-rose-500 line-through">{{
+                  displayFeedback.get(m.id)!.userSaid
+                }}</span>
                 <span class="mx-1 text-text-muted">→</span>
                 <strong class="text-emerald-600 dark:text-emerald-400">{{
-                  m.feedback.corrected
+                  displayFeedback.get(m.id)!.corrected
                 }}</strong>
               </div>
               <div class="mt-1 text-text-muted">
-                {{ m.feedback.explanation }}
+                {{ displayFeedback.get(m.id)!.explanation }}
               </div>
             </div>
             <div

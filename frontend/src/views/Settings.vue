@@ -33,7 +33,13 @@ import {
   type ModelProfilePref,
   type WhisperModel,
 } from '../storage/settings'
-import { FEATURE_MODEL_PROFILE_PREVIEW, hasFeature } from '../utils/backend-features'
+import {
+  FEATURE_MODEL_PROFILE_PREVIEW,
+  hasFeature,
+  NO_FEATURES,
+  type BackendFeatures,
+} from '../utils/backend-features'
+import { correctionsAvailable, lightModeOutputsLabel } from '../utils/correction-wording'
 import { useSettingsStore } from '../stores/settings'
 import { useThemeStore } from '../stores/theme'
 import {
@@ -462,6 +468,14 @@ const llmSelectOptions = computed(() => {
 const profilePreview = ref<ModelProfilePreview | null>(null)
 /** backend がプレビューに対応しているか。null = まだ確認できていない。 */
 const profilePreviewSupported = ref<boolean | null>(null)
+/**
+ * backend の機能一覧(プレビューの問い合わせで取ったもの)。
+ * 「添削は出ます」と書くのは grammar-check を申告した backend のときだけ(correction-wording.ts)。
+ */
+const backendFeatures = ref<BackendFeatures>(NO_FEATURES)
+/** 軽量モードでも出るものの呼び名(「日本語訳と添削」/「日本語訳」)。 */
+const lightOutputsLabel = computed(() => lightModeOutputsLabel(backendFeatures.value))
+const showCorrectionWording = computed(() => correctionsAvailable(backendFeatures.value))
 
 /**
  * 問い合わせの世代。モデルとモードを続けて変えると問い合わせが並走し、
@@ -478,6 +492,7 @@ async function refreshProfilePreview() {
 
   const features = await probeBackendFeatures()
   if (generation !== previewGeneration) return
+  backendFeatures.value = features
   if (!hasFeature(features, FEATURE_MODEL_PROFILE_PREVIEW)) {
     profilePreviewSupported.value = false
     profilePreview.value = null
@@ -498,7 +513,7 @@ async function refreshProfilePreview() {
 
 const profileOptions: { value: ModelProfilePref; label: string }[] = [
   { value: 'auto', label: '自動(モデルの大きさで決める / 推奨)' },
-  { value: 'standard', label: '標準に固定(詳しい指示・単語カードあり)' },
+  { value: 'standard', label: '標準に固定(詳しい指示・長めの返答)' },
   { value: 'small', label: '軽量に固定(短い指示・単語カードなし)' },
 ]
 
@@ -524,7 +539,7 @@ const modelSubstituted = computed(
   () => profilePreview.value !== null && !profilePreview.value.modelAccepted,
 )
 
-/** 単語カードが出ない状態か(backend の申告)。添削はどちらのモードでも出る。 */
+/** 単語カードが出ない状態か(backend の申告)。添削はどちらのモードでも出る(grammar-check の申告があれば)。 */
 const enrichmentReduced = computed(() => profilePreview.value?.enrichment === 'translation-only')
 
 function updateModelProfile(e: Event) {
@@ -894,11 +909,14 @@ async function handleDeleteAll() {
             class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
           >
             💡 同梱の <strong>{{ bundledLlmLabel }}</strong> はネット無しですぐ会話でき、メモリ 8GB
-            の Mac
-            でも動きます。軽量モードで動き、<strong>日本語訳と添削は出ますが、単語カードは出ません</strong>。
-            添削はどのモデルでも、説明をきちんと付けられる直しだけを表示します。
+            の Mac でも動きます。軽量モードで動き、<strong
+              >{{ lightOutputsLabel }}は出ますが、単語カードは出ません</strong
+            >。
+            <template v-if="showCorrectionWording">
+              添削はどのモデルでも、説明をきちんと付けられる直しだけを表示します。
+            </template>
             <strong>Llama 3.2 3B</strong>
-            以上のモデルを選ぶと標準モードになり単語カードが出ますが、評価では日本語訳は同梱モデルより良くなりませんでした。
+            以上のモデルを選ぶと標準モードになりますが、評価では日本語訳は同梱モデルより良くならず、単語カードもほとんど出ませんでした。
             <strong>Gemma 2 9B</strong> / <strong>Qwen 2.5 14B</strong>
             は精度を計測していません(重く、メモリ 16GB 以上向けです)。
             <strong>Llama 3.2 1B</strong>
@@ -937,8 +955,9 @@ async function handleDeleteAll() {
           <p class="mt-1 text-xs text-text-muted">
             小さいモデル(2B 以下)は長い指示を守れないため、<strong class="text-text"
               >軽量モード</strong
-            >では AI への指示を短くし、会話履歴を減らし、返答を 1〜2
-            文に制限します。日本語訳と添削は出ますが、単語カードは出しません(小さいモデルの単語抽出は役に立たないことが多いため)。
+            >では AI への指示を短くし、会話履歴を減らし、返答を 1〜2 文に制限します。{{
+              lightOutputsLabel
+            }}は出ますが、単語カードは出しません(小さいモデルの単語抽出は役に立たないことが多いため)。
           </p>
           <p class="mt-1 text-xs text-text-muted">
             「自動」はモデル名のパラメータ数で判定します(2B 以下 = 軽量)。 上のバッジは<strong
@@ -970,8 +989,9 @@ async function handleDeleteAll() {
             v-else-if="enrichmentReduced"
             class="mt-2 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:bg-sky-900/20 dark:text-sky-200"
           >
-            ℹ️ いまの組み合わせでは<strong>単語カードは出ません</strong>(日本語訳と添削は出ます)。
-            小さいモデルの単語抽出は役に立たないことが多いためです。
+            ℹ️ いまの組み合わせでは<strong>単語カードは出ません</strong>({{
+              lightOutputsLabel
+            }}は出ます)。 小さいモデルの単語抽出は役に立たないことが多いためです。
           </p>
         </div>
       </div>

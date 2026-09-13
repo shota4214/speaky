@@ -23,6 +23,7 @@ import {
   NO_FEATURES,
   type BackendFeatures,
 } from '../utils/backend-features'
+import { correctionsAvailable, lightModeOutputsLabel } from '../utils/correction-wording'
 import { buildOnboardingLlmOptions, chooseOnboardingLlm } from '../utils/onboarding-model'
 
 const router = useRouter()
@@ -103,6 +104,9 @@ watch(step, (s) => {
 const backendFeatures = ref<BackendFeatures>(NO_FEATURES)
 const memoryLabel = computed(() => formatMemoryGb(backendFeatures.value))
 const lowMemory = computed(() => isLowMemoryMachine(backendFeatures.value))
+/** 「添削は出ます」と書くのは grammar-check を申告した backend のときだけ(correction-wording.ts)。 */
+const lightOutputsLabel = computed(() => lightModeOutputsLabel(backendFeatures.value))
+const showCorrectionWording = computed(() => correctionsAvailable(backendFeatures.value))
 
 onMounted(async () => {
   if (step.value === 2) startOllamaPolling()
@@ -366,7 +370,7 @@ function complete() {
           </p>
           <ul class="list-disc space-y-1 pl-5 text-sm text-text-muted">
             <li>マイクから英語/日本語で話しかけると AI が応答します</li>
-            <li>添削・単語学習・復習リスト機能つき</li>
+            <li>添削・日本語訳つき</li>
             <li>会話履歴は30日間ローカルに保存</li>
             <li>外部にデータが送信されることはありません</li>
           </ul>
@@ -445,10 +449,13 @@ function complete() {
             <p class="mt-1 text-xs text-text-muted">
               2B 以下のモデルを選ぶと <strong class="text-text">軽量モード</strong> で動きます(AI
               への指示を短くし、返答を 1〜2 文に制限(最初の挨拶だけは 3 文まで)。
-              <strong class="text-text">日本語訳と添削は出ますが、単語カードは出ません</strong>)。
-              同梱の {{ bundledLlmName }} もこれに当たります。
-              添削は、説明をきちんと付けられる直しだけを表示します。
-              大きいモデルを選ぶと自動で標準モード(単語カードあり)になり、設定画面で固定もできます。
+              <strong class="text-text"
+                >{{ lightOutputsLabel }}は出ますが、単語カードは出ません</strong
+              >)。 同梱の {{ bundledLlmName }} もこれに当たります。
+              <template v-if="showCorrectionWording">
+                添削は、説明をきちんと付けられる直しだけを表示します。
+              </template>
+              大きいモデルを選ぶと自動で標準モード(返答が長め)になり、設定画面で固定もできます。
             </p>
           </div>
           <div>

@@ -21,7 +21,12 @@
  * 説明できない変更として扱う(= 表示しない)。記録済みの 280 件ではこの経路を通らない。
  *
  * **このファイルは node/DOM の API を一切使わない**(純粋関数のみ)。
+ * backend(grammar-check.ts)と frontend(履歴画面で保存済みの添削を検証し直す
+ * utils/stored-feedback.ts)の **両方がこの 1 つの実装を使う**。
+ * 置き場所が shared/ なのはそのため(request-budget.ts / text-guards.ts と同じ)。
  */
+
+import { containsNonLatinScript } from './text-guards.js'
 
 // ---------------------------------------------------------------- word classes
 const ARTICLES: ReadonlySet<string> = new Set(['a', 'an', 'the'])
@@ -1203,4 +1208,92 @@ function classifyInner(
   }
   const uniq = [...new Set(lines)]
   return { categories: [...new Set(cats)], explanation: uniq.length ? uniq.join('\n') : null }
+}
+
+// ---------------------------------------------------------------- one pair, end to end
+/** これより短い発話("sounds good" 等)は見ない。 */
+export const CORRECTION_MIN_WORDS = 3
+/**
+ * これより長い発話は見ない。研究の発話は最長でも 1〜2 文で、長い発話の書き直しは
+ * 測っていない(編集の数も増え、フィルタが「直しすぎ」として捨てる側に寄る)。
+ */
+export const CORRECTION_MAX_WORDS = 25
+/** 編集操作がこれより多い書き直しは「直しすぎ」として捨てる(研究時と同じ)。 */
+export const CORRECTION_MAX_OPS = 3
+
+export type CorrectionSkipReason = 'empty' | 'non-latin' | 'too-short' | 'too-long'
+
+/**
+ * 「そもそも添削しない」発話を決める。null = 見る。
+ * 日本語 / 英日混在の入力は翻訳の経路なので添削しない。
+ */
+export function correctionSkipReason(
+  userText: string | null | undefined,
+): CorrectionSkipReason | null {
+  const text = (userText ?? '').trim()
+  if (!text) return 'empty'
+  if (containsNonLatinScript(text)) return 'non-latin'
+  const words = tokenize(text).length
+  if (words < CORRECTION_MIN_WORDS) return 'too-short'
+  if (words > CORRECTION_MAX_WORDS) return 'too-long'
+  return null
+}
+
+/** 表示してよい添削(backend の Feedback と同じ形)。説明は必ず固定テンプレートの文面。 */
+export interface CheckedCorrection {
+  user_said: string
+  corrected: string
+  explanation: string
+}
+
+export interface CorrectionPairEvaluation {
+  /** 表示してよい添削。null = 何も表示しない。 */
+  feedback: CheckedCorrection | null
+  verdict: GuardVerdict
+  reasons: string[]
+  categories: CorrectionCategory[] | null
+}
+
+/**
+ * 元の発話と直した文の組を判定し、表示してよい添削を組み立てる。
+ * 表示するのは **フィルタが受け入れ、かつ全部の変更にテンプレートがある** ときだけ。
+ * (発話の足切り = correctionSkipReason は呼び出し側で済ませる。)
+ */
+export function evaluateCorrectionPair(
+  original: string,
+  candidate: string,
+): CorrectionPairEvaluation {
+  const g = guard(original, candidate, {
+    minWords: CORRECTION_MIN_WORDS,
+    maxOps: CORRECTION_MAX_OPS,
+  })
+  if (g.verdict !== 'accept') {
+    return { feedback: null, verdict: g.verdict, reasons: g.reasons, categories: null }
+  }
+  const c = classify(original, candidate, g.ops)
+  return {
+    feedback: c.explanation
+      ? { user_said: original, corrected: candidate, explanation: c.explanation }
+      : null,
+    verdict: g.verdict,
+    reasons: g.reasons,
+    categories: c.categories,
+  }
+}
+
+/**
+ * **保存済みの添削**(発話と直した文)を今のルールで検証し直し、今のテンプレートで
+ * 説明を作り直す。通らなければ null(= 表示しない)。
+ *
+ * 保存された説明文は **一切使わない**。以前のバージョンはモデルが書いた添削
+ * (説明が英語 / 崩れた日本語 / 中国語)を検証せずに保存していて、インポートした
+ * バックアップからも戻ってくる。判定は決定的なので、grammar-check が当時表示した
+ * 添削はテンプレートが変わらない限り同じ説明で必ず通る。
+ */
+export function recheckCorrection(userSaid: unknown, corrected: unknown): CheckedCorrection | null {
+  if (typeof userSaid !== 'string' || typeof corrected !== 'string') return null
+  const original = userSaid.trim()
+  const candidate = corrected.trim()
+  if (!candidate || correctionSkipReason(original) !== null) return null
+  return evaluateCorrectionPair(original, candidate).feedback
 }

@@ -2,7 +2,14 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { classify, extractCorrection, guard, tokenize, wordDiff } from './correction-guard.js'
+import {
+  classify,
+  extractCorrection,
+  guard,
+  recheckCorrection,
+  tokenize,
+  wordDiff,
+} from '../shared/correction-guard.js'
 import { evaluateGrammarCheckOutput, grammarCheckSkipReason } from './grammar-check.js'
 
 /**
@@ -109,6 +116,9 @@ for (const [model, rows] of Object.entries(fixture.models)) {
           explanation: row.explanation,
         })
       }
+
+      // 履歴画面の再検証(保存された発話と直した文だけから作り直す)も同じ結論・同じ説明になる。
+      expect(recheckCorrection(item.text, row.extracted)).toEqual(e.feedback)
     })
 
     it('研究の数字: 正しい文の書き換え 0/78・直せた誤り 49/62・間違った説明 0', () => {

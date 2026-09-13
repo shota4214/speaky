@@ -1,7 +1,7 @@
 {
   "name": "electron",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Electron wrapper for Speaky",
   "main": "dist/main.js",
   "type": "commonjs",

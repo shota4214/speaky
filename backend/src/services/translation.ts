@@ -42,7 +42,14 @@ import {
  *     モデルの補足説明が翻訳結果として返ってしまうため、必ず先頭側を拾う。
  *  3) 全体を囲う引用符を剥がす
  */
-export function stripTranslationPreamble(raw: string): string {
+export function stripTranslationPreamble(
+  raw: string,
+  /**
+   * 'paired' は **開き・閉じの両方がそろっているときだけ** 全体を囲う引用符を剥がす
+   * (日本語訳用。「「OK」は英語でもそのまま通じるよ」の先頭の 「 だけを剥がさない)。
+   */
+  quotes: 'either' | 'paired' = 'either',
+): string {
   let out = raw.trim()
 
   // 1) 典型的な前置きパターン(同行末コロン + オプションの直後改行)を順に剥がす。
@@ -85,8 +92,6 @@ export function stripTranslationPreamble(raw: string): string {
   //    自然に出るため META 判定から外す(`This sentence`/`This phrase` 等の
   //    明確に説明と分かる表現のみを除外する)。
   if (out.includes('\n')) {
-    const META_LINE_PATTERN =
-      /^(Note|Notice|Tip|Explanation|Translation note|This (?:sentence|phrase|expression|translation|wording)|In other words|\(|\*|—|–)/i
     const lines = out
       .split('\n')
       .map((s) => s.trim())
@@ -100,9 +105,38 @@ export function stripTranslationPreamble(raw: string): string {
   }
 
   // 3) 全体を囲う引用符/括弧を剥がす
+  if (quotes === 'paired') return stripPairedQuotes(out)
   out = out.replace(/^["'「『]\s*|\s*["'」』]\s*$/g, '').trim()
   return out
 }
+
+/**
+ * 明らかにメタ説明と分かる行(Note:, This sentence..., 括弧書き 等)。
+ * ASCII 比率では "I'm 30." のような短く数字を含む正しい翻訳を弾いて
+ * 後続の説明文を拾うリスクがあるため、比率は使わない。
+ */
+const META_LINE_PATTERN =
+  /^(Note|Notice|Tip|Explanation|Translation note|This (?:sentence|phrase|expression|translation|wording)|In other words|\(|\*|—|–)/i
+
+const QUOTE_PAIRS: readonly (readonly [string, string])[] = [
+  ['"', '"'],
+  ["'", "'"],
+  ['「', '」'],
+  ['『', '』'],
+]
+
+/** 開き・閉じの引用符が両方そろって全体を囲っているときだけ剥がす(中に同じ引用符があれば剥がさない)。 */
+function stripPairedQuotes(text: string): string {
+  for (const [open, close] of QUOTE_PAIRS) {
+    if (text.length < 2 || !text.startsWith(open) || !text.endsWith(close)) continue
+    const inner = text.slice(open.length, -close.length)
+    if (!inner.includes(open) && !inner.includes(close)) return inner.trim()
+  }
+  return text
+}
+
+/** 行全体が括弧で囲まれている(「（カジュアルな言い方です）」)。全角は NFKC で ASCII に寄せてから見る。 */
+const BRACKETED_LINE_RE = /^(?:\([^()]*\)|\[[^[\]]*\]|【[^【】]*】)$/
 
 /** 末尾がコロン(「Here is the Japanese translation:」「日本語訳：」のような見出し)。 */
 const ENDS_WITH_COLON_RE = /[:：]\s*$/
@@ -166,9 +200,21 @@ function isLeadInParagraph(
   paragraph: string,
   direction: 'ja-to-en' | 'en-to-ja',
   source: string,
+  following: readonly string[],
 ): boolean {
   const echo = comparable(paragraph)
-  if (echo && echo === comparable(source)) return false
+  if (echo && echo === comparable(source)) {
+    // en→ja で「Did you watch it?\n\n見た？」のように、原文を繰り返してから訳した出力は
+    // 繰り返しを読み飛ばす(返すと no-kana で弾かれ、温度 0 の引き直しも同じ形になる)。
+    // ただし後ろが **1 段落だけ** で、括弧書きで始まらず、原文の英単語を含まないときに限る。
+    // 「OK!\n\n（そのまま「OK!」で通じます）」の補足は訳ではないので、繰り返しのまま返して弾く。
+    return (
+      direction === 'en-to-ja' &&
+      following.length === 1 &&
+      !OPENING_BRACKET_RE.test(following[0]!) &&
+      !sharesEnglishWord(following[0]!, source)
+    )
+  }
   if (!stripTranslationPreamble(paragraph)) return true
   if (direction === 'en-to-ja' && INTERJECTION_ONLY_RE.test(paragraph)) return true
   if (!ENDS_WITH_COLON_RE.test(paragraph)) return false
@@ -214,29 +260,72 @@ export function extractTranslationParagraphs(
 ): ExtractedTranslation {
   const paragraphs = splitParagraphs(raw)
   if (paragraphs.length === 0) return { text: '', reachesEnd: true }
+  // 出力が空行で終わっている = 最後の段落は書き終わっていて、生成上限で切れたのは
+  // その後ろの(空の)段落。訳が完結しているのに「切れた」と数えない。
+  const openTail = !TRAILING_BLANK_LINE_RE.test(raw)
   const source = options.source ?? ''
   const start =
-    paragraphs.length > 1 && isLeadInParagraph(paragraphs[0]!, options.direction, source) ? 1 : 0
+    paragraphs.length > 1 &&
+    isLeadInParagraph(paragraphs[0]!, options.direction, source, paragraphs.slice(1))
+      ? 1
+      : 0
+  const head = paragraphs[start]!
 
   const sourceParagraphs = splitParagraphs(source).length
   if (options.direction === 'en-to-ja' && sourceParagraphs > 1) {
+    // 先頭の段落だけで英文全体の訳になっていれば、つなげない(後ろの段落はモデルの返事)。
+    // 検証だけでは「やあ！」(英文 2 段落の前半だけの訳)も通るので、文の数も見る。
+    if (passesJapaneseValidator(head, source) && sentenceCount(head) >= sourceParagraphs) {
+      return { text: head, reachesEnd: start + 1 === paragraphs.length && openTail }
+    }
     const end = Math.min(paragraphs.length, start + sourceParagraphs)
     return {
       text: paragraphs.slice(start, end).join('\n\n'),
-      reachesEnd: end === paragraphs.length,
+      reachesEnd: end === paragraphs.length && openTail,
     }
   }
 
-  const head = paragraphs[start]!
   const next = paragraphs[start + 1]
   const colonInMiddle = hasColon(source) && !ENDS_WITH_COLON_RE.test(source.trim())
   if (next !== undefined && ENDS_WITH_COLON_RE.test(head) && colonInMiddle) {
     return {
       text: head + (options.direction === 'en-to-ja' ? '' : ' ') + next,
-      reachesEnd: start + 2 === paragraphs.length,
+      reachesEnd: start + 2 === paragraphs.length && openTail,
     }
   }
-  return { text: head, reachesEnd: start + 1 === paragraphs.length }
+  return { text: head, reachesEnd: start + 1 === paragraphs.length && openTail }
+}
+
+/** 空行(= 次の段落の始まり)で終わっている。 */
+const TRAILING_BLANK_LINE_RE = /\r?\n[^\S\r\n]*\r?\n\s*$/
+
+/** 括弧書きの始まり(「（そのまま通じます）」「【補足】」)。 */
+const OPENING_BRACKET_RE = /^[（(「『【［[]/
+
+/** 原文の英単語を 1 つでも含むか(「そのまま OK で通じます」は原文「OK!」の補足)。 */
+function sharesEnglishWord(text: string, source: string): boolean {
+  const words = (s: string) =>
+    s
+      .normalize('NFKC')
+      .toLowerCase()
+      .match(/[a-z]+/g) ?? []
+  const sourceWords = new Set(words(source))
+  return words(text).some((w) => sourceWords.has(w))
+}
+
+/** 文の数(文末の約物か改行で区切る)。 */
+function sentenceCount(text: string): number {
+  return text.split(/[。！？!?]+|\n/).filter((s) => s.trim().length > 0).length
+}
+
+/** translateEnglishToJapanese と同じ整形をしたうえで、日本語訳の検証を通るか。 */
+function passesJapaneseValidator(text: string, source: string): boolean {
+  return (
+    acceptJapaneseTranslation(
+      stripTags(sanitizeJapaneseTranslation(text, source), 'en'),
+      source,
+    ) !== ''
+  )
 }
 
 /** extractTranslationParagraphs の訳の部分だけを返す。 */
@@ -434,17 +523,26 @@ export const EN_TO_JA_FRESH_ATTEMPTS: readonly { temperature: number; seed?: num
  * 扱われ、UI に再取得ボタンが出る。JSON を見せるよりはるかにまし)。
  */
 export function sanitizeJapaneseTranslation(raw: string, source = ''): string {
-  const stripped = stripTranslationPreamble(raw)
+  // 括弧で囲まれただけの行(「（カジュアルな言い方です）」)とメタ説明の行は、
+  // 行数に関わらず先に落とす(複数行の英文の経路では下の行ごとの処理が拾わなかった)。
+  const text = raw
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim()
+      return !t || !(BRACKETED_LINE_RE.test(t.normalize('NFKC')) || META_LINE_PATTERN.test(t))
+    })
+    .join('\n')
+  const stripped = stripTranslationPreamble(text, 'paired')
   if (looksLikeJsonScaffold(stripped)) return jsonTranslationField(stripped)
   if (!source.includes('\n')) return stripped
   // 英文自体が複数行なら、訳の行も残す。stripTranslationPreamble は **最初の行だけ** を
   // 残すので(ja→en の補足説明を捨てるための動き)、そのまま通すと
   // 「やあ！\n\n今日の調子はどう？」が「やあ！」になり、半分の訳が検証を通ってしまう。
-  if (looksLikeJsonScaffold(raw.trim())) return jsonTranslationField(raw.trim())
-  return raw
+  if (looksLikeJsonScaffold(text.trim())) return jsonTranslationField(text.trim())
+  return text
     .trim()
     .split('\n')
-    .map((line) => (line.trim() ? stripTranslationPreamble(line) : ''))
+    .map((line) => (line.trim() ? stripTranslationPreamble(line, 'paired') : ''))
     .join('\n')
     .trim()
 }

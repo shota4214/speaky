@@ -7,6 +7,7 @@ import {
   extractTranslationParagraphs,
   firstTranslationParagraph,
   isAcceptableEnglishRendering,
+  sanitizeJapaneseTranslation,
   TRANSLATION_ATTEMPTS,
   translateEnglishToJapanese,
   translateToNaturalEnglish,
@@ -536,6 +537,179 @@ describe('translateEnglishToJapanese(生成上限 / タイムアウト)', () => 
     await expect(
       translateEnglishToJapanese('Hello!', { signal: ctrl.signal }),
     ).rejects.toMatchObject({ code: 'ABORTED' })
+  })
+})
+
+describe('translateEnglishToJapanese(Ollama のエラーと中断)', () => {
+  it('MODEL_NOT_FOUND は引き直さずにすぐ諦める', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let calls = 0
+    vi.stubGlobal('fetch', async () => {
+      calls++
+      return new Response('model "qwen2.5:1.5b" not found', { status: 404 })
+    })
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('')
+    expect(calls).toBe(1)
+  })
+
+  it('UNKNOWN のエラーなら 2 回目を試す', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let calls = 0
+    vi.stubGlobal('fetch', async () => {
+      calls++
+      if (calls === 1) return new Response('internal error', { status: 500 })
+      return new Response(
+        JSON.stringify({ message: { role: 'assistant', content: 'こんにちは！' } }),
+      )
+    })
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('こんにちは！')
+    expect(calls).toBe(2)
+  })
+
+  it('1 回目の最中に届いた中断は投げ返し、引き直さない', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', (_url: unknown, init: { signal?: AbortSignal }) => {
+      calls++
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+          { once: true },
+        )
+      })
+    })
+    const ctrl = new AbortController()
+    const pending = translateEnglishToJapanese('Hello!', { signal: ctrl.signal })
+    await vi.waitFor(() => expect(calls).toBe(1))
+    ctrl.abort()
+    await expect(pending).rejects.toMatchObject({ code: 'ABORTED' })
+    expect(calls).toBe(1)
+  })
+})
+
+describe('extractTranslationParagraphs(段落をつなぐか / 原文の繰り返し)', () => {
+  const festival = 'That sounds like a lot of fun!\n\nWhat did you eat at the festival?'
+
+  it('en→ja: 先頭の段落だけで英文全体の訳になっていれば、後ろの返事をつなげない', () => {
+    expect(
+      extractTranslationParagraphs(
+        'それはすごく楽しそうだね！お祭りで何を食べたの？\n\n私はたこ焼きが大好きだよ！',
+        { direction: 'en-to-ja', source: festival },
+      ),
+    ).toEqual({ text: 'それはすごく楽しそうだね！お祭りで何を食べたの？', reachesEnd: false })
+  })
+
+  it('en→ja: 先頭の段落が英文の一部の訳でしかなければ、つなげる', () => {
+    expect(
+      extractTranslationParagraphs('すごく楽しそうだね！\n\nお祭りで何を食べたの？', {
+        direction: 'en-to-ja',
+        source: festival,
+      }),
+    ).toEqual({ text: 'すごく楽しそうだね！\n\nお祭りで何を食べたの？', reachesEnd: true })
+  })
+
+  it('en→ja: 原文の繰り返しの後に訳が 1 段落だけ続けば、繰り返しを読み飛ばす', () => {
+    expect(
+      firstTranslationParagraph('Did you watch it?\n\n見た？', {
+        direction: 'en-to-ja',
+        source: 'Did you watch it?',
+      }),
+    ).toBe('見た？')
+  })
+
+  it('en→ja: 後ろが括弧書き・原文の英単語を含む・2 段落以上なら、繰り返しを読み飛ばさない', () => {
+    const cases: [string, string][] = [
+      ['OK!', 'OK!\n\n（そのまま「OK!」で通じます）'],
+      ['OK!', 'OK!\n\n(そのまま通じます)'],
+      ['OK!', 'OK!\n\n「OK!」はそのまま通じます'],
+      ['OK!', 'OK!\n\n【補足】そのまま通じます'],
+      ['OK!', 'OK!\n\nそのまま OK で通じます'],
+      ['Did you watch it?', 'Did you watch it?\n\n見た？\n\nうん、見たよ！'],
+    ]
+    for (const [source, raw] of cases) {
+      expect(firstTranslationParagraph(raw, { direction: 'en-to-ja', source })).toBe(source)
+    }
+  })
+
+  it('ja→en では原文の繰り返しの規則を変えない', () => {
+    expect(
+      firstTranslationParagraph('見た？\n\nDid you watch it?', {
+        direction: 'ja-to-en',
+        source: '見た？',
+      }),
+    ).toBe('見た？')
+  })
+
+  it('生成上限が空行の直後に来ても、最後の段落は書き終わっている', () => {
+    const opts = { direction: 'en-to-ja', source: 'Hello!' } as const
+    expect(extractTranslationParagraphs('こんにちは！\n\n', opts)).toEqual({
+      text: 'こんにちは！',
+      reachesEnd: false,
+    })
+    expect(extractTranslationParagraphs('こんにちは！\n \n  ', opts).reachesEnd).toBe(false)
+  })
+})
+
+describe('translateEnglishToJapanese(段落をつなぐか / 原文の繰り返し / 生成上限)', () => {
+  it('英文が 2 段落でも、訳の後ろに書かれた返事は表示しない', async () => {
+    const sent = stubOllama([
+      'それはすごく楽しそうだね！お祭りで何を食べたの？\n\n私はたこ焼きが大好きだよ！',
+    ])
+    expect(
+      await translateEnglishToJapanese(
+        'That sounds like a lot of fun!\n\nWhat did you eat at the festival?',
+        {},
+      ),
+    ).toBe('それはすごく楽しそうだね！お祭りで何を食べたの？')
+    expect(sent).toHaveLength(1)
+  })
+
+  it('原文を繰り返してから訳した出力は、1 回目で訳を返す', async () => {
+    const sent = stubOllama(['Did you watch it?\n\n見た？'])
+    expect(await translateEnglishToJapanese('Did you watch it?', {})).toBe('見た？')
+    expect(sent).toHaveLength(1)
+  })
+
+  it("done_reason='length' でも、空行の直後で止まった訳は切れていない", async () => {
+    const sent = stubOllamaResponses([{ content: 'こんにちは！\n\n', done_reason: 'length' }])
+    expect(await translateEnglishToJapanese('Hello!', {})).toBe('こんにちは！')
+    expect(sent).toHaveLength(1)
+  })
+})
+
+describe('sanitizeJapaneseTranslation(補足の行と引用符)', () => {
+  it('括弧で囲まれただけの行とメタ説明の行を落とす', () => {
+    expect(sanitizeJapaneseTranslation('（カジュアルな言い方です）\nこんにちは！')).toBe(
+      'こんにちは！',
+    )
+    expect(sanitizeJapaneseTranslation('こんにちは！\n(casual)')).toBe('こんにちは！')
+  })
+
+  it('英文が複数行でも、括弧で囲まれただけの行とメタ説明の行を落とす', () => {
+    expect(
+      sanitizeJapaneseTranslation(
+        'やあ！\n（カジュアルな言い方です）\n\n今日の調子はどう？\nNote: casual greeting',
+        'Hi!\n\nHow are you today?',
+      ),
+    ).toBe('やあ！\n\n今日の調子はどう？')
+  })
+
+  it('行の途中にある括弧書きは行ごと落とさない', () => {
+    expect(sanitizeJapaneseTranslation('いいね（笑）どこに行ったの？')).toBe(
+      'いいね（笑）どこに行ったの？',
+    )
+  })
+
+  it('引用符は開きと閉じの両方がそろっているときだけ剥がす', () => {
+    expect(sanitizeJapaneseTranslation('「こんにちは！」')).toBe('こんにちは！')
+    expect(sanitizeJapaneseTranslation('"こんにちは！"')).toBe('こんにちは！')
+    expect(sanitizeJapaneseTranslation('「OK」は英語でもそのまま通じるよ')).toBe(
+      '「OK」は英語でもそのまま通じるよ',
+    )
+    expect(sanitizeJapaneseTranslation('「OK」は「いいよ」')).toBe('「OK」は「いいよ」')
+    expect(
+      sanitizeJapaneseTranslation('「OK」は通じるよ\n\nどう？', 'OK works.\n\nHow about it?'),
+    ).toBe('「OK」は通じるよ\n\nどう？')
   })
 })
 

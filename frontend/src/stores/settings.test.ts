@@ -350,3 +350,104 @@ describe('設定スキーマ v3(会話プロファイル)', () => {
     expect(persisted()).toEqual(stored)
   })
 })
+
+/**
+ * スキーマ v3 → v4(旧既定 LLM から同梱モデルへの移行の「前半」)。
+ *
+ * ローダーは同期なので、同梱モデルが入っているかは分からない。
+ * ここでは **印を付けて版を上げるだけ** で、llmModel は書き換えないことを固定する。
+ * 実際の切り替えは utils/bundled-llm-migration.test.ts。
+ */
+describe('設定スキーマ v4(旧既定 LLM の移行待ち)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  function persisted(): Record<string, unknown> {
+    const raw = localStorage.getItem('speaky:settings')
+    expect(raw).toBeTruthy()
+    return JSON.parse(raw!) as Record<string, unknown>
+  }
+
+  it('新規ユーザーは対象外', () => {
+    expect(DEFAULT_SETTINGS.bundledLlmMigration).toBe('idle')
+    expect(loadSettings().bundledLlmMigration).toBe('idle')
+  })
+
+  it('v3 で llama3.2:3b の人は pending になり、モデルはまだ書き換えない(即永続化)', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ ...DEFAULT_SETTINGS, llmModel: 'llama3.2:3b', schemaVersion: 3 }),
+    )
+    const loaded = loadSettings()
+    expect(loaded.bundledLlmMigration).toBe('pending')
+    expect(loaded.llmModel).toBe('llama3.2:3b')
+    expect(loaded.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+    expect(persisted().bundledLlmMigration).toBe('pending')
+    expect(persisted().schemaVersion).toBe(SETTINGS_SCHEMA_VERSION)
+  })
+
+  it('schemaVersion 欠落(v1)の 3B も pending(v2・v3 の移行と一緒に 1 回で済む)', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ llmModel: 'llama3.2:3b', silenceDurationMs: 5000 }),
+    )
+    const loaded = loadSettings()
+    expect(loaded.bundledLlmMigration).toBe('pending')
+    expect(loaded.silenceDurationMs).toBe(DEFAULT_SETTINGS.silenceDurationMs)
+    expect(loaded.modelProfile).toBe('auto')
+  })
+
+  it.each(['llama3.2:1b', 'gemma2:2b', 'llama3.2:3b-instruct-q4_K_M'])(
+    'v3 で %s の人は対象外',
+    (model) => {
+      localStorage.setItem(
+        'speaky:settings',
+        JSON.stringify({ ...DEFAULT_SETTINGS, llmModel: model, schemaVersion: 3 }),
+      )
+      const loaded = loadSettings()
+      expect(loaded.bundledLlmMigration).toBe('idle')
+      expect(loaded.llmModel).toBe(model)
+    },
+  )
+
+  // merged は欠落キーを新既定で埋めるので、parsed で判定していることの確認。
+  it('llmModel を保存していない v3 の人は対象外', () => {
+    localStorage.setItem('speaky:settings', JSON.stringify({ schemaVersion: 3 }))
+    expect(loadSettings().bundledLlmMigration).toBe('idle')
+  })
+
+  // この版以降に自分で 3B を選んだ人を、後から移行対象にしない。
+  it('v4 で保存された 3B は再判定しない', () => {
+    const stored = {
+      ...DEFAULT_SETTINGS,
+      llmModel: 'llama3.2:3b',
+      bundledLlmMigration: 'idle',
+      schemaVersion: SETTINGS_SCHEMA_VERSION,
+    }
+    localStorage.setItem('speaky:settings', JSON.stringify(stored))
+    expect(loadSettings().bundledLlmMigration).toBe('idle')
+    expect(persisted()).toEqual(stored)
+  })
+
+  it('v4 の pending は次回の load でもそのまま残る(再試行できる)', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({ ...DEFAULT_SETTINGS, llmModel: 'llama3.2:3b', schemaVersion: 3 }),
+    )
+    loadSettings()
+    expect(loadSettings().bundledLlmMigration).toBe('pending')
+  })
+
+  it('壊れた bundledLlmMigration は idle に戻す', () => {
+    localStorage.setItem(
+      'speaky:settings',
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        bundledLlmMigration: 'done',
+        schemaVersion: SETTINGS_SCHEMA_VERSION,
+      }),
+    )
+    expect(loadSettings().bundledLlmMigration).toBe('idle')
+  })
+})

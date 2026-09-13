@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （`npm test` = frontend → backend の順に vitest。**frontend 245 件 / backend 207 件**）
+   （`npm test` = frontend → backend の順に vitest。**frontend 289 件 / backend 228 件**）
    backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
    LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
    `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
@@ -133,6 +133,18 @@ du -sh electron/build-resources/ollama-data/
     - または設定画面の LLM で **`qwen2.5:1.5b`** を選び直す（選び直すと会話モードの固定も「自動」に戻る）
     - どちらの場合も、設定画面の LLM が `qwen2.5:1.5b` になっていることを確認してから ⑸ を見る。
       `llama3.2:1b` はインストール済み一覧に「非推奨」の説明付きで残る（消えないのが正しい）。
+13. **v1.1.0 で `llama3.2:3b` を選んでいた人が、同梱モデルへ一度だけ切り替わる**（設定スキーマ v4）:
+    v1.1.0 の DMG を入れて（既定の 3B のまま）一度起動 → userData を**消さずに**新しい DMG を上書き起動。
+    - **同梱モデルあり**（通常の上書き。同梱 Ollama なら `ensureBundledOllamaModel` が入れる）:
+      起動後 1〜2 秒で右上に「Qwen 2.5 1.5B に切り替えました」の通知が出る / 会話は塞がない /
+      設定画面の LLM が `qwen2.5:1.5b`、会話モードの固定が「自動」/ 「閉じる」→ 再起動しても通知は出ない /
+      設定で `llama3.2:3b` に戻したら、以後の起動で勝手に戻されない
+    - **同梱モデルなし**（下の ⒁ の自前 Ollama で確かめる）: LLM は `llama3.2:3b` のまま・通知は出ない
+    - `gemma2:2b` や `llama3.2:1b` を保存していた人は何も起きない
+14. **自前の Ollama を起動している Mac**（Speaky は再利用し、同梱モデルはそこへ届かない）:
+    `~/.ollama` に `llama3.2:3b` だけがある状態で `ollama serve` を先に起動 → ⒀ と同じ上書き起動。
+    **LLM が `llama3.2:3b` のまま会話でき（MODEL_NOT_FOUND にならない）、通知は出ない**。
+    その後 `ollama pull qwen2.5:1.5b` して再起動しても**切り替わらない**（確認済みとして終わっている）。
 
 ## 同梱物の事実（LLM 以外は実機ビルドで確認済み）
 
@@ -195,7 +207,7 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   （KEEP_ALIVE=30m / NUM_PARALLEL=1 / MAX_LOADED_MODELS=1 / FLASH_ATTENTION=1）と
   `backend/src/services/ollama.ts` のリクエスト（`keep_alive` / `options.num_ctx`= DEFAULT_NUM_CTX 4096）。
   リクエスト側の指定が実効値。
-- **設定スキーマ版** `SETTINGS_SCHEMA_VERSION`（`frontend/src/storage/settings.ts`）= **3**。
+- **設定スキーマ版** `SETTINGS_SCHEMA_VERSION`（`frontend/src/storage/settings.ts`）= **4**。
   デフォルト値を変えて既存ユーザーにも適用したいときは版を上げて移行処理を足す。
   キーが増えるだけなら版は上げない（merge が欠落を埋める）。上げるのは
   「既存の保存値を書き換える必要がある」ときだけ。移行が走ったら**その場で保存する**
@@ -203,6 +215,19 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   - v1→v2: 無音間隔 5000→1500 / Whisper medium→small（旧デフォルトのままの人だけ）
   - v2→v3: `modelProfile` の新設。**`gemma2:2b` を選んでいた人だけ** `'standard'` を
     明示的に書き込んで据え置く（'auto' だと small に落ちて挙動が変わるため）。
+  - v3→v4: **`llama3.2:3b`（v1.1.0 の既定）を保存している人だけ**を同梱の `qwen2.5:1.5b` へ
+    一度だけ切り替え、通知を 1 回出す（3B は日本語訳が不安定だったため。自分で選んだ 3B とは
+    区別できないが、メンテナ判断で対象にした）。**ローダーでは切り替えない**:
+    同梱モデルが入っているかは backend に聞くまで分からない（自前の Ollama を再利用すると
+    `ensureBundledOllamaModel` が走らず同梱モデルが届かない = 切り替えると毎ターン MODEL_NOT_FOUND）。
+    ローダーは `bundledLlmMigration = 'pending'` を付けて版を上げるだけで、
+    `utils/bundled-llm-migration.ts` が起動後に `/api/models/ollama` を見て決める
+    （起動は `components/BundledLlmMigrationNotice.vue`、文言は `utils/bundled-llm-migration-notice.ts`。**文言は暫定**）:
+    - 同梱モデルあり かつ backend の既定 = 同梱モデル → 切り替え + `modelProfile='auto'` + 通知（`'notice'`）。閉じたら `'idle'`
+    - 一覧は取れたが同梱モデルなし → **切り替えない・通知も出さない・再確認もしない**（`'idle'`。
+      自前 Ollama の人が後で qwen を pull したときに黙って 3B から切り替えないため）
+    - API 失敗 / 壊れた応答 / backend の既定が違う（frontend だけ新しい）→ `'pending'` のまま次回起動で再試行
+    - 設定画面・オンボーディングでモデルを選んだら `'pending'` を取り消す（`stores/settings.ts` の `update`）
 - **会話プロファイル**（`backend/src/services/model-profile.ts`）= `standard` / `small` の 2 段。
   - `small` は 1B〜2B 向け: system prompt を **約 900 → 約 200〜250 トークン**に圧縮
     （会話スタイル節を削除 / レベル説明は該当 1 行だけ / 人格は 1 行 / プロフィール事実は 6 件まで）、

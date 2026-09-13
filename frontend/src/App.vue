@@ -2,6 +2,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from './components/AppShell.vue'
+import BundledLlmMigrationNotice from './components/BundledLlmMigrationNotice.vue'
 import UpdateNotification from './components/UpdateNotification.vue'
 import { conversationsRepo } from './db/repos/conversations'
 import { useSettingsStore } from './stores/settings'
@@ -45,4 +46,5 @@ onMounted(async () => {
   </AppShell>
   <router-view v-else />
   <UpdateNotification v-show="!isMinimal" />
+  <BundledLlmMigrationNotice v-show="!isMinimal" />
 </template>

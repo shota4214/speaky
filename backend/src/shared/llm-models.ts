@@ -92,23 +92,31 @@ export interface LlmCatalogEntry {
  */
 export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
   {
-    tag: 'llama3.2:1b',
-    label: 'Llama 3.2 1B',
-    sizeLabel: '~1.3GB',
+    tag: 'qwen2.5:1.5b',
+    label: 'Qwen 2.5 1.5B',
+    sizeLabel: '~1GB',
     icon: '⚡⚡',
-    note: '同梱・既定 / 8GB 機向け・精度は低め(軽量モード: 添削と単語は出ません)',
+    note: '同梱・既定 / 8GB 機向け・日本語訳が安定(軽量モード: 添削と単語は出ません)',
     lightweight: true,
     offerForDownload: true,
     bundled: true,
   },
   {
-    tag: 'qwen2.5:1.5b',
-    label: 'Qwen 2.5 1.5B',
-    sizeLabel: '~1GB',
+    // v1.2.0 の同梱物。**取得の選択肢からは外した**(offerForDownload: false)。
+    // 実モデル評価(各シナリオ 12 試行)で、日本語訳の欄が日本語にならなかったのが
+    // 60 回中 28 回、英→日の意味が正しかったのが 12 回中 0 回だった。
+    // Llama 3.2 は日本語を公式にサポートしておらず、プロンプト調整でも改善しなかった。
+    // 「日本語訳を必ず表示」がこのアプリの約束なので、それを守れないモデルを
+    // こちらから薦めることはしない。
+    // カタログに残してあるのは、既に入っている人の一覧に正直な説明を出すため
+    // (許可はファミリー判定なので、ここから消しても選べなくなるわけではない)。
+    tag: 'llama3.2:1b',
+    label: 'Llama 3.2 1B',
+    sizeLabel: '~1.3GB',
     icon: '⚡⚡',
-    note: '要ダウンロード / 8GB 機向け・日本語は 1B より安定(軽量モード)',
+    note: '非推奨 / 日本語訳が崩れやすい(日本語は公式に非対応)・Qwen 2.5 1.5B への切り替えを推奨',
     lightweight: true,
-    offerForDownload: true,
+    offerForDownload: false,
     bundled: false,
   },
   {
@@ -176,30 +184,43 @@ export const LLM_CATALOG: readonly LlmCatalogEntry[] = [
 /**
  * **DMG に同梱している唯一の会話モデル**。
  *
- * v1.1.0 までは 3B を同梱していたが、v1.2.0 で 1B に差し替えた。理由:
- * オンボーディングは 12GB 未満の Mac に軽量モデルを**あらかじめ選ぶ**のに、
- * 同梱していたのは 3B だけだった。ネットの無い 8GB 機では
+ * 変遷: v1.1.0 まで `llama3.2:3b` → v1.2.0 で `llama3.2:1b` → 次のリリースで
+ * `qwen2.5:1.5b`。
+ *
+ * 3B → 軽量モデルにした理由: オンボーディングは 12GB 未満の Mac に軽量モデルを
+ * **あらかじめ選ぶ**のに、同梱していたのは 3B だけだった。ネットの無い 8GB 機では
  * 「選ばれているモデルが取得できず、モデル DL ステップの『次へ』が
  * 永久に押せない」= 初回起動が行き止まりになる。
  * 完全ローカルを売りにしている以上、**既定は必ず同梱物でなければならない**。
+ *
+ * 1B → Qwen 2.5 1.5B にした理由: M1 MacBook Air の実機で、1B の日本語訳の欄に
+ * 英語・ローマ字・崩れた文字列が出た。実 backend + 実 Ollama で各シナリオ 12 試行の
+ * 評価をしたところ、
+ *   - 日本語訳の欄が日本語でない: llama3.2:1b 28/60、qwen2.5:1.5b 0/60
+ *   - 英→日の意味が正しい:         0/12 → 8/12
+ *   - 日本語入力を正しく英語にした: 1/12 → 10/12
+ *   - 取得サイズ 1.32GB → 0.99GB、生成速度 91 → 106 tok/s(ビルド機)
+ * Llama 3.2 は日本語を公式にサポートしておらず、プロンプト調整でも 1B は改善しなかった。
+ * 日本語訳を必ず出すこのアプリには、小さく速く、日本語が安定する Qwen の方が合う。
  *
  * 副作用として、素の初回インストールは自動判定で `small` プロファイル
  * (短い返答 / 添削・単語なし)になる。これは意図した結果であり、
  * 設定画面とオンボーディングで明示し、メモリに余裕のある人には
  * {@link RECOMMENDED_DOWNLOAD_LLM_MODEL} の取得を案内する。
  *
- * ⚠️ 変更するときは `scripts/prep-llama-model.mjs` の MODEL / MANIFEST_REL、
+ * ⚠️ 変更するときは `scripts/prep-llama-model.mjs` の MODEL / MODEL_FAMILY / MODEL_TAG
+ * (MANIFEST_REL はこの 2 つから組み立てる)、
  * README / CLAUDE.md の同梱物の記述も同時に直すこと。
  * prep スクリプトとの一致は `shared/llm-models.test.ts` が検証している。
  */
-export const BUNDLED_LLM_MODEL = 'llama3.2:1b'
+export const BUNDLED_LLM_MODEL = 'qwen2.5:1.5b'
 
 /** 既定の会話モデル。**同梱物と一致していること**(オフライン初回起動の前提)。 */
 export const DEFAULT_LLM_MODEL: string = BUNDLED_LLM_MODEL
 
 /**
  * メモリに余裕のある Mac(12GB 以上)に薦める追加ダウンロード。
- * 同梱の 1B は自動判定で軽量モード(添削・単語なし)になるため、
+ * 同梱の軽量モデル(1.5B)は自動判定で軽量モード(添削・単語なし)になるため、
  * 「フルの体験に戻すには何を落とせばいいか」を 1 箇所で持つ。
  * オンボーディングと設定画面の両方がここを読む。
  */

@@ -213,7 +213,7 @@ async function loadInstalledModels() {
 }
 
 // LLM pull
-// 取得フォームの初期値は「同梱の 1B から標準モードへ戻すのに要るモデル」。
+// 取得フォームの初期値は「同梱の軽量モデルから標準モードへ戻すのに要るモデル」。
 // ここを固定文字列で書くと、同梱物を変えたときに真っ先に嘘になる。
 const newLlmName = ref<string>(RECOMMENDED_DOWNLOAD_LLM_MODEL)
 const llmPulling = ref(false)
@@ -889,7 +889,7 @@ async function handleDeleteAll() {
           </p>
           <p class="mt-1 text-xs text-text-muted">
             選べるのはインストール済みのモデルだけです。速度の目安(M4/M5):
-            <strong class="text-text">Llama 1B ≈ 1秒未満</strong> /
+            <strong class="text-text">Qwen 1.5B ≈ 1秒前後</strong> /
             <strong class="text-text">Llama 3B ≈ 1-2秒</strong> /
             <strong class="text-text">Gemma 9B ≈ 3-5秒</strong> /
             <strong class="text-text">Qwen 14B ≈ 5-10秒</strong> per turn
@@ -914,9 +914,12 @@ async function handleDeleteAll() {
             💡 精度重視なら <strong>Gemma 9B</strong> または <strong>Qwen 14B</strong> がおすすめ。
             <strong>Llama 3.2 3B</strong>
             は軽量・高速ですが、英文の添削や日本語→英語の翻訳が不正確になることがあり、誤った添削・誤訳が表示される場合があります。
-            <strong>Llama 3.2 1B / Qwen 2.5 1.5B</strong>
-            はさらに精度が落ちます(添削は出しません)。メモリ 8GB の Mac
-            で「重くて会話にならない」ときの選択肢です。
+            同梱の
+            <strong>Qwen 2.5 1.5B</strong>
+            はさらに精度が落ちます(添削は出しません)が、日本語訳は安定していて、メモリ 8GB の Mac
+            でも会話になります。 <strong>Llama 3.2 1B</strong>
+            は日本語を公式にサポートしておらず日本語訳が崩れやすいため、おすすめしません(入っている場合は
+            Qwen 2.5 1.5B への切り替えを推奨します)。
           </p>
         </div>
 

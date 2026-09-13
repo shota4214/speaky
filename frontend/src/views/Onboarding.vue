@@ -15,7 +15,7 @@ import {
   pullOllamaModel,
 } from '../services/api'
 import type { PersonalityPreset } from '../db/types'
-import { findCatalogEntry } from '../storage/settings'
+import { BUNDLED_LLM_MODEL, findCatalogEntry } from '../storage/settings'
 import { useSettingsStore } from '../stores/settings'
 import {
   formatMemoryGb,
@@ -209,6 +209,14 @@ function applyAutoLlmSelection(): void {
  * **案内するだけで選択は動かさない** — オフラインでも先へ進めることが優先。
  */
 const recommendedDownload = ref<string | null>(null)
+
+/**
+ * 同梱モデルの表示名。説明文に型番を手書きすると、同梱物を変えたときに
+ * 真っ先に嘘になる(v1.2.0 → 次のリリースで Llama 3.2 1B → Qwen 2.5 1.5B)。
+ */
+const bundledLlmName = computed(
+  () => findCatalogEntry(BUNDLED_LLM_MODEL)?.label ?? BUNDLED_LLM_MODEL,
+)
 
 const recommendedDownloadLabel = computed(() => {
   const tag = recommendedDownload.value
@@ -468,9 +476,10 @@ function complete() {
             </p>
             <p class="mt-1 text-xs text-text-muted">
               2B 以下のモデルを選ぶと <strong class="text-text">軽量モード</strong> で動きます(AI
-              への指示を短くし、返答を 1〜2 文に制限。<strong class="text-text"
+              への指示を短くし、返答を 1〜2 文に制限(最初の挨拶だけは 3 文まで)。<strong
+                class="text-text"
                 >添削と単語カードは出ず</strong
-              >、日本語訳だけを作ります)。 同梱の Llama 3.2 1B もこれに当たります —
+              >、日本語訳だけを作ります)。 同梱の {{ bundledLlmName }} もこれに当たります —
               小さいモデルの添削は誤りが多く、 間違った学習材料を出すより出さない方がよいためです。
               大きいモデルを入れれば自動で標準モードに戻り、設定画面で固定もできます。
             </p>

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   acceptJapaneseTranslation,
   containsNonLatinScript,
+  JA_LENGTH_FLOOR,
   judgeJapaneseTranslation,
   stripEmoji,
   stripLoneSurrogates,
@@ -491,9 +492,33 @@ describe('judgeJapaneseTranslation(評価データで較正)', () => {
     ).toBe('kana-share')
   })
 
-  it('長さの下限は 12 文字(短い英文の自然な訳を「長すぎる」にしない)', () => {
+  it('長さの下限は 18 文字(短い英文の自然な訳を「長すぎる」にしない)', () => {
+    expect(JA_LENGTH_FLOOR).toBe(18)
     expect(judgeJapaneseTranslation('こんにちは、元気ですか？', 'Hi!')).toBe('ok')
-    expect(judgeJapaneseTranslation('こんにちは、元気ですか？今日は', 'Hi!')).toBe('too-long')
+    expect(judgeJapaneseTranslation('こんにちは、元気ですか？今日は', 'Hi!')).toBe('ok')
+    // 18 文字ちょうどは通し、19 文字は落とす
+    expect(judgeJapaneseTranslation('あ'.repeat(18), 'Hi!')).toBe('ok')
+    expect(judgeJapaneseTranslation('あ'.repeat(19), 'Hi!')).toBe('too-long')
+    expect(
+      judgeJapaneseTranslation('こんにちは、元気ですか？今日は何をしていましたか？', 'Hi!'),
+    ).toBe('too-long')
+  })
+
+  it('短い相づちの自然な訳は通す(下限 12 だった頃は落としていた)', () => {
+    // 13 文字。max(12, 0.9 × 4) = 12 を超えるので旧ルールでは too-long だった
+    expect(judgeJapaneseTranslation('わあ、それはすごいですね！', 'Wow.')).toBe('ok')
+    expect(judgeJapaneseTranslation('いいね！それは楽しそう！', 'Nice!')).toBe('ok')
+  })
+
+  it('長い英文では比率 0.9 が効く(返事の続きは落とす)', () => {
+    const en = 'Curry is so good! Did you make it spicy?' // 40 文字 → 上限 36
+    expect(judgeJapaneseTranslation('カレーは本当においしいよね！辛くしたの？', en)).toBe('ok')
+    expect(
+      judgeJapaneseTranslation(
+        'カレーは本当においしいよね！辛くしたの？私も昨日カレーを作りました。とても楽しかったです。',
+        en,
+      ),
+    ).toBe('too-long')
   })
 })
 

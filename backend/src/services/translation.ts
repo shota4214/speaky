@@ -98,6 +98,29 @@ export function stripTranslationPreamble(raw: string): string {
 }
 
 /**
+ * 翻訳出力の **最初の段落** だけを返す(空行で区切られた 2 段落目以降は捨てる)。
+ *
+ * v1.2.0 直後の実装は stop に `'\n\n'` を入れて 2 段落目を生成させなかったが、
+ * それだと **出力が空行で始まるモデルは 1 文字も出さずに止まる**。温度 0 では
+ * 引き直しても同じなので、訳が永久に空になる。stop からは外し、ここで切る。
+ *
+ *  - 先頭の空行は読み飛ばす(これが直したい症状)
+ *  - 前置きだけの段落(「Here's the translation:」)は訳ではないので読み飛ばす
+ *  - それ以外は **最初の段落で必ず打ち切る**。訳の後ろに続けて書かれた
+ *    「返事の続き」や補足説明を検証(と画面)へ渡さない
+ */
+export function firstTranslationParagraph(raw: string): string {
+  const paragraphs = raw
+    .split(/\r?\n[^\S\r\n]*\r?\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+  for (const p of paragraphs) {
+    if (stripTranslationPreamble(p)) return p
+  }
+  return ''
+}
+
+/**
  * ja→en(日本語 / 英日混在の学習者発話 → 言うべき英文)のプロンプト。
  *
  * v1.2.0 は「Input: … / Output: …」の例を 5 本並べた長い system prompt に
@@ -171,7 +194,8 @@ export async function translateToNaturalEnglish(
       ...(a.seed !== undefined && { seed: a.seed }),
       topP: 0.9,
       numPredict: 120,
-      stop: ['<ja>', '\n\n'],
+      // '\n\n' は stop に入れない(firstTranslationParagraph の注記)。2 段落目は後処理で捨てる。
+      stop: ['<ja>'],
       // 自然文を返してほしいので Ollama の JSON モードを必ず OFF にする。
       // ここを忘れると format:'json' が送られてモデルが {"sentence":"..."}
       // のような JSON を返し、reply_en にそのまま入って UI 表示が壊れる。
@@ -179,7 +203,9 @@ export async function translateToNaturalEnglish(
       signal: options.signal,
     })
     const raw = ollamaRes.message?.content ?? ''
-    const candidate = stripLoneSurrogates(stripTags(stripTranslationPreamble(raw), 'ja')).trim()
+    const candidate = stripLoneSurrogates(
+      stripTags(stripTranslationPreamble(firstTranslationParagraph(raw)), 'ja'),
+    ).trim()
     if (candidate && isAcceptableEnglishRendering(candidate)) return candidate
     console.warn(
       `[chat:translate] rejected ja→en output at temperature=${a.temperature}:`,
@@ -274,11 +300,14 @@ export async function translateEnglishToJapanese(
         ...(a.seed !== undefined && { seed: a.seed }),
         topP: 0.9,
         numPredict: 200,
-        stop: ['<en>', '</en>', '\n\n'],
+        // '\n\n' は stop に入れない(firstTranslationParagraph の注記)。2 段落目は後処理で捨てる。
+        stop: ['<en>', '</en>'],
         jsonFormat: false,
         signal: options.signal,
       })
-      const raw = sanitizeJapaneseTranslation(ollamaRes.message?.content ?? '')
+      const raw = sanitizeJapaneseTranslation(
+        firstTranslationParagraph(ollamaRes.message?.content ?? ''),
+      )
       const ja = acceptJapaneseTranslation(stripTags(raw, 'en'), source)
       if (ja) return ja
       console.warn(

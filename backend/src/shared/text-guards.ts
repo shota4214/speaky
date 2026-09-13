@@ -59,6 +59,18 @@ export type JapaneseTranslationVerdict =
   | 'latin-heavy'
   | 'too-long'
 
+/**
+ * 日本語訳の長さの上限 = max(JA_LENGTH_FLOOR, 英文の長さ × JA_LENGTH_RATIO)。
+ * 下限は短い相づち(「Wow.」「Nice!」)の自然な訳のため、比率は長い英文の
+ * 「返事の続き」を落とすため。
+ *
+ * 下限を 20 にすると較正ケース「Hello!」→「どうすみます。 dailyは何日ですか?」
+ * (ちょうど 20 文字の意味不明な訳)が通ってしまう。18 なら短い相づちの自然な訳
+ * (「わあ、それはすごいですね！」13 文字)を通し、較正ケースの判定は 1 件も変わらない。
+ */
+export const JA_LENGTH_FLOOR = 18
+export const JA_LENGTH_RATIO = 0.9
+
 function count(text: string, re: RegExp): number {
   return text.match(re)?.length ?? 0
 }
@@ -77,8 +89,11 @@ function codePointLength(text: string): number {
  *     (かなの無い出力 = ローマ字 / 英語の続き / 中国語)
  *  4) ラテン文字が日本語の文字数の半分以下
  *     (「お店に行った。 carrot、tomato、lettuce etc.」のような半訳を落とす)
- *  5) 長さが max(12, 英文の長さ × 0.9) 以下
+ *  5) 長さが max(18, 英文の長さ × 0.9) 以下
  *     (翻訳ではなく「返事の続き」を書き始めた出力を落とす)
+ *     下限は validator_v2 では 12 だったが、「Wow.」→「わあ、それはすごいですね！」
+ *     (13 文字)のような短い相づちの自然な訳まで落としていたので 18 に上げた。
+ *     長い英文の続きを捕まえるのは比率 0.9 の方なので、比率は変えていない。
  *
  * 評価の validator_v2 からの差分は 2 つだけ: 判定前の NFKC 正規化と、〇 “” ‘’ 【】 の許可。
  * どちらも「落としていた正しい訳を通す」方向で、下の較正ケースの判定は変わらない。
@@ -103,7 +118,10 @@ export function judgeJapaneseTranslation(ja: string, en: string): JapaneseTransl
   if (kana < 1) return 'no-kana'
   if (kana / (kana + han) < 0.25) return 'kana-share'
   if (latin > (kana + han) / 2) return 'latin-heavy'
-  if (codePointLength(t) > Math.max(12, 0.9 * codePointLength((en ?? '').trim()))) {
+  if (
+    codePointLength(t) >
+    Math.max(JA_LENGTH_FLOOR, JA_LENGTH_RATIO * codePointLength((en ?? '').trim()))
+  ) {
     return 'too-long'
   }
   return 'ok'

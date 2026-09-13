@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EN_TO_JA_ATTEMPTS,
   EN_TO_JA_FRESH_ATTEMPTS,
+  firstTranslationParagraph,
   isAcceptableEnglishRendering,
   TRANSLATION_ATTEMPTS,
   translateEnglishToJapanese,
@@ -62,7 +63,7 @@ describe('translateEnglishToJapanese', () => {
       '<en>Movies are fun!  What kind of movies do you like?</en>',
     )
     expect(body.options.temperature).toBe(0)
-    expect(body.options.stop).toEqual(['<en>', '</en>', '\n\n'])
+    expect(body.options.stop).toEqual(['<en>', '</en>'])
     expect(body.format).toBeUndefined()
   })
 
@@ -100,6 +101,28 @@ describe('translateEnglishToJapanese', () => {
     expect(EN_TO_JA_FRESH_ATTEMPTS).toHaveLength(EN_TO_JA_ATTEMPTS.length)
   })
 
+  it('出力が空行で始まっても空にしない(stop に "\\n\\n" を入れない)', async () => {
+    const sent = stubOllama(['\n\n映画は楽しいね！どんな映画が好き？'])
+    const ja = await translateEnglishToJapanese(
+      'Movies are fun! What kind of movies do you like?',
+      {},
+    )
+    expect(ja).toBe('映画は楽しいね！どんな映画が好き？')
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.options.stop).not.toContain('\n\n')
+  })
+
+  it('2 段落目(返事の続き)は検証にも画面にも渡さない', async () => {
+    // 2 段落目まで含めると英文の 0.9 倍を超えて too-long になる長さにしてある。
+    // 1 段落目だけが検証に渡っていれば 1 回目で通る。
+    const sent = stubOllama([
+      'カレーはおいしいよね！辛くしたの？\n\n私も昨日カレーを作りました。とても辛くて、家族みんなで食べました。',
+    ])
+    const ja = await translateEnglishToJapanese('Curry is so good! Did you make it spicy?', {})
+    expect(ja).toBe('カレーはおいしいよね！辛くしたの？')
+    expect(sent).toHaveLength(1)
+  })
+
   it('閉じタグの残骸は剥がす', async () => {
     stubOllama(['こんにちは！</en>'])
     expect(await translateEnglishToJapanese('Hello!', {})).toBe('こんにちは！')
@@ -117,7 +140,7 @@ describe('translateToNaturalEnglish', () => {
     expect(body.messages[4]).toEqual({ role: 'assistant', content: 'What is your favorite food?' })
     expect(body.messages[5]).toEqual({ role: 'user', content: '<ja>あなたの趣味は何ですか？</ja>' })
     expect(body.options.temperature).toBe(0)
-    expect(body.options.stop).toEqual(['<ja>', '\n\n'])
+    expect(body.options.stop).toEqual(['<ja>'])
   })
 
   it('日本語が残った出力は弾いて引き直す(梯子の本数は変えない)', async () => {
@@ -135,6 +158,46 @@ describe('translateToNaturalEnglish', () => {
   it('2 回とも使えなければ空文字(ルートが 502 を返す)', async () => {
     stubOllama(['趣味は読書です。'])
     expect(await translateToNaturalEnglish('My 趣味 is 読書', {})).toBe('')
+  })
+
+  it('出力が空行で始まっても空にしない', async () => {
+    const sent = stubOllama(['\n\nI have a meeting in Tokyo next week.'])
+    expect(await translateToNaturalEnglish('来週、東京で meeting があります', {})).toBe(
+      'I have a meeting in Tokyo next week.',
+    )
+    expect(sent).toHaveLength(1)
+  })
+
+  it('2 段落目(質問への答え等)は捨てる', async () => {
+    stubOllama(['What is your hobby?\n\nMy hobby is reading books.'])
+    expect(await translateToNaturalEnglish('あなたの趣味は何ですか？', {})).toBe(
+      'What is your hobby?',
+    )
+  })
+})
+
+describe('firstTranslationParagraph', () => {
+  it('先頭の空行を読み飛ばし、最初の段落だけを返す', () => {
+    expect(firstTranslationParagraph('\n\n  \nこんにちは！\n\n私も元気です。')).toBe('こんにちは！')
+    expect(firstTranslationParagraph('こんにちは！\n \n私も元気です。\n\nまたね。')).toBe(
+      'こんにちは！',
+    )
+    expect(firstTranslationParagraph('\r\n\r\nこんにちは！\r\n\r\n続き')).toBe('こんにちは！')
+  })
+
+  it('段落の中の改行はそのまま(1 行目を拾うのは stripTranslationPreamble の仕事)', () => {
+    expect(firstTranslationParagraph('一行目\n二行目\n\n続き')).toBe('一行目\n二行目')
+  })
+
+  it('前置きだけの段落は訳ではないので読み飛ばす(その次の段落で打ち切る)', () => {
+    expect(firstTranslationParagraph("Here's the translation:\n\nこんにちは！\n\n続き")).toBe(
+      'こんにちは！',
+    )
+  })
+
+  it('空・空白だけなら空文字', () => {
+    expect(firstTranslationParagraph('')).toBe('')
+    expect(firstTranslationParagraph('\n\n \n')).toBe('')
   })
 })
 

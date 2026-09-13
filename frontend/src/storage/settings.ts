@@ -23,12 +23,38 @@ const STORAGE_KEY = 'speaky:settings'
  *      'auto' だと small プロファイル(短いプロンプト・短い生成・当時は添削なし)へ
  *      落ちて **挙動が変わる**。その人だけ明示的に 'standard' を書き込んで
  *      据え置く。これは冪等でない移行(= この仕組みが存在する理由そのもの)。
+ * - 4: v1.1.0 の既定 LLM(`llama3.2:3b`)のまま保存されている人を、同梱の
+ *      軽量モデルへ **一度だけ** 切り替える(通知付き)。
+ *      ⚠️ **ここ(同期のローダー)では切り替えない**。同梱モデルが本当に入っているかは
+ *      backend に聞くまで分からない(自前の Ollama を使っている人には同梱モデルが
+ *      届かない)ので、ローダーは `bundledLlmMigration = 'pending'` を記録して
+ *      版を 4 に上げるだけ。実際の切り替えは utils/bundled-llm-migration.ts が
+ *      インストール済み一覧を確認してから行う。版を上げても「確認できなかった」
+ *      場合は 'pending' が残るので、次回起動で再試行される。
  */
-export const SETTINGS_SCHEMA_VERSION = 3
+export const SETTINGS_SCHEMA_VERSION = 4
 
 /** v1 時点のデフォルト値。移行判定にのみ使う。 */
 const LEGACY_DEFAULT_SILENCE_MS = 5000
 const LEGACY_DEFAULT_WHISPER_MODEL: WhisperModel = 'medium'
+/**
+ * v1.1.0(一般公開した最後の版)の既定 LLM。スキーマ v4 の移行判定にのみ使う。
+ * 「自分で 3B を選んだ人」と「既定のまま触っていない人」は保存値からは区別できない。
+ * どちらも移行対象にする(メンテナ判断。設定画面から戻せることを通知で案内する)。
+ */
+export const LEGACY_DEFAULT_LLM_MODEL = 'llama3.2:3b'
+
+/**
+ * 旧既定 LLM から同梱モデルへの一度きりの移行の状態。
+ * - 'idle'    : 何もしない(対象外 / 完了済み / 通知を閉じた)
+ * - 'pending' : ローダーが対象と判定した。backend での確認待ち(確認できるまで毎起動再試行)
+ * - 'notice'  : 切り替えた。通知をまだ閉じていない
+ */
+export type BundledLlmMigrationState = 'idle' | 'pending' | 'notice'
+
+function isBundledLlmMigrationState(value: unknown): value is BundledLlmMigrationState {
+  return value === 'idle' || value === 'pending' || value === 'notice'
+}
 
 // nodejs-whisper の MODELS_LIST に含まれ、かつ Hugging Face で実在する
 // `ggml-${name}.bin` を持つ名前のみ許可する。
@@ -136,6 +162,11 @@ export interface AppSettings {
   streaming: boolean
   lastCleanupAt: number | null
   defaultLevel: Level
+  /**
+   * 旧既定 LLM(`llama3.2:3b`)→ 同梱モデルの一度きりの移行の状態(スキーマ v4)。
+   * 詳細は {@link BundledLlmMigrationState} と utils/bundled-llm-migration.ts。
+   */
+  bundledLlmMigration: BundledLlmMigrationState
   /** 保存済み設定のスキーマ版。欠落 = 1(v1.0.0 以前)として扱う。 */
   schemaVersion: number
 }
@@ -173,6 +204,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   streaming: true,
   lastCleanupAt: null,
   defaultLevel: 'intermediate',
+  // 新規ユーザーは移行の対象外(既定が最初から同梱モデル)。
+  bundledLlmMigration: 'idle',
   schemaVersion: SETTINGS_SCHEMA_VERSION,
 }
 
@@ -273,6 +306,19 @@ export function loadSettings(): AppSettings {
     // 壊れた値(手編集・将来版からのダウングレード)は既定へ戻す。
     if (!isModelProfilePref(merged.modelProfile)) {
       merged.modelProfile = DEFAULT_SETTINGS.modelProfile
+    }
+    // --- スキーマ移行(3 → 4): 旧既定 LLM のままの人を「移行待ち」にする ---
+    // ⚠️ ここでは **llmModel を書き換えない**。同梱モデルがインストール済みかは
+    // backend に聞かないと分からず、入っていない Ollama(ユーザー自前の Ollama を
+    // 再利用している場合)へ切り替えると毎ターン MODEL_NOT_FOUND になる。
+    // 印だけ付けて、確認と切り替えは utils/bundled-llm-migration.ts に任せる。
+    // v3 の移行と同じく **parsed で判定する**(merged は欠落キーを新既定で埋めるため)。
+    // v4 以降に保存された 3B(= この版で自分で選んだ)は対象にしない。
+    if (storedVersion < 4) {
+      merged.bundledLlmMigration = parsed.llmModel === LEGACY_DEFAULT_LLM_MODEL ? 'pending' : 'idle'
+    }
+    if (!isBundledLlmMigrationState(merged.bundledLlmMigration)) {
+      merged.bundledLlmMigration = DEFAULT_SETTINGS.bundledLlmMigration
     }
     merged.schemaVersion = SETTINGS_SCHEMA_VERSION
 

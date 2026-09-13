@@ -22,7 +22,7 @@
    . ~/.nvm/nvm.sh && nvm use 22
    npm run lint && npm run format:check && npm run build && npm run build:bundle -w backend && npm test
    ```
-   （`npm test` = frontend → backend の順に vitest。**frontend 311 件 / backend 819 件**）
+   （`npm test` = frontend → backend の順に vitest。**frontend 359 件 / backend 819 件**）
    backend のテストは `backend/src/**/*.test.ts`（vitest、frontend と同じ構成）。
    LLM の壊れた出力から何を拾い何を捨てるか（`services/json-salvage.ts` /
    `chat-reply.ts` / extract-facts の salvage）と、中断とタイムアウトの区別
@@ -112,7 +112,9 @@ du -sh electron/build-resources/ollama-data/
    会話画面のバッジと一致する（推測ではなく `/api/model-profile/preview` の結果）
 8. **アップグレードで既存ユーザーの 3B が消えない**（`~/Library/Application Support/electron`
    を **消さずに** 上書き起動）:
-   - `llama3.2:3b` を選んで保存していた人が、そのまま 3B で会話できる
+   - `llama3.2:3b` を選んで保存していた人は ⒀ の移行で同梱の `qwen2.5:1.5b` に切り替わるが、
+     **3B のモデル本体は消えていない**。設定画面の LLM に `llama3.2:3b` が残っていて、
+     選び直せばそのまま 3B で会話できる（切り替わらない構成は ⒀ / ⒁ を参照）
    - `ls "$HOME/Library/Application Support/electron/ollama-data/models/manifests/registry.ollama.ai/library/"`
      に `qwen2.5`（中身は `1.5b`）と `llama3.2`（中身は既存の `3b`。v1.2.0 のテスト機なら `1b` も）の
      両方がある（同期は足すだけで、旧同梱物もユーザーの 3B も消さない）
@@ -137,6 +139,32 @@ du -sh electron/build-resources/ollama-data/
     - または設定画面の LLM で **`qwen2.5:1.5b`** を選び直す（選び直すと会話モードの固定も「自動」に戻る）
     - どちらの場合も、設定画面の LLM が `qwen2.5:1.5b` になっていることを確認してから ⑸ を見る。
       `llama3.2:1b` はインストール済み一覧に「非推奨」の説明付きで残る（消えないのが正しい）。
+13. **v1.1.0 で `llama3.2:3b` を選んでいた人が、同梱モデルへ一度だけ切り替わる**（設定スキーマ v4）:
+    v1.1.0 の DMG を入れて（既定の 3B のまま）一度起動 → userData を**消さずに**新しい DMG を上書き起動。
+    - **同梱モデルあり**（通常の上書き。同梱 Ollama なら `ensureBundledOllamaModel` が入れる）:
+      起動後 1〜2 秒で**左下（サイドバーの上）**に「Qwen 2.5 1.5B に切り替えました」の通知が出る /
+      会話は塞がない（会話画面で「⏹ 会話を終わる」が押せる。ウィンドウを最小の 1024×700 に縮めても通知がメイン領域と
+      サイドバーのナビ項目に重ならない。アップデート通知が出ていても右下のそれと重ならない）/
+      設定画面の LLM が `qwen2.5:1.5b`、会話モードの固定が「自動」/ 「閉じる」→ 再起動しても通知は出ない /
+      設定で `llama3.2:3b` に戻したら、以後の起動で勝手に戻されない
+    - 通知を閉じずに設定画面で別の LLM を選ぶと、**通知が消える**（「切り替えました」が嘘にならない）
+    - 設定画面を開いたまま切り替わった場合も、会話モードのバッジが `qwen2.5:1.5b` の内容（軽量モード）に更新される
+    - **同梱モデルなし**（下の ⒁ の自前 Ollama で確かめる）: LLM は `llama3.2:3b` のまま・通知は出ない
+    - `gemma2:2b` や `llama3.2:1b` を保存していた人は何も起きない
+14. **自前の Ollama を起動している Mac**（Speaky は再利用し、同梱モデルはそこへ届かない）:
+    `~/.ollama` に `llama3.2:3b` だけがある状態で `ollama serve` を先に起動 → ⒀ と同じ上書き起動。
+    **LLM が `llama3.2:3b` のまま会話でき（MODEL_NOT_FOUND にならない）、通知は出ない**。
+    その後 `ollama pull qwen2.5:1.5b` して再起動しても**切り替わらない**（確認済みとして終わっている）。
+15. **切り替わった後で、自前の Ollama が先に起動している**（既知の制限・対策なし）:
+    ⒀ の「同梱モデルあり」で切り替わった Mac で、`~/.ollama` に `qwen2.5:1.5b` が **無い** まま
+    `ollama serve` を先に起動 → Speaky を起動。Speaky はその Ollama を再利用するので同梱モデルは届かず、
+    移行は完了済みなので確認も戻しもしない。**これは直していない。壊れ方が下のとおりであることを確かめる**:
+    - 会話を始めると、会話画面の下にエラー
+      「モデル 'qwen2.5:1.5b' が見つかりません。'ollama pull qwen2.5:1.5b' で取得してください。」が出る。
+      ユーザーに見えるのはこのエラーだけ（通知は出ない）。画面が固まったりアプリが落ちたりしない
+    - 設定画面の LLM が「⚠️ qwen2.5:1.5b — 未インストール」と表示される（別のモデルを選んでいるように見えない）
+    - 次のどれかで会話が戻る: 設定で `llama3.2:3b` を選び直す / `ollama pull qwen2.5:1.5b` /
+      自前の Ollama を止めて Speaky を再起動する（同梱の Ollama が起動し、同梱モデルが使われる）
 
 ## 同梱物の事実（LLM 以外は実機ビルドで確認済み）
 
@@ -199,7 +227,7 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   （KEEP_ALIVE=30m / NUM_PARALLEL=1 / MAX_LOADED_MODELS=1 / FLASH_ATTENTION=1）と
   `backend/src/services/ollama.ts` のリクエスト（`keep_alive` / `options.num_ctx`= DEFAULT_NUM_CTX 4096）。
   リクエスト側の指定が実効値。
-- **設定スキーマ版** `SETTINGS_SCHEMA_VERSION`（`frontend/src/storage/settings.ts`）= **3**。
+- **設定スキーマ版** `SETTINGS_SCHEMA_VERSION`（`frontend/src/storage/settings.ts`）= **4**。
   デフォルト値を変えて既存ユーザーにも適用したいときは版を上げて移行処理を足す。
   キーが増えるだけなら版は上げない（merge が欠落を埋める）。上げるのは
   「既存の保存値を書き換える必要がある」ときだけ。移行が走ったら**その場で保存する**
@@ -207,6 +235,27 @@ DMG 内 `Speaky.app/Contents/Resources/backend-template/` に以下が**すべ�
   - v1→v2: 無音間隔 5000→1500 / Whisper medium→small（旧デフォルトのままの人だけ）
   - v2→v3: `modelProfile` の新設。**`gemma2:2b` を選んでいた人だけ** `'standard'` を
     明示的に書き込んで据え置く（'auto' だと small に落ちて挙動が変わるため）。
+  - v3→v4: **`llama3.2:3b`（v1.1.0 の既定）を保存している人だけ**を同梱の `qwen2.5:1.5b` へ
+    一度だけ切り替え、通知を 1 回出す（3B は日本語訳が不安定だったため。自分で選んだ 3B とは
+    区別できないが、メンテナ判断で対象にした）。**ローダーでは切り替えない**:
+    同梱モデルが入っているかは backend に聞くまで分からない（自前の Ollama を再利用すると
+    `ensureBundledOllamaModel` が走らず同梱モデルが届かない = 切り替えると毎ターン MODEL_NOT_FOUND）。
+    ローダーは `bundledLlmMigration = 'pending'` を付けて版を上げるだけで、
+    `utils/bundled-llm-migration.ts` が起動後に `/api/models/ollama` を見て決める
+    （起動は `components/BundledLlmMigrationNotice.vue`、文言は `utils/bundled-llm-migration-notice.ts`。日本語訳が安定し速くなる / 返答が短くなり単語カードは出ない /
+    戻し方を伝え、**添削には触れない**（3B でも実質出ておらず、出るかは backend 次第のため。テストが固定）:
+    - 同梱モデルあり かつ backend の既定 = 同梱モデル → 切り替え + `modelProfile='auto'` + 通知（`'notice'`）。閉じたら `'idle'`
+    - 一覧に `llama3.2:3b` は載っているが同梱モデルなし → **切り替えない・通知も出さない・再確認もしない**（`'idle'`。
+      自前 Ollama の人が後で qwen を pull したときに黙って 3B から切り替えないため）
+    - API 失敗 / 壊れた応答 / backend の既定が違う（frontend だけ新しい）/ **一覧が空、または `llama3.2:3b` も
+      同梱モデルも載っていない** → `'pending'` のまま次回起動で再試行。
+      「無い」と言い切って永久に終えてよいのは、一覧がユーザーの使っている Ollama のものだと
+      分かる（= 今の 3B が載っている）ときだけ。backend は Ollama が `models` を返さないと空配列にする
+    - 設定画面・オンボーディングでモデルを選んだら `'pending'` も `'notice'` も `'idle'` にする（`stores/settings.ts` の `update`）
+    - バックアップの取り込みでは `'notice'` を `'idle'` にする（書き出した Mac の出来事なので）。`'pending'` は残す
+    - 通知は**左下・サイドバーの幅の内側**に出す（右上は会話画面の「⏹ 会話を終わる」に重なった。右下はアップデート通知）
+    - 設定画面の会話モードのバッジは `llmModel` / `modelProfile` の変化を監視して問い合わせ直す
+      （`utils/profile-preview-watch.ts`。画面を開いたまま移行で切り替わっても古くならない）
 - **会話プロファイル**（`backend/src/services/model-profile.ts`）= `standard` / `small` の 2 段。
   - `small` は 1B〜2B 向け: system prompt を **約 900 → 約 200〜250 トークン**に圧縮
     （会話スタイル節を削除 / レベル説明は該当 1 行だけ / 人格は 1 行 / プロフィール事実は 6 件まで）、

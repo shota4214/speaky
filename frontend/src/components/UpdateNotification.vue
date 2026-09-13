@@ -77,7 +77,7 @@ function skip() {
   >
     <div
       v-if="info"
-      class="fixed bottom-4 right-4 z-40 max-w-sm rounded-2xl bg-surface p-4 shadow-glow-lg ring-1 ring-border"
+      class="fixed bottom-4 right-4 z-40 max-w-[min(24rem,calc(100vw_-_17rem))] rounded-2xl bg-surface p-4 shadow-glow-lg ring-1 ring-border"
       role="status"
       aria-live="polite"
     >

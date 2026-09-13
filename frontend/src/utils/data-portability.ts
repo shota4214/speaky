@@ -142,7 +142,15 @@ export async function importAllData(
     // そのまま書き戻すと schemaVersion が巻き戻ったり、未対応のモデル名が残ったりするため、
     // loadSettings() の移行・検証・clamp を通した結果で上書きして正規化する
     // (次回起動を待たずに localStorage を最新スキーマへ収束させる)。
-    saveSettings(loadSettings())
+    const normalized = loadSettings()
+    // 「同梱モデルに切り替えました」の通知は、書き出した Mac で起きた出来事。
+    // 通知を開いたまま書き出したバックアップを別の Mac に入れると、そこでは何も
+    // 切り替わっていないのに通知が出てしまうので、取り込み時に消す。
+    // 'pending' は残してよい(取り込んだ Mac の backend で改めて確認してから切り替える)。
+    if (normalized.bundledLlmMigration === 'notice') {
+      normalized.bundledLlmMigration = 'idle'
+    }
+    saveSettings(normalized)
   }
   if (backup.data.selectedTheme) {
     localStorage.setItem('speaky:theme', backup.data.selectedTheme)

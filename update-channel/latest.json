@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
-  "releasedAt": "2026-06-12",
+  "version": "1.2.1",
+  "releasedAt": "2026-09-13",
   "downloadUrl": "https://drive.google.com/file/d/1WsBLc6_fRqJM_lSM4KSeygxgFh0g6qGl/view",
-  "releaseNotesUrl": "https://github.com/shota4214/speaky/releases/tag/v1.0.0",
-  "summary": "Speaky v1.0.0 を公開しました 🎉 安定版として正式リリース"
+  "releaseNotesUrl": "https://github.com/shota4214/speaky/releases/tag/v1.2.1",
+  "summary": "Speaky v1.2.1 を公開しました。メモリ 8GB の Mac でも速く動くようになり、日本語訳と添削を改善しました"
 }

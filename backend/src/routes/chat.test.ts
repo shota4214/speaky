@@ -47,6 +47,41 @@ function reply(overrides: Partial<ChatReply>): ChatReply {
   }
 }
 
+describe('finalizeReply(挨拶の文数)', () => {
+  const opening = 'Hello! How are you today? What do you usually do in the morning?'
+
+  it('small の挨拶は 3 文まで残す(2 文で切るとトピックの質問が落ちる)', () => {
+    expect(MODEL_PROFILES.small.maxOpeningSentences).toBe(3)
+    const r = finalizeReply(reply({ reply_en: opening }), MODEL_PROFILES.small, 'normal', 'opening')
+    expect(r?.reply_en).toBe(opening)
+  })
+
+  it('small の挨拶でも 4 文目は切る', () => {
+    const r = finalizeReply(
+      reply({ reply_en: `${opening} Do you like coffee?` }),
+      MODEL_PROFILES.small,
+      'normal',
+      'opening',
+    )
+    expect(r?.reply_en).toBe(opening)
+    expect(r?.reply_ja).toBe('')
+  })
+
+  it('返答(挨拶以外)は従来どおり 2 文で切る', () => {
+    const r = finalizeReply(reply({ reply_en: opening }), MODEL_PROFILES.small)
+    expect(r?.reply_en).toBe('Hello! How are you today?')
+  })
+
+  it('standard の挨拶は切らない', () => {
+    expect(MODEL_PROFILES.standard.maxOpeningSentences).toBeNull()
+    const text = `${opening} Do you like coffee?`
+    expect(
+      finalizeReply(reply({ reply_en: text }), MODEL_PROFILES.standard, 'normal', 'opening')
+        ?.reply_en,
+    ).toBe(text)
+  })
+})
+
 describe('finalizeReply', () => {
   it('small: 3 文以上なら 2 文に切り、モデルの訳は捨てる(削る前の英文の訳なので)', () => {
     const r = finalizeReply(

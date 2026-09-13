@@ -189,12 +189,18 @@ export function finalizeReply(
    * 「言ってみて」状態に入り、日本語訳の検証と再取得ボタンも飛ばしてしまう。
    */
   mode: Mode = 'normal',
+  /**
+   * 最初の挨拶か、ユーザーへの返答か。挨拶は文数の上限が違う
+   * (ModelProfile.maxOpeningSentences: 2 文で切るとトピックの質問が落ちる)。
+   */
+  turn: 'reply' | 'opening' = 'reply',
 ): ChatReply | null {
   let replyEn = stripLoneSurrogates(reply.reply_en).trim()
   let replyJa = reply.reply_ja
-  if (profile.dropNonLatinReply || profile.maxReplySentences !== null) {
+  const maxSentences = turn === 'opening' ? profile.maxOpeningSentences : profile.maxReplySentences
+  if (profile.dropNonLatinReply || maxSentences !== null) {
     const filtered = filterReplySentences(replyEn, {
-      maxSentences: profile.maxReplySentences,
+      maxSentences,
       dropNonLatin: profile.dropNonLatinReply,
     })
     if (!filtered.text) return null
@@ -454,7 +460,7 @@ async function handleOpeningTurn(
           )
         }
       }
-      if (reply) reply = finalizeReply(reply, profile, mode)
+      if (reply) reply = finalizeReply(reply, profile, mode, 'opening')
       if (reply) {
         if (reply.reply_en?.trim() && !reply.reply_ja?.trim()) {
           reply.reply_ja = await translateEnglishToJapanese(reply.reply_en, {

@@ -549,14 +549,17 @@ async function streamConversationTurn(
    * small プロファイルだけ、送る前に「文」単位でふるいにかける(services/reply-guard.ts)。
    *  - 非ラテン文字体系(漢字・かな・ハングル・キリル等)を含む文は **送らない**
    *    (= 読み上げない)。JSON 足場の抑止と同じく、終了時にラテン文字の文だけで確定する。
-   *  - 2 文目の文末で打ち切り、Ollama の生成も止める(通常の完了として done を出す)。
+   *  - 2 文目(挨拶は 3 文目)の文末で打ち切り、Ollama の生成も止める(通常の完了として done を出す)。
    * 文が確定するまで送らないが、フロントの読み上げも文末(+空白)を待ってから
    * 喋るので、最初の音が出るまでの時間はほぼ変わらない。
    */
+  // 挨拶(userText === null)は文数の上限が違う(ModelProfile.maxOpeningSentences:
+  // 2 文で切ると学習者が選んだトピックの質問が落ちる)。
+  const maxSentences = userText === null ? profile.maxOpeningSentences : profile.maxReplySentences
   const gate =
-    profile.dropNonLatinReply || profile.maxReplySentences !== null
+    profile.dropNonLatinReply || maxSentences !== null
       ? new ReplySentenceGate({
-          maxSentences: profile.maxReplySentences,
+          maxSentences,
           dropNonLatin: profile.dropNonLatinReply,
         })
       : null
@@ -654,7 +657,7 @@ async function streamConversationTurn(
     finalText = salvaged
     if (gate) {
       finalText = filterReplySentences(finalText, {
-        maxSentences: profile.maxReplySentences,
+        maxSentences,
         dropNonLatin: profile.dropNonLatinReply,
       }).text
       if (!finalText) {

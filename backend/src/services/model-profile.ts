@@ -70,6 +70,16 @@ export interface ModelProfile {
    */
   maxReplySentences: number | null
   /**
+   * 最初の挨拶(opening)だけに使う文数の上限(null = 打ち切らない)。
+   * small で 2 文にすると挨拶が「Hello! How are you today?」で切れて、
+   * 学習者が選んだ **トピックの質問が落ちる**(qwen2.5:1.5b は「Hello! + 一般的な
+   * 挨拶の質問 + トピックの質問」の 3 文で書くことが多い)。トピックは会話を
+   * 始めるためにあるので、opening だけ 3 文まで許す。
+   * 「2 文ちょうど(挨拶 + トピックの質問)」をプロンプトで指示する案も実モデルで
+   * 測ったが、トピックの質問はかえって減った(ストリーミング 30/36 → 20/36)。
+   */
+  maxOpeningSentences: number | null
+  /**
    * 英語の返答から非ラテン文字体系(漢字・かな・ハングル・キリル等)を含む文を落とすか。
    * 小型モデルは英語の返答に日本語や他言語を混ぜることがある。
    */
@@ -91,6 +101,7 @@ const STANDARD_PROFILE: ModelProfile = {
   repeatPenalty: 1.15,
   enrichment: 'full',
   maxReplySentences: null,
+  maxOpeningSentences: null,
   dropNonLatinReply: false,
 }
 
@@ -116,6 +127,7 @@ const SMALL_PROFILE: ModelProfile = {
   repeatPenalty: 1.2,
   enrichment: 'translation-only',
   maxReplySentences: 2,
+  maxOpeningSentences: 3,
   dropNonLatinReply: true,
 }
 

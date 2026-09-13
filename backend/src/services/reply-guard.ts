@@ -19,6 +19,10 @@
  * 質問が落ちる。数えない案も試したが、実モデルでは挨拶 12 件中 10 件が
  * 「Hello! + 質問 2 つ」になり、長さの問題がまったく解決しなかった。
  *
+ * ただし **最初の挨拶(opening)だけは 3 文まで** 許す(ModelProfile.maxOpeningSentences)。
+ * 2 文で切ると「Hello! How are you today?」だけが残り、学習者が選んだトピックの
+ * 質問が落ちるため。上限の数はここではなく呼び出し側が渡す。
+ *
  * standard プロファイルには使わない(3B は長さを守れており、打ち切りは退行になる)。
  */
 import { nextSegmentCut } from '../shared/sentence-boundary.js'
